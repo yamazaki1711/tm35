@@ -1,0 +1,140 @@
+[
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 26,
+    "type": "bad_calendar_date",
+    "cell": "JH26",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-021",
+    "value": 5
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 46,
+    "type": "bad_calendar_date",
+    "cell": "JH46",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-041",
+    "value": 3
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 51,
+    "type": "bad_calendar_date",
+    "cell": "JH51",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-046",
+    "value": 3
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 80,
+    "type": "bad_calendar_date",
+    "cell": "JH80",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-075",
+    "value": 3
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 81,
+    "type": "bad_calendar_date",
+    "cell": "JH81",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-076",
+    "value": 3
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 82,
+    "type": "bad_calendar_date",
+    "cell": "JH82",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-077",
+    "value": "ПОДРЯД"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 89,
+    "type": "pct_not_numeric",
+    "value": "18шт",
+    "cell": "G89",
+    "work_code": "TM35-MAIN-084"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 122,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G122",
+    "work_code": "TM35-AUX-116"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 129,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G129",
+    "work_code": "TM35-AUX-123"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 136,
+    "type": "pct_not_numeric",
+    "value": "9 шт",
+    "cell": "G136",
+    "work_code": "TM35-AUX-130"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 138,
+    "type": "pct_not_numeric",
+    "value": "56шт",
+    "cell": "G138",
+    "work_code": "TM35-AUX-132"
+  },
+  {
+    "sheet": "СМР общий ГПР",
+    "row": 138,
+    "type": "volume_not_numeric",
+    "value": "70шт",
+    "cell": "D138",
+    "work_code": "TM35-AUX-132"
+  }
+]

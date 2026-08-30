@@ -1,0 +1,133 @@
+[
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 26,
+    "type": "bad_calendar_date",
+    "cell": "JH26",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-021",
+    "value": 5
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 51,
+    "type": "bad_calendar_date",
+    "cell": "JH51",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-046",
+    "value": 3
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 80,
+    "type": "bad_calendar_date",
+    "cell": "JH80",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-075",
+    "value": 3
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 81,
+    "type": "bad_calendar_date",
+    "cell": "JH81",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-076",
+    "value": 3
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 83,
+    "type": "bad_calendar_date",
+    "cell": "JH83",
+    "raw": {
+      "col": 268,
+      "kind": "plan",
+      "year": 2026,
+      "month": null,
+      "day": 31
+    },
+    "work_code": "TM35-MAIN-078",
+    "value": "ПОДРЯД"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 91,
+    "type": "pct_not_numeric",
+    "value": "18шт",
+    "cell": "G91",
+    "work_code": "TM35-MAIN-086"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 124,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G124",
+    "work_code": "TM35-AUX-118"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 131,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G131",
+    "work_code": "TM35-AUX-125"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 138,
+    "type": "pct_not_numeric",
+    "value": "9 шт",
+    "cell": "G138",
+    "work_code": "TM35-AUX-132"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 140,
+    "type": "pct_not_numeric",
+    "value": "56шт",
+    "cell": "G140",
+    "work_code": "TM35-AUX-134"
+  },
+  {
+    "sheet": "График завершения работ по ТМ35",
+    "row": 140,
+    "type": "volume_not_numeric",
+    "value": "70шт",
+    "cell": "D140",
+    "work_code": "TM35-AUX-134"
+  },
+  {
+    "sheet": "График по замечаниям ИКС",
+    "type": "sheet_missing"
+  },
+  {
+    "sheet": "График по замечаниям РСК",
+    "type": "sheet_missing"
+  }
+]
