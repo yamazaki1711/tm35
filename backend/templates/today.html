@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Что делать сегодня</h1>
+<p class="subtitle">Для ПТО и прораба — не реестр всех работ, а то, что требует действия в ближайшие дни.
+{{ today|dmy }}{% if directive_deadline %} · директивный срок объекта: {{ directive_deadline|dmy }}{% endif %}</p>
+
+<h2>Начинаются в ближайшие 14 дней ({{ lookahead|length }})</h2>
+<p class="subtitle">По плановой дате начала (baseline с высокой/средней уверенностью), ещё не начаты.</p>
+{% if lookahead %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Начало по плану</th><th>Что мешает начать</th></tr>
+{% for w in lookahead %}
+<tr>
+  <td><code>{{ w.code }}</code></td>
+  <td>{{ w.name }}</td>
+  <td>{{ w.location or '—' }}</td>
+  <td>{{ w.plan_start|dmy }}</td>
+  <td>
+    {% if w.obstacles %}
+      {% for o in w.obstacles %}<span class="badge badge-warn">{{ o }}</span> {% endfor %}
+    {% else %}
+      <span class="subtitle" style="margin:0">нет данных о преградах</span>
+    {% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">В ближайшие 14 дней по плану ничего не начинается (или все работы с такой датой уже начаты).</div>
+{% endif %}
+
+<h2>Критичные работы по правилу ({{ critical|length }})</h2>
+<p class="subtitle">
+Не «приоритет 1-5» из Excel, а явное правило: работа просрочена относительно своего планового срока,
+ИЛИ её плановый срок позже директивного срока проекта, ИЛИ на неё напрямую висит неснятое ограничение.
+«Добавить людей» — сколько нужно на эту работу, чтобы уложиться в более жёсткий из двух сроков (её
+собственный или директивный), при известной трудоёмкости.
+</p>
+{% if critical %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>Плановый срок</th><th>Причины</th><th>Добавить людей</th></tr>
+{% for w in critical %}
+<tr>
+  <td><code>{{ w.code }}</code></td>
+  <td>{{ w.name }}</td>
+  <td>{{ w.plan_finish|dmy }}</td>
+  <td>{% for r in w.reasons %}<span class="badge badge-bad">{{ r }}</span> {% endfor %}</td>
+  <td>{{ w.additional_people if w.additional_people is not none else '—' }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">По правилу критичных работ нет.</div>
+{% endif %}
+
+<h2>Ограничения к снятию ({{ open_blockers|length }})</h2>
+<p class="subtitle">
+Дата снятия и ответственный не приходят из Excel — задаются здесь вручную, чтобы список был
+действием, а не просто текстом.
+</p>
+{% if open_blockers %}
+<div class="table-wrap">
+<table>
+<tr><th>Тип</th><th>Описание</th><th>Возникло</th><th>Снять до / ответственный</th><th></th></tr>
+{% for b in open_blockers %}
+<tr>
+  <td>{{ b.blocker_type|ru_blocker_type }}</td>
+  <td>{{ (b.description|strip_source_marker)[:140] }}{% if (b.description|strip_source_marker)|length > 140 %}…{% endif %}</td>
+  <td>{{ b.created_at.strftime('%d.%m.%Y') if b.created_at else '—' }}</td>
+  <td>
+    <form class="inline-edit" method="post" action="/api/blocker/{{ b.id }}">
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <input type="hidden" name="expected_resolution_date" value="{{ b.expected_resolution_date or '' }}">
+        <div class="dm-cal" hidden></div>
+      </span>
+      <input type="text" name="responsible_name" placeholder="ответственный" value="{{ b.responsible_name or '' }}" style="width:9rem">
+      <button type="submit">Сохранить</button>
+    </form>
+  </td>
+  <td>
+    <form method="post" action="/api/blocker/{{ b.id }}">
+      <input type="hidden" name="resolve" value="1">
+      <button type="submit" class="btn-ok">Снято</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">Активных ограничений нет.</div>
+{% endif %}
+
+<p><a href="/gantt">Интерактивный график (рабочая поверхность) →</a> · <a href="/status">Успеваем? →</a></p>
+{% endblock %}

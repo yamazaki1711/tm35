@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Ограничения (стоп-факторы)</h1>
+{% if rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Работа</th><th>Тип</th><th>Описание</th><th>Статус</th><th>Возникло</th><th>Влияние, дней</th></tr>
+{% for r in rows %}
+<tr><td>{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td>{{ r.blocker_type|ru_blocker_type }}</td><td>{{ r.description|strip_source_marker }}</td>
+<td>{{ r.status|ru_blocker_status if r.status else '—' }}</td><td>{{ r.created_at|dmy }}</td><td>{{ r.impact_days or '—' }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">Реестр ограничений пуст. В разделе «Простои» уже видны текстовые комментарии из
+Excel, которые содержат причины остановок — но они пока не превращены в структурированные записи реестра
+ограничений (тип, статус, дата снятия). См. /downtime.</div>
+{% endif %}
+{% endblock %}

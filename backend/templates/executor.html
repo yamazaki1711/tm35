@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Обоснование Исполнителя</h1>
+<p class="subtitle">Реальные агрегаты по фактически внесённым данным (не пример из ТЗ «30 vs 12» — те цифры
+не подтверждены документально, см. открытые вопросы ТЗ п.27.7, здесь считаются фактические данные).</p>
+
+<div class="grid">
+  <div class="tile"><div class="value">{{ agg.total_planned or 0 }}</div><div class="label">Суммарно план, чел.-дней</div></div>
+  <div class="tile"><div class="value">{{ agg.total_actual or 0 }}</div><div class="label">Суммарно факт, чел.-дней</div></div>
+  <div class="tile"><div class="value">{{ agg.avg_planned or 0 }}</div><div class="label">Средний план, чел./день</div></div>
+  <div class="tile"><div class="value">{{ agg.avg_actual or 0 }}</div><div class="label">Средний факт, чел./день</div></div>
+  <div class="tile"><div class="value">{{ agg.days_with_data or 0 }}</div><div class="label">Дней с данными</div></div>
+  <div class="tile"><div class="value">{{ subcontract_count }}</div><div class="label">Работ на субподряде</div></div>
+</div>
+
+<h2>Работы по источнику</h2>
+<table>
+<tr><th>Источник</th><th>Кол-во работ</th></tr>
+{% for r in by_source_type %}<tr><td>{{ r.source|ru_source }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+</table>
+
+<div class="empty-note">Влияние дефицита на срок и потери из-за внешних факторов не рассчитываются —
+для этого нужен плановый график и прогнозная дата завершения, которых пока нет.</div>
+{% endblock %}

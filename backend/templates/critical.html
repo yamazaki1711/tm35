@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Критичные работы</h1>
+<p class="subtitle">
+Работы, у которых временный плановый срок («Месяц выполнения работ» из Excel) уже прошёл
+(на {{ crit.today|dmy }}), а статус не «выполнена/принята/закрыта/отменена». Отсортировано по убыванию
+просрочки — верхние строки наиболее критичны для срока объекта. Плановый срок восстановлен
+из Excel и пока не подтверждён координатором.
+</p>
+
+{% if crit.overdue %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>Плановый срок</th><th>Статус</th><th>Просрочка, дней</th></tr>
+{% for w in crit.overdue %}
+<tr>
+  <td><code>{{ w.code }}</code></td>
+  <td>{{ w.name }}</td>
+  <td>{{ w.plan_finish|dmy }}</td>
+  <td>{{ w.status|ru_status }}</td>
+  <td><span class="badge {{ 'badge-bad' if w.lag_days > 14 else 'badge-warn' }}">{{ w.lag_days }}</span></td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">
+{% if crit.works_with_baseline_count %}
+  Просроченных работ нет — все {{ crit.works_with_baseline_count }} работ(ы) с восстановленным плановым сроком
+  либо завершены, либо их срок ещё не наступил.
+{% else %}
+  Ни у одной работы нет временного плановый срока.
+{% endif %}
+</div>
+{% endif %}
+{% endblock %}

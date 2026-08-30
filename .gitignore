@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.secrets/
+.env
+*.env
+deploy/*.png

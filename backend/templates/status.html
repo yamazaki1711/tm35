@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Успеваем?</h1>
+<p class="subtitle">
+Главный экран для заказчика и руководства — тот же принцип, по которому судят о проекте отраслевые
+S-кривые: план и факт трудозатрат нарастающим итогом, темп по факту, во что он выльется по срокам.
+{% if evm.available %}Данные на {{ evm.last_actual_date|dmy }}.{% endif %}
+</p>
+
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-num">{{ evm.weighted_pct if evm.available and evm.weighted_pct is not none else '—' }}%</div>
+    <div class="kpi-label">Прогресс, взвешенный по трудоёмкости</div>
+    {% if evm.available %}<div class="kpi-sub">проставлен на {{ evm.works_total - evm.unknown_pct_count }} из {{ evm.works_total }} работ</div>{% endif %}
+  </div>
+  <div class="kpi">
+    <div class="kpi-num" style="font-size:1.4rem">{{ forecast_pace_date|dmy }}</div>
+    <div class="kpi-label">Прогноз завершения по фактическому темпу</div>
+    {% if avg_pace %}<div class="kpi-sub">{{ avg_pace }} чел-дн/раб.день, посл. 14 дней с данными</div>{% endif %}
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'danger' if deviation_days and deviation_days > 0 else ('ok' if deviation_days is not none) }}">
+      {% if deviation_days is not none %}{{ '+' if deviation_days > 0 }}{{ deviation_days }}{% else %}—{% endif %}
+    </div>
+    <div class="kpi-label">Отклонение прогноза от директивного срока, дней</div>
+    {% if not directive_deadline %}<div class="kpi-sub">срок не задан ниже</div>{% endif %}
+  </div>
+</div>
+
+<h2>Директивный срок</h2>
+<p class="subtitle">От этой даты считается требуемая численность и дефицит ниже.</p>
+<form class="filter-bar" id="dd-form" style="align-items:center">
+  <span class="dm-picker" data-dm-picker>
+    <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+    <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+    <input type="hidden" id="dd-value" name="value" value="{{ directive_deadline or '' }}">
+    <div class="dm-cal" hidden></div>
+  </span>
+  <button type="submit" id="dd-save" disabled>Сохранить</button>
+  <span id="dd-status" class="subtitle" style="margin:0"></span>
+</form>
+<script>
+(function () {
+  var form = document.getElementById('dd-form');
+  var input = document.getElementById('dd-value');
+  var saveBtn = document.getElementById('dd-save');
+  var statusEl = document.getElementById('dd-status');
+  var savedValue = input.value;
+
+  input.addEventListener('change', function () {
+    saveBtn.disabled = (input.value === savedValue);
+    statusEl.textContent = '';
+  });
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    saveBtn.disabled = true;
+    statusEl.textContent = 'Сохранение…';
+    fetch('/api/settings/directive-deadline', {
+      method: 'POST',
+      body: new URLSearchParams({ value: input.value }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) {
+          statusEl.textContent = res.error || 'Ошибка сохранения.';
+          saveBtn.disabled = false;
+          return;
+        }
+        savedValue = input.value;
+        statusEl.textContent = 'Сохранено — обновляем показатели…';
+        setTimeout(function () { window.location.reload(); }, 500);
+      })
+      .catch(function () {
+        statusEl.textContent = 'Нет связи с сервером.';
+        saveBtn.disabled = false;
+      });
+  });
+})();
+</script>
+
+<h2>S-кривая: трудозатраты нарастающим итогом, человеко-дни</h2>
+<p class="subtitle">
+Синяя — план по календарю Excel, зелёная — факт (обе нарастающим итогом). Фиолетовая точка — освоенный
+объём (взвешенный % × общая трудоёмкость) на последний день с фактом. Жёлтый пунктир — куда
+приведёт текущий темп, если не изменится. Серая горизонталь — весь объём работ по трудоёмкости
+({{ total_trudoemkost }} чел-дн., только по работам с календарными данными — {{ known_work_count }} из
+{{ known_work_count + excluded_work_count }} активных).
+</p>
+<div id="scurve-chart" class="table-wrap"></div>
+
+<h2>Численность по дням: план / факт</h2>
+<div id="hist-chart"></div>
+
+<h2>Тренд прогнозной даты по неделям</h2>
+<p class="subtitle">
+Если точки ползут вправо (дальше в будущее) неделя за неделей — исполнение ухудшается, даже если
+текущий процент выглядит нормально. Копится по одной точке в неделю с {{ today|dmy }}.
+</p>
+<div id="trend-chart" class="table-wrap"></div>
+
+<h2>Дефицит ресурса до директивного срока</h2>
+{% if directive_deadline %}
+  {% if required_to_deadline is not none %}
+  <div class="kpi-row">
+    <div class="kpi"><div class="kpi-num">{{ required_to_deadline }}</div><div class="kpi-label">Нужно чел./день до {{ directive_deadline|dmy }}</div><div class="kpi-sub">{{ working_days_to_deadline }} раб. дн.{% if directive_start and directive_start > today %} с {{ directive_start|dmy }} (начало графика){% endif %}</div></div>
+    <div class="kpi"><div class="kpi-num">{{ crit.actual_crew if crit.actual_crew is not none else '—' }}</div><div class="kpi-label">Фактически выходит</div><div class="kpi-sub">на {{ crit.last_actual_date|dmy }}</div></div>
+    <div class="kpi"><div class="kpi-num {{ 'danger' if deadline_deficit and deadline_deficit > 0 else 'ok' }}">{{ deadline_deficit if deadline_deficit is not none else '—' }}</div><div class="kpi-label">Недобор людей</div></div>
+  </div>
+  {% else %}
+  <div class="empty-note">Срок уже наступил или трудоёмкость неизвестна — расчёт невозможен.</div>
+  {% endif %}
+{% else %}
+<div class="empty-note">Директивный срок не задан — задайте его выше, чтобы увидеть требуемую численность.</div>
+{% endif %}
+
+<p><a href="/critical">Просроченные работы →</a> · <a href="/gantt">Интерактивный график →</a></p>
+
+<script src="/static/status.js"></script>
+<script>window.TM35_STATUS = {{ chart_json|safe }};</script>
+{% endblock %}

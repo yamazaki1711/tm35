@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  #gantt-wrap { max-width: 100%; }
+  .gantt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+  .gantt-controls input[type="text"], .gantt-controls select, .gantt-controls button {
+    height: 38px; box-sizing: border-box; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 0 .6rem; border-radius: .4rem; font-size: 15px; margin: 0;
+  }
+  .gantt-controls button { cursor: pointer; }
+  .gantt-controls label { display: inline-flex; align-items: center; gap: .35rem; height: 38px; font-size: 15px; color: var(--text); }
+  .gantt-controls label input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
+  #gantt-status { display: inline-flex; align-items: center; height: 38px; font-size: 15px; margin: 0; color: var(--muted); }
+  .gantt-legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 14px; color: var(--muted); margin-bottom: .5rem; }
+  .legend-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; vertical-align: middle; margin-right: .3rem; }
+  #gantt-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: .5rem; max-height: 78vh; overflow-y: auto; }
+  /* Плотная календарная матрица — специализированный вид, как электронная
+     таблица (координатор допускает здесь горизонтальную прокрутку в
+     отличие от остальной системы). Шрифт держим на нижней границе 14px
+     (не 16px, как в обычных таблицах) — иначе на экране умещалось бы
+     заметно меньше дней без прокрутки; это осознанный компромисс, см.
+     docs/UI_AUDIT.md. */
+  table.gantt { border-collapse: separate; border-spacing: 0; font-size: 14px; white-space: nowrap; }
+  table.gantt th, table.gantt td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: .6rem .4rem; }
+  table.gantt thead th { position: sticky; top: 0; background: var(--panel); z-index: 3; color: var(--muted); font-weight: 600; }
+  .sticky-col { position: sticky; background: #fff; z-index: 2; }
+  thead .sticky-col { z-index: 4; background: var(--panel); }
+  .col-code { left: 0; min-width: 7.5rem; white-space: nowrap; }
+  .col-name { left: 7.5rem; min-width: 16rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+  .col-pct { left: 23.5rem; min-width: 3.2rem; text-align: right; }
+  .col-status { left: 26.7rem; min-width: 6rem; }
+  .daycol { min-width: 2.6rem; text-align: center; }
+  .daycol.today { background: rgba(11,111,176,.10); }
+  th.daycol.today { background: rgba(11,111,176,.22); }
+  .group-row td { background: var(--panel); font-weight: 700; cursor: pointer; position: sticky; left: 0; }
+  .group-row.collapsed + .work-row-of-group { display: none; }
+  .row-done { opacity: .6; }
+  .row-critical .col-code { color: var(--bad); font-weight: 700; }
+  .cell-empty { color: var(--muted); }
+  .cell-planned { background: rgba(11,111,176,.10); }
+  .cell-met { background: var(--ok-bg); }
+  .cell-short { background: var(--bad-bg); }
+  .cell-unplanned { background: rgba(168,85,247,.18); }
+  .day-blocker-marker { color: var(--warn); font-size: 14px; }
+  .daycol[data-work] { cursor: pointer; }
+  .daycol[data-work]:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .col-code, .col-name { cursor: pointer; }
+  .group-add-btn {
+    margin-left: .75rem; font-size: 14px; font-weight: 400; color: var(--accent);
+    cursor: pointer; text-decoration: underline;
+  }
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 50;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;
+    padding: 1.25rem; width: 380px; max-width: 92vw;
+  }
+  .modal-box h3 { margin: 0 0 .75rem; font-size: 1.1rem; }
+  .modal-box label { display: block; margin-top: .6rem; font-size: 15px; color: var(--muted); }
+  .modal-box input, .modal-box select, .modal-box textarea {
+    width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: .4rem .5rem; border-radius: .4rem; margin-top: .2rem; font-size: 16px;
+  }
+  .modal-box .dm-picker { width: 100%; }
+  .modal-box .dm-text { width: auto; flex: 1; }
+  .modal-actions { display: flex; gap: .5rem; margin-top: 1rem; justify-content: flex-end; }
+  .modal-actions button {
+    padding: .4rem .9rem; border-radius: .4rem; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); cursor: pointer; font-size: 15px;
+  }
+  .modal-actions button.primary { background: var(--accent); color: var(--accent-text); border: none; font-weight: 600; }
+  .modal-errors { color: var(--bad); font-size: 14px; margin-top: .5rem; }
+  #metrics-panel {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem;
+    margin-bottom: .9rem;
+  }
+  #metrics-panel .tile { padding: .6rem .8rem; }
+  #metrics-panel .value { font-size: 1.25rem; }
+  .metric-flash { transition: background-color .3s; }
+  .metric-flash.flashed { background-color: rgba(11,111,176,.20) !important; }
+  #toast {
+    position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--ok); color: #fff;
+    padding: .6rem 1rem; border-radius: .4rem; font-size: 15px; font-weight: 600;
+    display: none; z-index: 60;
+  }
+</style>
+
+<h1>График производства работ</h1>
+<p class="subtitle">Интерактивная сетка по дням — 165 работ, окно дат ниже (не весь диапазон разом).
+Цвет ячейки: <span style="color:var(--accent)">план без факта</span> ·
+<span style="color:var(--ok)">факт ≥ плана</span> · <span style="color:var(--bad)">факт &lt; плана</span> ·
+<span style="color:#a855f7">факт без плана</span>. Строка приглушена — работа завершена. Шифр красным — просрочена
+относительно планового срока. Клик по названию группы — свернуть/развернуть.</p>
+
+<div id="metrics-panel">
+  <div class="tile metric-flash" id="m-weighted"><div class="value">…</div><div class="label">Взвешенный прогресс</div></div>
+  <div class="tile metric-flash" id="m-spi"><div class="value">…</div><div class="label">Темп по графику</div></div>
+  <div class="tile metric-flash" id="m-cpi"><div class="value">…</div><div class="label">Отдача от людей</div></div>
+  <div class="tile metric-flash" id="m-ppc"><div class="value">…</div><div class="label">Надёжность планирования (14 дн.)</div></div>
+  <div class="tile metric-flash" id="m-forecast"><div class="value">…</div><div class="label">Прогноз завершения</div></div>
+  <div class="tile metric-flash" id="m-overdue"><div class="value">…</div><div class="label">Просрочено работ</div></div>
+  <div class="tile metric-flash" id="m-deficit"><div class="value">…</div><div class="label">Дефицит людей (заявлено−факт)</div></div>
+  <div class="tile metric-flash" id="m-coverage"><div class="value">…</div><div class="label">Покрытие ресурсом</div></div>
+</div>
+<p class="subtitle">Панель пересчитывается заново из БД после каждого сохранения в сетке (не только при
+перезагрузке страницы) — подробности формул на <a href="/dashboard">главной</a>.</p>
+
+<div class="gantt-controls">
+  <button id="btn-prev">← пред.</button>
+  <button id="btn-today">Сегодня</button>
+  <button id="btn-next">след. →</button>
+  <select id="sel-days">
+    <option value="14">14 дней</option>
+    <option value="30" selected>30 дней</option>
+    <option value="45">45 дней</option>
+    <option value="60">60 дней</option>
+  </select>
+  <label><input type="checkbox" id="chk-active"> только активные</label>
+  <input type="text" id="inp-location" placeholder="участок (например УТ13)">
+  <button id="btn-apply">Применить</button>
+  <span id="gantt-status"></span>
+</div>
+
+<div id="gantt-scroll"><div style="padding:1rem;color:var(--muted)">Загрузка…</div></div>
+
+<!-- Модалка: правка ячейки дня -->
+<div class="modal-overlay" id="modal-cell">
+  <div class="modal-box">
+    <h3 id="modal-cell-title">Работа — дата</h3>
+    <label>План людей (0–50)<input type="number" id="mc-planned" min="0" max="50"></label>
+    <label>Факт людей (0–50)<input type="number" id="mc-actual" min="0" max="50"></label>
+    <label>Причина простоя
+      <select id="mc-reason"><option value="">— не указана —</option></select>
+    </label>
+    <label>Комментарий<textarea id="mc-comment" rows="2"></textarea></label>
+    <div class="modal-errors" id="mc-errors"></div>
+    <div class="modal-actions">
+      <button data-close="modal-cell">Отмена</button>
+      <button class="primary" id="mc-save">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: карточка работы (сроки + субподрядчик) -->
+<div class="modal-overlay" id="modal-work">
+  <div class="modal-box">
+    <h3 id="mw-title">Работа</h3>
+    <p class="subtitle" style="margin:.2rem 0 0">Текущий план (сдвиг сроков через поля, не перетаскиванием — надёжнее).</p>
+    <label>Дата начала (текущий план)
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <input type="hidden" id="mw-start">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+    <label>Дата окончания (текущий план)
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <input type="hidden" id="mw-finish">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+    <div class="modal-errors" id="mw-sched-errors"></div>
+    <div class="modal-actions"><button class="primary" id="mw-save-sched">Сохранить сроки</button></div>
+    <hr style="border-color:var(--border); margin:1rem 0">
+    <label>Субподрядчик<input type="text" id="mw-subcontractor" placeholder="название"></label>
+    <div class="modal-errors" id="mw-sub-errors"></div>
+    <div class="modal-actions">
+      <button data-close="modal-work">Закрыть</button>
+      <button class="primary" id="mw-save-sub">Назначить субподрядчика</button>
+    </div>
+  </div>
+</div>
+
+<!-- Модалка: новая работа -->
+<div class="modal-overlay" id="modal-new-work">
+  <div class="modal-box">
+    <h3>Добавить работу — <span id="nw-group-label"></span></h3>
+    <label>Наименование<input type="text" id="nw-name"></label>
+    <label>Ед. изм.<input type="text" id="nw-unit"></label>
+    <label>Участок<input type="text" id="nw-location" placeholder="например УТ13"></label>
+    <div class="modal-errors" id="nw-errors"></div>
+    <div class="modal-actions">
+      <button data-close="modal-new-work">Отмена</button>
+      <button class="primary" id="nw-save">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  var state = { start: null, days: 30, active: false, location: '' };
+  var RU_STATUS = {
+    not_started: 'не начата', in_progress: 'в работе', suspended: 'приостановлена',
+    limited: 'ограничена', done_physically: 'выполнена физически', submitted: 'предъявлена',
+    accepted: 'принята', closed: 'закрыта', cancelled: 'отменена',
+  };
+  var todayStr = null;
+
+  function fmtDate(d) { return d.toISOString().slice(0, 10); }
+  function addDays(d, n) { var r = new Date(d); r.setDate(r.getDate() + n); return r; }
+
+  function cellClass(p, a) {
+    if (p == null && a == null) return 'cell-empty';
+    if (p != null && a == null) return 'cell-planned';
+    if ((p || 0) === 0 && a != null && a > 0) return 'cell-unplanned';
+    if (a >= p) return 'cell-met';
+    return 'cell-short';
+  }
+
+  var workIndex = {};   // id -> {code, name, ...}
+  var reasonCodes = [];
+  var lastQuery = {};   // (work_id, date) -> cell, для предзаполнения модалки
+
+  function toast(msg, ok) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.background = ok === false ? 'var(--bad)' : 'var(--ok)';
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.style.display = 'none'; }, 3000);
+  }
+
+  function openModal(id) { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+  document.querySelectorAll('[data-close]').forEach(function (btn) {
+    btn.addEventListener('click', function () { closeModal(btn.getAttribute('data-close')); });
+  });
+  document.querySelectorAll('.modal-overlay').forEach(function (ov) {
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('open'); });
+  });
+
+  function postForm(url, data) {
+    var body = new URLSearchParams(data);
+    return fetch(url, { method: 'POST', body: body })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); });
+  }
+
+  // res.body.errors — наш формат ({ok:false, errors:[...]}); res.body.detail —
+  // формат FastAPI, когда запрос не дошёл до нашего кода (422 на уровне
+  // валидации параметров) — на такое тоже не должны падать с TypeError.
+  function formatErrors(res) {
+    if (res.body && Array.isArray(res.body.errors)) return res.body.errors.join(' ');
+    if (res.body && res.body.detail) return typeof res.body.detail === 'string' ? res.body.detail : JSON.stringify(res.body.detail);
+    return 'Ошибка сервера (' + res.status + ')';
+  }
+
+  function render(data) {
+    todayStr = data.today;
+    reasonCodes = data.reason_codes;
+    workIndex = {};
+
+    var html = '<table class="gantt"><thead><tr>';
+    html += '<th class="sticky-col col-code">Шифр</th><th class="sticky-col col-name">Наименование</th>';
+    html += '<th class="sticky-col col-pct">%</th><th class="sticky-col col-status">Статус</th>';
+    data.dates.forEach(function (d) {
+      var isToday = d === todayStr;
+      var db = data.day_blockers[d];
+      var short = d.slice(8, 10) + '.' + d.slice(5, 7);
+      html += '<th class="daycol' + (isToday ? ' today' : '') + '" title="' + TM35_RU_DATE.fmtDMY(d) + (db ? ' — ' + db.join(', ') : '') + '">'
+        + short + (db ? '<div class="day-blocker-marker">⚠</div>' : '') + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    data.groups.forEach(function (g) {
+      html += '<tr class="group-row" data-group="' + g.key + '"><td colspan="4"><span class="grp-label">▾ ' + g.label + ' (' + g.works.length + ')</span>'
+        + '<span class="group-add-btn" data-add-group="' + g.key + '" data-add-label="' + g.label + '">+ добавить работу</span></td>';
+      data.dates.forEach(function () { html += '<td></td>'; });
+      html += '</tr>';
+      g.works.forEach(function (w) {
+        workIndex[w.id] = w;
+        var done = ['done_physically', 'submitted', 'accepted', 'closed', 'cancelled'].indexOf(w.status) !== -1;
+        var rowCls = 'work-row-of-group group-' + g.key + (done ? ' row-done' : '') + (w.critical ? ' row-critical' : '');
+        html += '<tr class="' + rowCls + '">';
+        html += '<td class="sticky-col col-code" data-open-work="' + w.id + '"><code>' + w.code + '</code></td>';
+        html += '<td class="sticky-col col-name" data-open-work="' + w.id + '" title="' + w.name.replace(/"/g, '&quot;') + '">' + w.name + '</td>';
+        html += '<td class="sticky-col col-pct">' + (w.fact_pct != null ? w.fact_pct + '%' : '—') + '</td>';
+        html += '<td class="sticky-col col-status">' + (RU_STATUS[w.status] || w.status) + '</td>';
+        data.dates.forEach(function (d) {
+          var c = w.cells[d];
+          var p = c ? c.p : null, a = c ? c.a : null;
+          var cls = cellClass(p, a);
+          var label = (p != null ? p : '·') + '/' + (a != null ? a : '·');
+          var isToday = d === todayStr;
+          html += '<td class="daycol ' + cls + (isToday ? ' today' : '') + '" data-work="' + w.id + '" data-date="' + d
+            + '" data-p="' + (p == null ? '' : p) + '" data-a="' + (a == null ? '' : a)
+            + '" data-r="' + (c && c.r ? c.r : '') + '" data-cm="' + (c && c.cm ? c.cm.replace(/"/g, '&quot;') : '') + '">' + label + '</td>';
+        });
+        html += '</tr>';
+      });
+    });
+
+    html += '<tr style="font-weight:600"><td class="sticky-col col-code" colspan="4">Итого чел., план/факт</td>';
+    data.dates.forEach(function (d) {
+      var t = data.totals[d] || { p: 0, a: 0 };
+      html += '<td class="daycol">' + t.p + '/' + t.a + '</td>';
+    });
+    html += '</tr>';
+
+    html += '</tbody></table>';
+    document.getElementById('gantt-scroll').innerHTML = html;
+    wireGridEvents();
+  }
+
+  function wireGridEvents() {
+    document.querySelectorAll('.group-row').forEach(function (row) {
+      row.querySelector('.grp-label').addEventListener('click', function () {
+        var key = row.getAttribute('data-group');
+        row.classList.toggle('collapsed');
+        var hide = row.classList.contains('collapsed');
+        document.querySelectorAll('.group-' + key).forEach(function (r) { r.style.display = hide ? 'none' : ''; });
+        var lbl = row.querySelector('.grp-label');
+        lbl.textContent = (hide ? '▸ ' : '▾ ') + lbl.textContent.slice(2);
+      });
+    });
+    document.querySelectorAll('[data-add-group]').forEach(function (el) {
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        document.getElementById('nw-group-label').textContent = el.getAttribute('data-add-label');
+        document.getElementById('nw-name').value = '';
+        document.getElementById('nw-unit').value = '';
+        document.getElementById('nw-location').value = '';
+        document.getElementById('nw-errors').textContent = '';
+        document.getElementById('modal-new-work').setAttribute('data-source', el.getAttribute('data-add-group'));
+        openModal('modal-new-work');
+      });
+    });
+    document.querySelectorAll('.daycol[data-work]').forEach(function (td) {
+      td.addEventListener('click', function () {
+        var wid = td.getAttribute('data-work'), d = td.getAttribute('data-date');
+        var w = workIndex[wid];
+        document.getElementById('modal-cell').setAttribute('data-work', wid);
+        document.getElementById('modal-cell').setAttribute('data-date', d);
+        document.getElementById('modal-cell-title').textContent = w.code + ' — ' + TM35_RU_DATE.fmtDMY(d);
+        document.getElementById('mc-planned').value = td.getAttribute('data-p') || '';
+        document.getElementById('mc-actual').value = td.getAttribute('data-a') || '';
+        document.getElementById('mc-comment').value = td.getAttribute('data-cm') || '';
+        var sel = document.getElementById('mc-reason');
+        sel.innerHTML = '<option value="">— не указана —</option>';
+        reasonCodes.forEach(function (rc) {
+          var opt = document.createElement('option');
+          opt.value = rc[0]; opt.textContent = rc[1];
+          if (rc[0] === td.getAttribute('data-r')) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        document.getElementById('mc-errors').textContent = '';
+        openModal('modal-cell');
+      });
+    });
+    document.querySelectorAll('[data-open-work]').forEach(function (td) {
+      td.addEventListener('click', function () {
+        var wid = td.getAttribute('data-open-work'), w = workIndex[wid];
+        document.getElementById('modal-work').setAttribute('data-work', wid);
+        document.getElementById('mw-title').textContent = w.code + ' — ' + w.name.slice(0, 50);
+        document.getElementById('mw-start').value = w.current_start || '';
+        document.getElementById('mw-finish').value = w.current_finish || '';
+        document.getElementById('mw-subcontractor').value = w.subcontractor_name || '';
+        document.getElementById('mw-sched-errors').textContent = '';
+        document.getElementById('mw-sub-errors').textContent = '';
+        openModal('modal-work');
+      });
+    });
+  }
+
+  document.getElementById('mc-save').addEventListener('click', function () {
+    var m = document.getElementById('modal-cell');
+    var errEl = document.getElementById('mc-errors');
+    errEl.textContent = '';
+    postForm('/api/gantt/cell', {
+      work_id: m.getAttribute('data-work'), date: m.getAttribute('data-date'),
+      planned_crew: document.getElementById('mc-planned').value,
+      actual_crew: document.getElementById('mc-actual').value,
+      reason_code: document.getElementById('mc-reason').value,
+      comment: document.getElementById('mc-comment').value,
+    }).then(function (res) {
+      if (res.body.ok) { closeModal('modal-cell'); toast('Сохранено'); load(); loadMetrics(); }
+      else { errEl.textContent = formatErrors(res); }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
+  document.getElementById('mw-save-sched').addEventListener('click', function () {
+    var m = document.getElementById('modal-work');
+    var errEl = document.getElementById('mw-sched-errors');
+    errEl.textContent = '';
+    postForm('/api/gantt/schedule', {
+      work_id: m.getAttribute('data-work'),
+      current_start: document.getElementById('mw-start').value,
+      current_finish: document.getElementById('mw-finish').value,
+    }).then(function (res) {
+      if (res.body.ok) { toast('Сроки сохранены'); load(); loadMetrics(); }
+      else { errEl.textContent = formatErrors(res); }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
+  document.getElementById('mw-save-sub').addEventListener('click', function () {
+    var m = document.getElementById('modal-work');
+    var errEl = document.getElementById('mw-sub-errors');
+    errEl.textContent = '';
+    postForm('/api/gantt/subcontractor', {
+      work_id: m.getAttribute('data-work'),
+      name: document.getElementById('mw-subcontractor').value,
+    }).then(function (res) {
+      if (res.body.ok) { toast('Субподрядчик назначен'); closeModal('modal-work'); load(); loadMetrics(); }
+      else { errEl.textContent = formatErrors(res); }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
+  document.getElementById('nw-save').addEventListener('click', function () {
+    var source = document.getElementById('modal-new-work').getAttribute('data-source');
+    var errEl = document.getElementById('nw-errors');
+    errEl.textContent = '';
+    postForm('/api/gantt/work', {
+      source: source, name: document.getElementById('nw-name').value,
+      unit: document.getElementById('nw-unit').value, location: document.getElementById('nw-location').value,
+    }).then(function (res) {
+      if (res.body.ok) { closeModal('modal-new-work'); toast('Добавлено: ' + res.body.code); load(); loadMetrics(); }
+      else { errEl.textContent = formatErrors(res); }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
+  var lastMetrics = null;
+
+  function setMetric(id, text, changed) {
+    var el = document.getElementById(id);
+    var valEl = el.querySelector('.value');
+    if (valEl.textContent !== text) {
+      valEl.textContent = text;
+      if (changed) {
+        el.classList.add('flashed');
+        setTimeout(function () { el.classList.remove('flashed'); }, 900);
+      }
+    }
+  }
+
+  function loadMetrics() {
+    fetch('/api/gantt-metrics')
+      .then(function (r) { return r.json(); })
+      .then(function (m) {
+        var changed = lastMetrics !== null;
+        setMetric('m-weighted', m.weighted_pct != null ? m.weighted_pct + '%' : '—', changed && lastMetrics && m.weighted_pct !== lastMetrics.weighted_pct);
+        setMetric('m-spi', m.spi != null ? m.spi : '—', changed && m.spi !== lastMetrics.spi);
+        setMetric('m-cpi', m.cpi != null ? m.cpi : '—', changed && m.cpi !== lastMetrics.cpi);
+        setMetric('m-ppc', m.ppc_pct != null ? m.ppc_pct + '% (' + m.ppc_met + '/' + m.ppc_promised + ')' : '—', changed && m.ppc_pct !== lastMetrics.ppc_pct);
+        setMetric('m-forecast', TM35_RU_DATE.fmtDMY(m.forecast_date), changed && m.forecast_date !== lastMetrics.forecast_date);
+        setMetric('m-overdue', m.overdue_count != null ? String(m.overdue_count) : '—', changed && m.overdue_count !== lastMetrics.overdue_count);
+        setMetric('m-deficit', m.deficit != null ? String(m.deficit) : '—', changed && m.deficit !== lastMetrics.deficit);
+        setMetric('m-coverage', m.coverage_pct != null ? m.coverage_pct + '%' : '—', changed && m.coverage_pct !== lastMetrics.coverage_pct);
+        lastMetrics = m;
+      })
+      .catch(function () { /* панель метрик необязательна для работы сетки */ });
+  }
+
+  function load() {
+    var statusEl = document.getElementById('gantt-status');
+    statusEl.textContent = 'Загрузка…';
+    var paramsObj = { start: fmtDate(state.start), days: state.days };
+    if (state.active) paramsObj.active_only = '1';
+    if (state.location) paramsObj.location = state.location;
+    var params = new URLSearchParams(paramsObj);
+    fetch('/api/gantt?' + params.toString())
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        render(data);
+        statusEl.textContent = TM35_RU_DATE.fmtDMY(data.start) + ' … ' + TM35_RU_DATE.fmtDMY(data.end);
+      })
+      .catch(function (e) { statusEl.textContent = 'Ошибка загрузки: ' + e; });
+  }
+
+  document.getElementById('btn-prev').addEventListener('click', function () {
+    state.start = addDays(state.start, -state.days); load();
+  });
+  document.getElementById('btn-next').addEventListener('click', function () {
+    state.start = addDays(state.start, state.days); load();
+  });
+  document.getElementById('btn-today').addEventListener('click', function () {
+    state.start = addDays(new Date(), -7); load();
+  });
+  function applyFilters() {
+    state.days = parseInt(document.getElementById('sel-days').value, 10);
+    state.active = document.getElementById('chk-active').checked;
+    state.location = document.getElementById('inp-location').value;
+    load();
+  }
+  document.getElementById('btn-apply').addEventListener('click', applyFilters);
+  // Чекбокс и выбор окна дат применяются сразу, без отдельного клика на
+  // "Применить" — иначе выглядит как "фильтр не работает" (нашли на
+  // практике: чекбокс не даёт видимого эффекта, пока не нажмёшь кнопку).
+  document.getElementById('chk-active').addEventListener('change', applyFilters);
+  document.getElementById('sel-days').addEventListener('change', applyFilters);
+  // Поле участка — по Enter (не на каждый символ, иначе дёргает сервер).
+  document.getElementById('inp-location').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') applyFilters();
+  });
+
+  state.start = addDays(new Date(), -7);
+  load();
+  loadMetrics();
+})();
+</script>
+{% endblock %}

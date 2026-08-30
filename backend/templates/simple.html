@@ -1,0 +1,159 @@
+{% extends "base_simple.html" %}
+{% block content %}
+<div class="simple-header">
+  <h1>Ввод факта по работам</h1>
+  <div class="date-line">
+    {{ date_label }}
+    {% if not is_today %}<a href="/">← вернуться на сегодня</a>{% endif %}
+  </div>
+</div>
+
+{% if rows %}
+  {% for w in rows %}
+  <div class="work-card" id="card-{{ w.work_id }}">
+    <div class="work-name">{{ w.name }}</div>
+    <div class="work-meta">Шифр {{ w.code }}{% if w.location %} · участок {{ w.location }}{% endif %}</div>
+    <div class="row2">
+      <div class="field">
+        <label>План, чел.</label>
+        <input type="number" value="{{ w.planned_crew if w.planned_crew is not none else '' }}" disabled>
+      </div>
+      <div class="field">
+        <label>Сколько вышло сегодня</label>
+        <input type="number" min="0" max="50" class="actual-input" id="actual-{{ w.work_id }}"
+               value="{{ w.actual_crew if w.actual_crew is not none else '' }}">
+      </div>
+    </div>
+    <div class="reason-field" style="margin-top:.8rem">
+      <label>Если вышло меньше плана — почему</label>
+      <select id="reason-{{ w.work_id }}" onchange="toggleReasonComment({{ w.work_id }})">
+        <option value="">— причины нет —</option>
+        {% for code, label in reason_codes %}
+        <option value="{{ code }}" {{ 'selected' if w.reason_code == code }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="reason-comment-field" id="reason-comment-wrap-{{ w.work_id }}" style="margin-top:.6rem; display:none">
+      <label>Комментарий (что именно случилось)</label>
+      <textarea id="reason-comment-{{ w.work_id }}" rows="2" style="width:100%">{{ w.comment|strip_source_marker or '' }}</textarea>
+    </div>
+    <button class="save-btn" onclick="saveWork({{ w.work_id }})">Сохранить</button>
+    <div class="save-ok" id="ok-{{ w.work_id }}">✓ Сохранено</div>
+    <div class="save-err" id="err-{{ w.work_id }}"></div>
+  </div>
+  {% endfor %}
+{% else %}
+<div class="simple-empty">На {{ date_label }} запланированных работ не найдено.<br>Можно указать факт по любой работе вручную ниже.</div>
+{% endif %}
+
+<button class="other-work-toggle" id="toggle-other">+ Внести факт по другой работе</button>
+<div id="other-work-panel" class="work-card">
+  <div class="field" style="margin-bottom:.8rem">
+    <label>Работа</label>
+    <select id="other-work-select" style="width:100%; font-size:1.05rem; padding:.6rem; border:2px solid var(--border); border-radius:.5rem;">
+      <option value="">— выбрать —</option>
+      {% for w in all_works %}
+      <option value="{{ w.id }}">{{ w.code }} — {{ w.name[:70] }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="row2">
+    <div class="field">
+      <label>План, чел.</label>
+      <input type="number" min="0" max="50" id="other-planned">
+    </div>
+    <div class="field">
+      <label>Факт, чел.</label>
+      <input type="number" min="0" max="50" id="other-actual">
+    </div>
+  </div>
+  <div class="reason-field" style="margin-top:.8rem">
+    <label>Причина, если был простой</label>
+    <select id="other-reason" onchange="toggleReasonComment('other')">
+      <option value="">— причины нет —</option>
+      {% for code, label in reason_codes %}
+      <option value="{{ code }}">{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="reason-comment-field" id="reason-comment-wrap-other" style="margin-top:.6rem; display:none">
+    <label>Комментарий (что именно случилось)</label>
+    <textarea id="reason-comment-other" rows="2" style="width:100%"></textarea>
+  </div>
+  <button class="save-btn" onclick="saveOther()">Сохранить</button>
+  <div class="save-ok" id="ok-other">✓ Сохранено</div>
+  <div class="save-err" id="err-other"></div>
+</div>
+
+<script>
+var DATE = {{ date_iso|tojson }};
+
+function toggleReasonComment(key) {
+  var reasonEl = document.getElementById('reason-' + key);
+  var wrap = document.getElementById('reason-comment-wrap-' + key);
+  wrap.style.display = reasonEl.value === 'OTHER' ? 'block' : 'none';
+}
+
+function saveCell(workId, planned, actual, reason, comment, okEl, errEl) {
+  errEl.style.display = 'none';
+  okEl.style.display = 'none';
+  if (reason === 'OTHER' && !comment.trim()) {
+    errEl.textContent = 'При причине «Иное» комментарий обязателен.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var body = new URLSearchParams({
+    work_id: workId, date: DATE,
+    planned_crew: planned == null ? '' : planned,
+    actual_crew: actual == null ? '' : actual,
+    reason_code: reason || '',
+    comment: comment || '',
+  });
+  fetch('/api/gantt/cell', { method: 'POST', body: body })
+    .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); })
+    .then(function (res) {
+      if (res.body.ok) {
+        okEl.style.display = 'block';
+      } else {
+        errEl.textContent = (res.body.errors || ['Ошибка сохранения']).join(' ');
+        errEl.style.display = 'block';
+      }
+    })
+    .catch(function () {
+      errEl.textContent = 'Нет связи с сервером — попробуйте ещё раз.';
+      errEl.style.display = 'block';
+    });
+}
+
+function saveWork(workId) {
+  var actualEl = document.getElementById('actual-' + workId);
+  var reasonEl = document.getElementById('reason-' + workId);
+  var commentEl = document.getElementById('reason-comment-' + workId);
+  var plannedInput = document.querySelector('#card-' + workId + ' input[disabled]');
+  var planned = plannedInput.value === '' ? null : plannedInput.value;
+  saveCell(workId, planned, actualEl.value === '' ? null : actualEl.value, reasonEl.value, commentEl.value,
+    document.getElementById('ok-' + workId), document.getElementById('err-' + workId));
+}
+
+function saveOther() {
+  var workId = document.getElementById('other-work-select').value;
+  var okEl = document.getElementById('ok-other');
+  var errEl = document.getElementById('err-other');
+  if (!workId) { errEl.textContent = 'Выберите работу.'; errEl.style.display = 'block'; return; }
+  var planned = document.getElementById('other-planned').value;
+  var actual = document.getElementById('other-actual').value;
+  var reason = document.getElementById('other-reason').value;
+  var comment = document.getElementById('reason-comment-other').value;
+  saveCell(workId, planned === '' ? null : planned, actual === '' ? null : actual, reason, comment, okEl, errEl);
+}
+
+document.getElementById('toggle-other').addEventListener('click', function () {
+  var panel = document.getElementById('other-work-panel');
+  panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+});
+
+{% for w in rows %}
+toggleReasonComment({{ w.work_id }});
+{% endfor %}
+</script>
+{% endblock %}

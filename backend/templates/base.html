@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}ТМ-35 Мониторинг{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/ru-date.js"></script>
+<script src="/static/datepicker.js"></script>
+</head>
+<body>
+<nav>
+<div class="nav-inner">
+  <a href="/" style="color:var(--ok); font-weight:700;">← Простой ввод факта</a>
+  <a href="/status" class="{{ 'active' if active=='status' }}"><b>Успеваем?</b></a>
+  <a href="/today" class="{{ 'active' if active=='today' }}"><b>Сегодня</b></a>
+  <a href="/report" class="{{ 'active' if active=='report' }}"><b>Рапорт</b></a>
+  <a href="/losses" class="{{ 'active' if active=='losses' }}"><b>Почему отстаём</b></a>
+  <a href="/data" class="{{ 'active' if active=='data' }}">Данные</a>
+</div>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Почему отстаём</h1>
+<p class="subtitle">
+Аналитика потерь за последние {{ period_days }} дней ({{ start|dmy }} — {{ today|dmy }}). Не реестр — причины и
+масштаб, в чём и почему теряем темп.
+</p>
+
+<h2>Потери, чел-дней, по типу ограничения</h2>
+<p class="subtitle">
+Потерянные чел-дни дня (план − факт по всем работам в этот день) отнесены к каждому типу ограничения,
+зафиксированному в этот день. Если в один день зафиксировано несколько причин одновременно — известный
+дефект исходных данных (ТЗ 11.4) — потери дня учтены у КАЖДОЙ причины, не поделены произвольно между
+ними; из-за этого сумма по типам может быть больше суммарных потерь за период. Дней с несколькими
+причинами одновременно: {{ overlap_days }}.
+</p>
+{% if loss_by_type %}
+{% set max_days = loss_by_type[0].days %}
+<div class="bar-chart">
+  {% for r in loss_by_type %}
+  <div class="bar-row">
+    <div class="bar-label">{{ r.type|ru_blocker_type }}</div>
+    <div class="bar-track"><div class="bar-fill" style="width: {{ (r.days / max_days * 100) if max_days else 0 }}%"></div></div>
+    <div class="bar-value">{{ r.days }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-note">За этот период ограничений с датой не зафиксировано.</div>
+{% endif %}
+
+<h2>Надёжность планирования по неделям</h2>
+<p class="subtitle">Доля дней с обещанной численностью, где факт ≥ плана. В стройке хорошим считается результат от 80%.</p>
+{% if ppc_by_week %}
+<div class="bar-chart">
+  {% for r in ppc_by_week %}
+  <div class="bar-row">
+    <div class="bar-label">{{ r.week|dmy }}</div>
+    <div class="bar-track"><div class="bar-fill {{ 'bar-bad' if r.ppc_pct < 80 }}" style="width: {{ r.ppc_pct }}%"></div></div>
+    <div class="bar-value">{{ r.ppc_pct }}% ({{ r.met }}/{{ r.promised }})</div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-note">Недостаточно данных за период.</div>
+{% endif %}
+
+<h2>Срок снятия ограничений</h2>
+<div class="grid">
+  <div class="tile"><div class="value">{{ avg_resolution_days if avg_resolution_days is not none else '—' }}</div><div class="label">Средний срок снятия, дней (по {{ resolved_count }} снятым)</div></div>
+  <div class="tile"><div class="value">{{ open_blocker_count }}</div><div class="label">Сейчас висит без снятия</div></div>
+  <div class="tile"><div class="value">{{ open_blocker_avg_age if open_blocker_avg_age is not none else '—' }}</div><div class="label">Средний возраст открытых, дней</div></div>
+</div>
+{% if resolved_count == 0 %}
+<div class="empty-note">Ни одно ограничение ещё не отмечено снятым (кнопка «Снято» на /today) — статистика появится после первого снятия.</div>
+{% endif %}
+
+<h2>Отвлечение ресурса от основного графика</h2>
+<p class="subtitle">
+Человеко-дни факта по источнику работы: сколько реально ушло на вспомогательные работы и замечания
+ИКС/РСК вместо основного графика — не по декларации, а по фактически внесённым данным.
+</p>
+{% if by_source %}
+<div class="table-wrap"><table>
+<tr><th>Источник</th><th>План, чел-дн.</th><th>Факт, чел-дн.</th><th>Факт к плану</th></tr>
+{% for r in by_source %}
+<tr>
+  <td>{{ r.source|ru_source }}</td>
+  <td>{{ r.planned }}</td>
+  <td>{{ r.actual }}</td>
+  <td>{% if r.planned %}{{ (r.actual / r.planned * 100)|round(0) }}%{% else %}—{% endif %}</td>
+</tr>
+{% endfor %}
+</table></div>
+<p class="subtitle">
+Пример прочтения: если по «вспомогательные» факт заметно больше плана — люди снимались с основного
+графика чаще, чем это было запланировано, и это не видно в общем проценте выполнения основного графика.
+</p>
+{% else %}
+<div class="empty-note">Нет данных.</div>
+{% endif %}
+
+<p><a href="/today">← Что делать сегодня</a> · <a href="/status">Успеваем? →</a></p>
+{% endblock %}

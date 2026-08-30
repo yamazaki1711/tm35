@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="report-toolbar no-print">
+  <form method="get" action="/report" style="display:inline-flex; gap:.5rem; align-items:center">
+    <label style="margin:0">Дата
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <input type="hidden" name="date" value="{{ target_date }}" onchange="this.form.submit()">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+  </form>
+  <button type="button" onclick="window.print()">Печать / сохранить как PDF</button>
+</div>
+
+<div class="report-doc">
+  <h1>Суточный рапорт — {{ date_label }}</h1>
+  <p class="subtitle">Тепломагистраль-35, г. Хабаровск. Формируется автоматически из введённого факта на эту дату.</p>
+
+  <table class="report-meta">
+    <tr><td><b>Дата</b></td><td>{{ date_label }}</td></tr>
+    <tr><td><b>Погода</b></td><td>{{ weather or '—' }}</td></tr>
+  </table>
+
+  <h2>Численность по участкам, чел.</h2>
+  {% if by_location %}
+  <div class="table-wrap"><table>
+  <thead><tr><th>Участок</th><th>План</th><th>Факт</th><th>Недобор</th></tr></thead>
+  <tbody>
+  {% for r in by_location %}
+  <tr><td>{{ r.location }}</td><td>{{ r.planned or 0 }}</td><td>{{ r.actual or 0 }}</td><td>{{ (r.planned or 0) - (r.actual or 0) }}</td></tr>
+  {% endfor %}
+  </tbody>
+  </table></div>
+  {% else %}<div class="empty-note">Нет данных за эту дату.</div>{% endif %}
+
+  <h2>Работы, которые велись ({{ works_today|length }})</h2>
+  {% if works_today %}
+  <div class="table-wrap"><table>
+  <thead><tr><th>Шифр</th><th>Наименование</th><th>План, чел.</th><th>Факт, чел.</th><th>Объём за день</th><th>% нак.</th><th>Комментарий</th></tr></thead>
+  <tbody>
+  {% for r in works_today %}
+  <tr>
+    <td><code>{{ r.code }}</code></td><td>{{ r.name }}</td>
+    <td>{{ r.planned_crew if r.planned_crew is not none else '—' }}</td>
+    <td>{{ r.actual_crew if r.actual_crew is not none else '—' }}</td>
+    <td>{{ r.done_volume if r.done_volume is not none else '—' }}{% if r.done_volume is not none and r.unit %} {{ r.unit }}{% endif %}</td>
+    <td>{{ r.fact_pct if r.fact_pct is not none else '—' }}</td>
+    <td>{{ r.comment|strip_source_marker or '' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+  </table></div>
+  {% else %}<div class="empty-note">Нет записей факта за эту дату.</div>{% endif %}
+
+  <h2>Не выполнено полностью ({{ not_done|length }})</h2>
+  <p class="subtitle">Причина — по закрытому справочнику, если она указана, иначе по тексту комментария.</p>
+  {% if not_done %}
+  <div class="table-wrap"><table>
+  <thead><tr><th>Шифр</th><th>Наименование</th><th>План</th><th>Факт</th><th>Причина</th></tr></thead>
+  <tbody>
+  {% for r in not_done %}
+  <tr>
+    <td><code>{{ r.code }}</code></td><td>{{ r.name }}</td>
+    <td>{{ r.planned_crew }}</td><td>{{ r.actual_crew if r.actual_crew is not none else 0 }}</td>
+    <td>{% if r.reason_code %}{{ r.reason_code|ru_reason_code }}{% elif r.comment %}{{ r.comment|strip_source_marker }}{% else %}не указана{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+  </table></div>
+  {% else %}<div class="empty-note">Все запланированные работы обеспечены плановой численностью.</div>{% endif %}
+
+  <h2>Ограничения</h2>
+  <p><b>Возникли за день ({{ blockers_arose|length }}):</b>
+  {% if blockers_arose %}{% for b in blockers_arose %}<span class="badge badge-warn">{{ b.blocker_type|ru_blocker_type }}</span> {% endfor %}
+  {% else %}нет{% endif %}</p>
+  <p><b>Сняты за день ({{ blockers_resolved|length }}):</b>
+  {% if blockers_resolved %}{% for b in blockers_resolved %}<span class="badge badge-ok">{{ b.blocker_type|ru_blocker_type }}</span> {% endfor %}
+  {% else %}нет{% endif %}</p>
+
+  <h2>Подпись ответственного</h2>
+  <div class="report-signature">{{ signed_by or '_____________________' }}</div>
+</div>
+
+<form class="no-print form-box" method="post" action="/api/report-meta" style="max-width:480px">
+  <input type="hidden" name="date" value="{{ target_date }}">
+  <label>Погода <input type="text" name="weather" value="{{ weather }}" placeholder="напр. дождь, +18°C"></label>
+  <label>Подпись ответственного <input type="text" name="signed_by" value="{{ signed_by }}" placeholder="ФИО"></label>
+  <button type="submit">Сохранить</button>
+</form>
+
+<p class="no-print"><a href="/today">← Что делать сегодня</a></p>
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Материалы и поставки</h1>
+{% if rows %}
+<table>
+<tr><th>Наименование</th><th>Поставщик</th><th>Статус</th><th>Ожид. дата поставки</th><th>Блокирует работу</th></tr>
+{% for r in rows %}
+<tr><td>{{ r.name }}</td><td>{{ r.supplier or '—' }}</td><td>{{ r.status|ru_material_status }}</td>
+<td>{{ r.expected_delivery_date|dmy }}</td><td>{{ 'да' if r.blocks_work else 'нет' }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<div class="empty-note">Реестр материалов пуст. Исходный файл не содержит отдельного структурированного
+реестра поставок (герметизаторы/изоляция/цемент и т.п. упоминаются только в текстовых примечаниях к
+отдельным работам) — реестр материалов пока не заполнялся.</div>
+{% endif %}
+{% endblock %}

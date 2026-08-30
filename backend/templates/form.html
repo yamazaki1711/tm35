@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Ввод факта — веб-форма</h1>
+<p class="subtitle">Опциональный второй канал (роль Исполнитель), параллельный Excel-импорту.
+Не заменяет Excel — сотрудник ПТО ИКС продолжает вести файл как обычно. При конфликте на ту же
+дату+работу побеждает более поздняя по времени запись; обе версии сохраняются в истории изменений.</p>
+
+{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
+{% if errors %}
+<div class="flash flash-err">
+  <b>Не сохранено — исправьте:</b>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if warnings %}
+<div class="flash" style="background: var(--warn-bg); color: var(--warn); font-weight: 600;">
+  {% for w in warnings %}<div>{{ w }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<div id="existing-note" class="empty-note" style="display:none; max-width:480px;"></div>
+
+<form class="form-box" method="post" action="/form" id="dp-form">
+  <label>Работа
+    <select name="work_id" id="work_id" required>
+      <option value="" {{ 'selected' if not values.get('work_id') }} disabled>— выбрать —</option>
+      {% for w in work_rows %}
+      <option value="{{ w.id }}" {{ 'selected' if values.get('work_id')|string == w.id|string }}>{{ w.code }} — {{ w.name[:60] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Дата
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+      <input type="hidden" name="date" id="date" value="{{ values.get('date', '') }}" required>
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>План людей (0–50)
+    <input type="number" name="planned_crew" min="0" max="50" step="1" value="{{ values.get('planned_crew', '') }}">
+  </label>
+  <label>Факт людей (0–50)
+    <input type="number" name="actual_crew" min="0" max="50" step="1" value="{{ values.get('actual_crew', '') }}">
+  </label>
+  <label>Причина простоя (если был)
+    <select name="reason_code" id="reason_code">
+      <option value="">— не указана —</option>
+      {% for code, label in reason_codes %}
+      <option value="{{ code }}" {{ 'selected' if values.get('reason_code') == code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Комментарий (обязателен, если причина «Иное»)
+    <textarea name="comment" rows="3">{{ values.get('comment', '') }}</textarea>
+  </label>
+  <button type="submit">Сохранить</button>
+</form>
+
+<script>
+(function () {
+  var workSel = document.getElementById('work_id');
+  var dateInp = document.getElementById('date');
+  var note = document.getElementById('existing-note');
+
+  function checkExisting() {
+    var workId = workSel.value, date = dateInp.value;
+    if (!workId || !date) { note.style.display = 'none'; return; }
+    fetch('/api/existing-entry?work_id=' + encodeURIComponent(workId) + '&date=' + encodeURIComponent(date))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.exists) {
+          note.style.display = 'block';
+          note.textContent = 'На эту дату по этой работе уже есть запись через форму: план ' +
+            (data.planned_crew === null ? '—' : data.planned_crew) + ', факт ' +
+            (data.actual_crew === null ? '—' : data.actual_crew) +
+            '. Сохранение перезапишет её (время последнего изменения: ' + TM35_RU_DATE.fmtDMYHM(data.updated_at) + ').';
+        } else {
+          note.style.display = 'none';
+        }
+      })
+      .catch(function () { note.style.display = 'none'; });
+  }
+
+  workSel.addEventListener('change', checkExisting);
+  dateInp.addEventListener('change', checkExisting);
+  if (workSel.value && dateInp.value) checkExisting();
+})();
+</script>
+{% endblock %}

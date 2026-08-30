@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Субподрядчики</h1>
+
+<h2>Реестр субподрядчиков</h2>
+{% if registry_rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Наименование</th><th>Вид работ</th><th>Статус договора</th><th>Готовность</th><th>Ожид. дата выхода</th></tr>
+{% for r in registry_rows %}
+<tr><td>{{ r.name }}</td><td>{{ r.work_type or '—' }}</td><td>{{ r.contract_status or '—' }}</td>
+<td>{{ r.mobilization_status or '—' }}</td><td>{{ r.expected_start_date|dmy }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">Структурированный реестр (статус договора, готовность, ожидаемая дата выхода) пока
+не заполнялся. Ниже — работы с пометкой «субподряд» из реестра работ (не полноценный реестр
+субподрядчиков).</div>
+{% endif %}
+
+<h2>Работы с исполнением субподрядом</h2>
+{% if proxy_rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Примечание (из Excel)</th></tr>
+{% for r in proxy_rows %}
+<tr><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td><td>{{ r.location or '—' }}</td><td>{{ r.comment|strip_source_marker or '—' }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% else %}<div class="empty-note">Работ с исполнением субподрядом не найдено.</div>{% endif %}
+{% endblock %}

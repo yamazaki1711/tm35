@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Данные</h1>
+<p class="subtitle">
+Реестры и справочники — заходят по необходимости, не занимают верхний уровень меню. Число рядом —
+что реально есть в базе на сейчас, включая полностью пустые реестры (не спрятаны, а честно показаны
+пустыми).
+</p>
+
+<div class="data-grid">
+  <a class="data-card" href="/dashboard"><div class="data-card-title">Главная (метрики)</div><div class="data-card-count">{{ counts.dashboard }} работ</div></a>
+  <a class="data-card" href="/critical"><div class="data-card-title">Критичные работы</div><div class="data-card-count">{{ counts.critical }} просрочено</div></a>
+  <a class="data-card" href="/works"><div class="data-card-title">Реестр работ</div><div class="data-card-count">{{ counts.works }} работ</div></a>
+  <a class="data-card" href="/resources"><div class="data-card-title">Ресурсы</div><div class="data-card-count">{{ counts.resources }} дней с данными</div></a>
+  <a class="data-card" href="/downtime"><div class="data-card-title">Простои</div><div class="data-card-count">{{ counts.downtime }} записей с комментарием</div></a>
+  <a class="data-card" href="/subcontractors"><div class="data-card-title">Субподрядчики</div><div class="data-card-count">{{ counts.subcontractors }} в реестре{% if counts.subcontractors == 0 %} — пусто{% endif %}</div></a>
+  <a class="data-card" href="/materials"><div class="data-card-title">Материалы и поставки</div><div class="data-card-count">{{ counts.materials }} в реестре{% if counts.materials == 0 %} — пусто{% endif %}</div></a>
+  <a class="data-card" href="/blockers"><div class="data-card-title">Ограничения</div><div class="data-card-count">{{ counts.blockers }} активных</div></a>
+  <a class="data-card" href="/daily-report"><div class="data-card-title">Ежедневная сводка</div><div class="data-card-count">по дате</div></a>
+  <a class="data-card" href="/executor"><div class="data-card-title">Обоснование Исполнителя</div><div class="data-card-count">{{ counts.executor }} на субподряде</div></a>
+  <a class="data-card" href="/quality"><div class="data-card-title">Качество данных</div><div class="data-card-count">{{ counts.quality }} требуют проверки</div></a>
+  <a class="data-card" href="/form"><div class="data-card-title">Ввод факта (форма)</div><div class="data-card-count">второй канал ввода</div></a>
+  <a class="data-card" href="/gantt"><div class="data-card-title">Интерактивный график</div><div class="data-card-count">{{ counts.gantt }} работ, рабочая поверхность</div></a>
+  <a class="data-card" href="/norms"><div class="data-card-title">Справочник норм (СТО-ССР + ГЭСН)</div><div class="data-card-count">{{ counts.ssr_norms }} операций СТО-ССР, поиск + расчёт на объём</div></a>
+  <a class="data-card" href="/norm-plan"><div class="data-card-title">Плановый график (56 позиций сметы)</div><div class="data-card-count">{{ counts.norm_plan }} нормированных позиций, ввод людей → срок</div></a>
+</div>
+{% endblock %}

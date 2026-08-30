@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Реестр работ</h1>
+<form class="filters" method="get">
+  <select name="source"><option value="">Источник: все</option>
+    {% for s in sources %}<option value="{{ s.source }}" {{ 'selected' if s.source==f_source }}>{{ s.source|ru_source }}</option>{% endfor %}
+  </select>
+  <select name="status"><option value="">Статус: все</option>
+    {% for s in statuses %}<option value="{{ s.status }}" {{ 'selected' if s.status==f_status }}>{{ s.status|ru_status }}</option>{% endfor %}
+  </select>
+  <select name="executor_type"><option value="">Исполнитель: все</option>
+    <option value="own_forces" {{ 'selected' if f_executor=='own_forces' }}>Собственные силы</option>
+    <option value="subcontract" {{ 'selected' if f_executor=='subcontract' }}>Субподряд</option>
+  </select>
+  <input type="text" name="q" placeholder="Поиск по наименованию" value="{{ f_q }}">
+  <button type="submit">Применить</button>
+</form>
+<p class="subtitle">Найдено: {{ rows|length }}</p>
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Источник</th><th>Наименование</th><th>Участок</th><th>Ед.</th><th>Статус</th><th>Исполнитель</th><th>% вып.</th><th>Качество</th></tr>
+{% for r in rows %}
+<tr>
+  <td><code>{{ r.code }}</code></td>
+  <td>{{ r.source|ru_source }}</td>
+  <td>{{ r.name }}</td>
+  <td>{{ r.location or '—' }}</td>
+  <td>{{ r.unit or '—' }}</td>
+  <td>{{ r.status|ru_status }}</td>
+  <td>{{ 'субподряд' if r.executor_type=='subcontract' else 'свои силы' }}</td>
+  <td>{% if r.fact_pct is not none %}{{ r.fact_pct }}%{% elif r.fact_pct_raw %}<span class="badge badge-warn">{{ r.fact_pct_raw }}</span>{% else %}—{% endif %}</td>
+  <td>{% if r.data_quality_flag=='needs_review' %}<span class="badge badge-warn">проверить</span>{% else %}<span class="badge badge-ok">ок</span>{% endif %}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% endblock %}

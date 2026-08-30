@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Справочник норм трудозатрат</h1>
+<p class="subtitle">
+Основной источник — СТО-ССР-2026 (внутренний норматив подрядчика ООО «ССР» для Spider Project, разделы
+работ соответствуют ТМ-35). Если в нём ничего не найдено — показываются совпадения из ГЭСН-2022
+(вспомогательный источник, госнорма общего назначения). Оба каталога не связаны автоматически с работами
+ПТО — введите реальный объём вручную.
+</p>
+
+<form class="filters" method="get">
+  <input type="text" name="q" placeholder="Поиск по наименованию (например: сварка, траншея)" value="{{ f_q }}">
+  <select name="section"><option value="">Раздел СТО-ССР: все</option>
+    {% for s in sections %}<option value="{{ s.section }}" {{ 'selected' if s.section==f_section }}>{{ s.section }}</option>{% endfor %}
+  </select>
+  <button type="submit">Найти</button>
+</form>
+
+{% if not f_q and not f_section %}
+<div class="empty-note">Введите текст для поиска или выберите раздел.</div>
+{% else %}
+
+<h2>СТО-ССР (основной)</h2>
+{% if ssr_rows %}
+<p class="subtitle">
+  Найдено: {{ ssr_total }}{% if ssr_total > result_limit %} (показаны первые {{ result_limit }}){% endif %}
+</p>
+<div class="table-wrap">
+<table>
+<tr><th>Раздел</th><th>Код</th><th>Наименование</th><th>Ед.изм.</th><th>Норма, чел-час</th><th>Расчёт на объём</th></tr>
+{% for r in ssr_rows %}
+<tr>
+  <td>{{ r.section }}</td>
+  <td><code>{{ r.code }}</code></td>
+  <td>{{ r.name }}</td>
+  <td>{{ r.unit or '—' }}</td>
+  <td>{% if r.labor_hours_per_unit is not none %}{{ r.labor_hours_per_unit }}{% else %}<span class="badge badge-warn">нет людской составляющей</span>{% endif %}</td>
+  <td>
+    {% if r.labor_hours_per_unit is not none %}
+    <input type="number" step="any" min="0" class="norm-vol" data-hours="{{ r.labor_hours_per_unit }}" placeholder="объём">
+    <span class="norm-result">— чел-час</span>
+    {% else %}—{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}
+<div class="empty-note">Не найдено в СТО-ССР.</div>
+{% endif %}
+
+{% if gesn_rows or (ssr_total == 0 and gesn_total) %}
+<h2 class="muted-heading">ГЭСН (вспомогательный источник — в СТО-ССР не найдено)</h2>
+<p class="subtitle">
+  Найдено: {{ gesn_total }}{% if gesn_total > result_limit %} (показаны первые {{ result_limit }}){% endif %}
+</p>
+<div class="table-wrap table-muted">
+<table>
+<tr><th>Сборник</th><th>Код</th><th>Наименование</th><th>Ед.изм.</th><th>Норма, чел-час</th><th>Расчёт на объём</th></tr>
+{% for r in gesn_rows %}
+<tr>
+  <td>{{ r.sbornik_title }}</td>
+  <td><code>{{ r.code }}</code></td>
+  <td>{{ r.name }}</td>
+  <td>{{ r.unit or '—' }}</td>
+  <td>{% if r.hours_per_unit is not none %}{{ r.hours_per_unit }}{% else %}<span class="badge badge-warn">не извлечена</span>{% endif %}</td>
+  <td>
+    {% if r.hours_per_unit is not none %}
+    <input type="number" step="any" min="0" class="norm-vol" data-hours="{{ r.hours_per_unit }}" placeholder="объём">
+    <span class="norm-result">— чел-час</span>
+    {% else %}—{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% elif ssr_total == 0 %}
+<div class="empty-note">Не найдено и в ГЭСН.</div>
+{% endif %}
+
+{% endif %}
+
+<script>
+document.querySelectorAll('.norm-vol').forEach(function(inp) {
+  inp.addEventListener('input', function() {
+    var hours = parseFloat(inp.dataset.hours);
+    var vol = parseFloat(inp.value);
+    var out = inp.nextElementSibling;
+    if (isFinite(vol) && vol >= 0) {
+      out.textContent = (vol * hours).toLocaleString('ru-RU', {maximumFractionDigits: 2}) + ' чел-час';
+    } else {
+      out.textContent = '— чел-час';
+    }
+  });
+});
+</script>
+{% endblock %}

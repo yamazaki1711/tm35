@@ -1,0 +1,31 @@
+server {
+    listen 80;
+    server_name tm.asd-kontur.ru;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name tm.asd-kontur.ru;
+
+    ssl_certificate /etc/letsencrypt/live/tm.asd-kontur.ru/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tm.asd-kontur.ru/privkey.pem;
+
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    root /var/www/tm;
+    autoindex off;
+
+    location / {
+        auth_basic "Restricted";
+        auth_basic_user_file /etc/nginx/tm.htpasswd;
+        try_files $uri $uri/ =404;
+    }
+}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Простои</h1>
+<p class="subtitle">
+Записей с комментарием: {{ total_with_comment }}. Из них с причиной по закрытому справочнику:
+{{ reason_coded }} — автоматическое распознавание причины по тексту комментария пока не реализовано.
+Ниже — исходный текст комментариев, для которых причина не классифицирована.
+</p>
+{% if rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Дата</th><th>Шифр работы</th><th>Наименование</th><th>План</th><th>Факт</th><th>Комментарий</th></tr>
+{% for r in rows %}
+<tr>
+  <td>{{ r.date|dmy }}</td><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td>
+  <td>{{ r.planned_crew if r.planned_crew is not none else '—' }}</td>
+  <td>{{ r.actual_crew if r.actual_crew is not none else '—' }}</td>
+  <td>{{ r.comment|strip_source_marker }}</td>
+</tr>
+{% endfor %}
+</table>
+</div>
+{% else %}<div class="empty-note">Нет записей с комментариями.</div>{% endif %}
+{% endblock %}

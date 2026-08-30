@@ -1,0 +1,217 @@
+/* Светлая тема, крупный шрифт, адаптивная вёрстка — для людей, а не для
+   дизайнеров. Тёмная узкая версия была неудобна инженеру ПТО (60 лет). */
+:root {
+  --bg: #ffffff; --panel: #f4f6f8; --border: #d6dbe1; --text: #1a2332;
+  --muted: #5a6472; --accent: #0b6fb0; --accent-text: #ffffff;
+  --ok: #1a7f37; --ok-bg: #e6f4ea;
+  --warn: #9a6700; --warn-bg: #fdf1d6;
+  --bad: #c0392b; --bad-bg: #fbe8e6;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.55; font-size: 17px;
+}
+a { color: var(--accent); }
+/* Ширина контейнера — 90% окна, отступы по 5% с каждого края, по
+   центру (координатор, 19-20.08.2026). Меню (nav) и содержимое (main)
+   выровнены по одной и той же ширине: фон nav — на всю ширину окна,
+   но его содержимое (.nav-inner) — в тех же границах, что main. */
+nav {
+  display: flex; padding: 0; background: var(--panel); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.nav-inner {
+  display: flex; flex-wrap: wrap; gap: .3rem; padding: .75rem 0;
+  max-width: 90%; margin: 0 auto; width: 90%;
+}
+nav a {
+  color: var(--muted); text-decoration: none; padding: .5rem .8rem; border-radius: .4rem; font-size: .95rem;
+}
+nav a:hover, nav a.active { background: var(--border); color: var(--text); }
+main { padding: 1.25rem 0; max-width: 90%; width: 90%; margin: 0 auto; }
+h1 { font-size: 1.6rem; margin: 0 0 .3rem; line-height: 1.3; }
+h2 { font-size: 1.25rem; margin: 1.5rem 0 .6rem; color: var(--accent); }
+.subtitle { color: var(--muted); margin-bottom: 1.5rem; font-size: 1rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+.tile {
+  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem; padding: 1rem;
+}
+.tile .value { font-size: 1.7rem; font-weight: 700; }
+.tile .label { color: var(--muted); font-size: 15px; margin-top: .3rem; }
+
+/* Таблицы — на узком экране превращаются в карточки, не сжимаются в кашу */
+.table-wrap { width: 100%; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 16px; margin-bottom: 1.5rem; }
+th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); }
+/* Sticky-заголовок таблиц убран целиком (был `position:sticky; top:65px`
+   у голого `th`) — на страницах с несколькими таблицами подряд (/report,
+   возможно и другие) Chrome путает контекст прилипания между соседними
+   таблицами: заголовок одной таблицы визуально съезжает на чужую позицию,
+   и через щель проглядывает хвост строки данных (найдено 20.08.2026).
+   Правка top:48→65px (см. историю) симптом не убрала — источник не в
+   офсете, а в самом наложении нескольких sticky-заголовков на одной
+   странице. Не выдумываю более сложное исправление под риском новых
+   похожих багов — обычный статичный заголовок надёжнее. Сравнить: у
+   `/gantt` свой рабочий sticky-заголовок (`table.gantt thead th`,
+   `backend/templates/gantt.html`) — он не затронут, привязан к
+   собственному прокручиваемому контейнеру `#gantt-scroll`, а не к
+   скроллу страницы, и там только одна такая таблица на экране. */
+th { color: var(--muted); font-weight: 600; background: var(--bg); }
+tr:hover td { background: rgba(11,111,176,.05); }
+tr:nth-child(even) td { background: rgba(0,0,0,.025); }
+
+.badge { display: inline-block; padding: .15rem .6rem; border-radius: 1rem; font-size: 14px; font-weight: 600; }
+.badge-ok { background: var(--ok-bg); color: var(--ok); }
+.badge-warn { background: var(--warn-bg); color: var(--warn); }
+.badge-bad { background: var(--bad-bg); color: var(--bad); }
+.empty-note {
+  padding: 1rem; border: 1px dashed var(--border); border-radius: .5rem; color: var(--muted); font-size: .9rem;
+}
+/* Вспомогательный источник (ГЭСН на /norms) — визуально приглушён, не
+   перепутать с основным (СТО-ССР) списком результатов. */
+.muted-heading { color: var(--muted); font-size: 1.05rem; }
+.table-muted { opacity: .85; }
+.table-muted table { background: rgba(0,0,0,.015); }
+/* Панель фильтров — все элементы одной высоты, выровнены по центральной
+   оси (координатор, 19-20.08.2026: "гуляет по высоте, галка и подпись
+   сидят выше кнопок"). Высота 38px — в требуемом диапазоне 36-40px. */
+form.filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: 1rem; }
+form.filters select, form.filters input, form.filters button {
+  height: 38px; box-sizing: border-box; margin: 0; font-size: 15px;
+}
+form.filters select, form.filters input {
+  background: #fff; border: 1px solid var(--border); color: var(--text);
+  padding: 0 .6rem; border-radius: .4rem;
+}
+form.filters button {
+  background: var(--accent); color: var(--accent-text); border: none;
+  padding: 0 1.1rem; border-radius: .4rem; font-weight: 700; cursor: pointer;
+}
+form.filters label {
+  display: inline-flex; align-items: center; gap: .35rem; height: 38px; font-size: 15px; color: var(--text);
+}
+form.filters label input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
+form.filters .dm-picker { height: 38px; }
+form.filters .subtitle, form.filters span.subtitle {
+  display: inline-flex; align-items: center; height: 38px; margin: 0; font-size: 15px;
+}
+.form-box { max-width: 480px; }
+.form-box label { display: block; margin-top: .9rem; font-size: .95rem; color: var(--text); font-weight: 600; }
+.form-box input, .form-box select, .form-box textarea {
+  width: 100%; background: #fff; border: 1px solid var(--border); color: var(--text);
+  padding: .6rem; border-radius: .4rem; margin-top: .3rem; font-size: 1rem;
+}
+button {
+  margin-top: 1.2rem; background: var(--accent); color: var(--accent-text); border: none;
+  padding: .7rem 1.3rem; border-radius: .5rem; font-weight: 700; font-size: 1rem; cursor: pointer;
+}
+button:hover { opacity: .92; }
+.flash { padding: .8rem 1rem; border-radius: .5rem; margin-bottom: 1rem; font-size: 1rem; }
+.flash-ok { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+.flash-err { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+code {
+  background: var(--panel); padding: .1rem .3rem; border-radius: .3rem; font-size: 15px;
+  white-space: nowrap; word-break: keep-all; hyphens: none;
+}
+/* Короткие значения таблиц (шифры, даты, числа, единицы) не переносятся —
+   правило проекта, ширина колонки считается от содержимого. */
+.nowrap { white-space: nowrap; }
+/* Колонка/ячейка с шифром работы — не переносится, под самый длинный шифр
+   (TM35-MAIN-000 — 13 символов) отведена минимальная ширина. */
+.col-code, th.col-shifr, td.col-shifr {
+  white-space: nowrap; min-width: 8.5rem;
+}
+
+.chart-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0 1.5rem; font-size: 14px; color: var(--muted); }
+.chart-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+.chart-legend i { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; }
+
+form.inline-edit { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; margin: 0; }
+form.inline-edit input { padding: .35rem .5rem; font-size: 14px; margin: 0; }
+form.inline-edit button, .btn-ok { margin: 0; padding: .35rem .7rem; font-size: 14px; }
+.btn-ok { background: var(--ok); color: #fff; border: none; border-radius: .4rem; cursor: pointer; }
+
+/* Суточный рапорт — документ, печатается/сохраняется в PDF браузером */
+.report-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.2rem; }
+.report-toolbar input, .report-toolbar button { padding: .5rem .7rem; }
+.report-doc { border: 1px solid var(--border); border-radius: .6rem; padding: 1.5rem; background: var(--bg); }
+.report-meta td { padding: .5rem .8rem .5rem 0; border: none; }
+.report-signature { margin-top: .5rem; padding: .8rem 0; font-size: 1.1rem; border-top: 1px dashed var(--border); }
+@media print {
+  nav, .no-print { display: none !important; }
+  main { padding: 0; max-width: none; }
+  .report-doc { border: none; padding: 0; }
+}
+
+/* Столбчатые диаграммы (потери, PPC) — без библиотек, CSS-ширина */
+.bar-chart { display: flex; flex-direction: column; gap: .5rem; margin-bottom: 1.5rem; }
+.bar-row { display: grid; grid-template-columns: 12rem 1fr 8rem; align-items: center; gap: .6rem; }
+.bar-label { font-size: .9rem; color: var(--muted); text-align: right; }
+.bar-track { background: var(--panel); border-radius: .3rem; height: 1.2rem; overflow: hidden; }
+.bar-fill { background: var(--accent); height: 100%; border-radius: .3rem; }
+.bar-fill.bar-bad { background: var(--bad); }
+.bar-value { font-size: .9rem; font-weight: 600; }
+@media (max-width: 640px) {
+  .bar-row { grid-template-columns: 6.5rem 1fr 5.5rem; }
+  .bar-label, .bar-value { font-size: .78rem; }
+}
+
+/* Раздел "Данные" — карточки-ссылки на реестры вместо пунктов меню */
+.data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .9rem; }
+.data-card {
+  display: block; background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;
+  padding: 1rem 1.1rem; text-decoration: none; color: var(--text);
+}
+.data-card:hover { border-color: var(--accent); }
+.data-card-title { font-weight: 600; margin-bottom: .3rem; }
+.data-card-count { color: var(--muted); font-size: 15px; }
+
+/* Виджет ввода даты (ДД.ММ.ГГГГ) — заменяет нативный <input type="date">,
+   чей вид зависит от локали браузера/ОС пользователя, не от страницы. */
+.dm-picker { position: relative; display: inline-flex; align-items: stretch; gap: .3rem; }
+.dm-picker .dm-text {
+  width: 8.5rem; background: #fff; border: 1px solid var(--border); color: var(--text);
+  padding: .5rem .6rem; border-radius: .4rem; font-size: .95rem; font-variant-numeric: tabular-nums;
+}
+.dm-picker .dm-text.dm-invalid { border-color: var(--bad); color: var(--bad); }
+.dm-picker .dm-btn {
+  margin: 0; background: #fff; border: 1px solid var(--border); color: var(--text);
+  padding: 0 .6rem; border-radius: .4rem; font-size: 1rem; cursor: pointer; line-height: 1;
+}
+.dm-picker .dm-btn:hover { border-color: var(--accent); opacity: 1; }
+.dm-cal {
+  position: absolute; top: calc(100% + .3rem); left: 0; z-index: 40; width: 16.5rem;
+  background: var(--bg); border: 1px solid var(--border); border-radius: .5rem;
+  box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: .6rem;
+}
+.dm-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.dm-cal-title { font-weight: 700; font-size: .9rem; }
+.dm-cal-nav {
+  margin: 0; background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  width: 1.8rem; height: 1.8rem; border-radius: .35rem; font-size: 1rem; cursor: pointer; padding: 0;
+}
+.dm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: .15rem; }
+.dm-cal-wd { text-align: center; font-size: .72rem; color: var(--muted); padding: .2rem 0; }
+.dm-cal-day {
+  margin: 0; background: none; border: none; color: var(--text); border-radius: .35rem;
+  padding: .4rem 0; font-size: .85rem; cursor: pointer; text-align: center;
+}
+.dm-cal-day:hover { background: var(--panel); }
+.dm-cal-today { font-weight: 700; color: var(--accent); }
+.dm-cal-selected { background: var(--accent); color: var(--accent-text); }
+@media (max-width: 640px) {
+  .dm-picker .dm-text { width: 7.2rem; font-size: .88rem; }
+}
+
+/* Адаптивность: на узких экранах — не разъезжаться, не резать по ширине */
+@media (max-width: 640px) {
+  body { font-size: 16px; }
+  main { padding: .75rem; }
+  nav { padding: .5rem; gap: .2rem; }
+  nav a { padding: .4rem .6rem; font-size: .85rem; }
+  h1 { font-size: 1.3rem; }
+  .grid { grid-template-columns: 1fr 1fr; }
+  th, td { padding: .5rem; font-size: .88rem; }
+}

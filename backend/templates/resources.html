@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Ресурсный дашборд</h1>
+{% if resource_pool_rows == 0 %}
+<div class="empty-note">Сводные строки «Итого кол-во человек» из Excel пока не сохраняются отдельно.
+Ниже — прямая агрегация фактически внесённых данных по датам.</div>
+{% endif %}
+<table>
+<tr><th>Дата</th><th>План, чел.</th><th>Факт, чел.</th><th>Дефицит (план−факт)</th><th>Работ с фактом за день</th></tr>
+{% for r in rows %}
+<tr>
+  <td>{{ r.date|dmy }}</td>
+  <td>{{ r.planned or 0 }}</td>
+  <td>{{ r.actual or 0 }}</td>
+  <td>{{ (r.planned or 0) - (r.actual or 0) }}</td>
+  <td>{{ r.works_with_fact }}</td>
+</tr>
+{% endfor %}
+</table>
+{% endblock %}

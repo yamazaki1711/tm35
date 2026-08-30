@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Плановый график по нормированным позициям сметы</h1>
+<p class="subtitle">
+{{ total_n }} позиций сметы (из 512), для которых трудоёмкость надёжно посчитана по справочнику норм
+(СТО-ССР основной / ГЭСН вспомогательный). Итого {{ total_hours }} чел-час.
+</p>
+<p class="subtitle">
+<b>Упрощение MVP:</b> срок по каждой позиции считается независимо — «если выделить N человек на эту
+работу с даты начала, когда она закончится» (без учёта выходных). Общий пул людей между позициями
+объекта <b>не моделируется</b> — бригады могут физически пересекаться, план не проверяет их
+занятость на других работах одновременно.
+</p>
+
+<form class="filters" method="post" action="/norm-plan" id="norm-plan-form">
+  <label>Дата начала работ
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off" value="{{ start|dmy }}">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+      <input type="hidden" name="start" id="start" value="{{ start }}" required>
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <button type="submit">Пересчитать</button>
+</form>
+
+<div class="table-wrap">
+<table>
+<tr>
+  <th>№ сметы</th>
+  <th>Наименование</th>
+  <th>Объём</th>
+  <th>Ед.</th>
+  <th>Источник нормы</th>
+  <th>Норма, чел-час/ед.</th>
+  <th>Трудоёмкость, чел-час</th>
+  <th>Людей</th>
+  <th>Срок, раб. дней</th>
+  <th>Дата окончания</th>
+</tr>
+{% for r in rows %}
+<tr>
+  <td class="nowrap">{{ r.smeta_n }}</td>
+  <td>{{ r.name }}</td>
+  <td class="nowrap">{{ r.qty }}</td>
+  <td class="nowrap">{{ r.unit or '—' }}</td>
+  <td class="nowrap">{{ r.matched_source }}</td>
+  <td class="nowrap">{{ r.hours_per_unit }}</td>
+  <td class="nowrap">{{ r.labor_hours_total }}</td>
+  <td class="nowrap">
+    <input type="number" name="people_{{ r.id }}" form="norm-plan-form" min="0" max="200" step="1"
+           value="{{ r.assigned_people if r.assigned_people is not none else '' }}" style="width:5em;">
+  </td>
+  <td class="nowrap">{{ r.working_days if r.working_days is not none else '—' }}</td>
+  <td class="nowrap">{{ r.forecast_date|dmy if r.forecast_date else '—' }}</td>
+</tr>
+{% endfor %}
+<tr>
+  <td colspan="6"><b>Итого</b></td>
+  <td class="nowrap"><b>{{ total_hours }}</b></td>
+  <td class="nowrap"><b>{{ total_assigned }} / {{ total_n }}</b></td>
+  <td colspan="2"></td>
+</tr>
+</table>
+</div>
+{% endblock %}

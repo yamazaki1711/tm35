@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>ТМ-35 Мониторинг — главная</h1>
+<p class="subtitle">Тепломагистраль-35, г. Хабаровск. Данные — импорт Excel от 16.08.2026 + веб-форма.</p>
+
+<div class="grid">
+  <div class="tile"><div class="value">{{ works_total }}</div><div class="label">Всего работ в справочнике</div></div>
+  <div class="tile"><div class="value">{{ needs_review }}</div><div class="label">Работ с флагом «требует проверки»</div></div>
+  <div class="tile"><div class="value">{{ unresolved }}</div><div class="label">Нерешённых ячеек импорта (даты)</div></div>
+</div>
+
+<h2>Прогресс и надёжность планирования</h2>
+{% if evm.available %}
+<p class="subtitle">
+Вес работы при расчёте прогресса — трудоёмкость (сколько человеко-дней по плану на неё уходит, из
+календаря Excel), а не просто число работ. Если трудоёмкость работы неизвестна — берём заявленную
+численность, а если и её нет — считаем работу за минимальную единицу, но не выбрасываем из расчёта
+({{ evm.weight_source_counts.trudoemkost }} работ по трудоёмкости, {{ evm.weight_source_counts.baseline_crew }} по
+заявленной численности, {{ evm.weight_source_counts.flat }} без данных). Если % выполнения не указан
+({{ evm.unknown_pct_count }} работ) — считаем 0%, чтобы не завышать картину. Данные на {{ evm.last_actual_date|dmy }}.
+</p>
+<div class="grid">
+  <div class="tile"><div class="value">{{ evm.weighted_pct }}%</div><div class="label">Прогресс по объёму работ (взвешенный, не «средняя температура»)</div></div>
+  <div class="tile"><div class="value">{{ evm.spi if evm.spi is not none else '—' }}</div><div class="label">Темп по графику (1.0 — идём по плану, меньше — отстаём)</div></div>
+  <div class="tile"><div class="value">{{ evm.cpi if evm.cpi is not none else '—' }}</div><div class="label">Отдача от вложенных людей (1.0 — как рассчитывали, меньше — люди тратятся, а прогресса меньше ожидаемого)</div></div>
+  <div class="tile"><div class="value">{{ evm.ppc_pct if evm.ppc_pct is not none else '—' }}%</div><div class="label">Надёжность планирования за 14 дн. ({{ evm.ppc_met }} из {{ evm.ppc_promised }} обещанных дней выполнено; в стройке считается хорошим результат от 80%)</div></div>
+</div>
+<p class="subtitle">
+Общая трудоёмкость объекта по календарю Excel — {{ evm.total_trudoemkost }} человеко-дней (только для
+работ, где есть календарные данные — не для всех {{ works_total }} работ).
+</p>
+{% else %}
+<div class="empty-note">Нет данных по факту — расчёт невозможен.</div>
+{% endif %}
+
+<h2>Люди на последний день с фактом{% if last_actual_date %} ({{ last_actual_date|dmy }}){% endif %}</h2>
+{% if today_totals and today_totals.planned is not none %}
+<div class="grid">
+  <div class="tile"><div class="value">{{ today_totals.planned or 0 }}</div><div class="label">План, чел.</div></div>
+  <div class="tile"><div class="value">{{ today_totals.actual or 0 }}</div><div class="label">Факт, чел.</div></div>
+  <div class="tile"><div class="value">{{ (today_totals.planned or 0) - (today_totals.actual or 0) }}</div><div class="label">Дефицит (план − факт)</div></div>
+</div>
+{% else %}
+<div class="empty-note">Нет данных по факту людей.</div>
+{% endif %}
+
+<h2>Работы по статусам</h2>
+<table>
+<tr><th>Статус</th><th>Кол-во</th></tr>
+{% for r in by_status %}<tr><td>{{ r.status|ru_status }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+</table>
+
+<h2>Топ-5 текстов комментариев — ориентировочные причины простоя</h2>
+<p class="subtitle">Причины простоя ниже — как записано в Excel текстом, без разбивки по типам (это только на старых данных из Excel — новые записи через график уже с выбором причины из списка).</p>
+{% if top_comments %}
+<table>
+<tr><th>Комментарий</th><th>Записей</th></tr>
+{% for r in top_comments %}<tr><td>{{ (r.comment|strip_source_marker)[:120] }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+</table>
+{% else %}<div class="empty-note">Комментариев нет.</div>{% endif %}
+
+<h2>Отставание по срокам (график работ)</h2>
+<p class="subtitle">
+Метрика про <b>СРОКИ</b>, не про людей — не путать с разделом «Укомплектованность ресурсом» ниже
+(докладная координатора: это две разные вещи, сливать в одну цифру нельзя — портит переговорную
+позицию, ТЗ 4.5). Плановый срок восстановлен из календарной матрицы Excel (первый/последний день с
+планом &gt; 0) — по проверке матрица ведёт себя как
+график работ, не ресурсная разнарядка. Учитываются только работы с высокой или средней точностью восстановления срока
+({{ crit.works_with_baseline_count }} из {{ works_total }}) — низкая уверенность (только текст
+«Месяц выполнения работ», без календаря) в этот расчёт не включена, чтобы не смешивать источники
+разной точности.
+</p>
+{% if crit.baseline_date %}
+<div class="grid">
+  <div class="tile">
+    <div class="value {{ 'badge-bad' if crit.overdue_count else 'badge-ok' }}">{{ crit.overdue_count }}</div>
+    <div class="label">Работ просрочено относительно плановых сроков (на {{ crit.today|dmy }})</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ crit.baseline_date|dmy }}</div>
+    <div class="label">Плановый срок объекта (последняя из работ по плану)</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ crit.forecast_date|dmy }}</div>
+    <div class="label">Расчётный прогноз (плановый срок + средняя текущая просрочка {{ crit.avg_lag }} дн.)</div>
+  </div>
+</div>
+<p class="subtitle">
+{% if crit.overdue_count %}
+  Прогноз = самый поздний срок по плану среди незавершённых работ ({{ crit.baseline_date|dmy }})
+  + средняя просрочка среди уже просроченных работ сейчас ({{ crit.avg_lag }} дн.). Это не полная
+  симуляция ТЗ 9 (та не реализована, вне периметра) — простая, объяснимая оценка по факту.
+{% else %}
+  Просроченных относительно плановых сроков работ нет — прогноз совпадает с плановый сроком.
+{% endif %}
+</p>
+<p><a href="/critical">Список просроченных работ →</a></p>
+{% else %}
+<div class="empty-note">Ни у одной работы нет временного плановый срока — расчёт невозможен.</div>
+{% endif %}
+
+<h2>Укомплектованность ресурсом на {{ crit.last_actual_date|dmy }}</h2>
+<p class="subtitle">
+Метрика про <b>ЛЮДЕЙ на конкретный день</b>, не про срок объекта — сколько было запланировано на
+{{ crit.last_actual_date|dmy }} против того, сколько реально вышло. Не смешивается с «Отставанием по
+срокам» выше и не служит источником «требуемой численности» (та — в калькуляторе ниже).
+</p>
+{% if crit.required_crew is not none and crit.actual_crew is not none %}
+<div class="grid">
+  <div class="tile"><div class="value">{{ crit.required_crew }}</div><div class="label">Запланировано на {{ crit.last_actual_date|dmy }} (Σ план по работам этого дня)</div></div>
+  <div class="tile"><div class="value">{{ crit.actual_crew }}</div><div class="label">Фактически вышло {{ crit.last_actual_date|dmy }}</div></div>
+  <div class="tile"><div class="value {{ 'badge-bad' if crit.deficit and crit.deficit > 0 }}">{{ crit.deficit }}</div><div class="label">Недобор на этот день (план − факт)</div></div>
+  <div class="tile"><div class="value">{{ crit.coverage_pct }}%</div><div class="label">Покрытие плана на этот день</div></div>
+</div>
+{% else %}
+<div class="empty-note">Недостаточно данных.</div>
+{% endif %}
+
+<h2>Калькулятор «Дата ↔ Люди» под директивный срок</h2>
+<p class="subtitle">
+Правильная формула (ТЗ 9.4.2, докладная координатора): остаток трудоёмкости ÷ оставшиеся рабочие
+дни — не сумма заявленной численности по активным работам (та формула давала 272 при 12
+фактических — бессмысленно завышенное число, потому что не учитывала ни прогресс, ни
+последовательность работ). Остаток считается ТОЛЬКО по работам с реальной трудоёмкостью из
+календарной матрицы — работы без таких данных явно исключены из расчёта, не додуманы.
+Это арифметика, не полная симуляция ТЗ 9 (сценарии с сохранением вариантов — вне периметра).
+</p>
+<div id="calc-info" class="subtitle">Загрузка…</div>
+<div class="form-box" style="display:flex; gap:2rem; flex-wrap:wrap; max-width:none;">
+  <div style="min-width:260px">
+    <label>Директивный срок → сколько людей нужно
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <input type="hidden" id="calc-date">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+    <button id="calc-date-btn" type="button">Посчитать</button>
+    <div id="calc-date-result" class="subtitle" style="margin-top:.5rem"></div>
+  </div>
+  <div style="min-width:260px">
+    <label>Доступно людей/день → когда закончим
+      <input type="number" id="calc-people" min="1" max="200">
+    </label>
+    <button id="calc-people-btn" type="button">Посчитать</button>
+    <div id="calc-people-result" class="subtitle" style="margin-top:.5rem"></div>
+  </div>
+</div>
+<script>
+(function () {
+  function fmtInfo(d) {
+    return 'Остаток трудоёмкости: ' + d.remaining_effort_days + ' чел-дн. (по ' + d.known_work_count +
+      ' работам с известной трудоёмкостью; ' + d.excluded_work_count + ' активных работ без данных — не учтены).';
+  }
+  fetch('/api/calculator').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('calc-info').textContent = fmtInfo(d);
+  });
+  document.getElementById('calc-date-btn').addEventListener('click', function () {
+    var v = document.getElementById('calc-date').value;
+    var out = document.getElementById('calc-date-result');
+    if (!v) { out.textContent = 'Укажите дату.'; return; }
+    fetch('/api/calculator?target_date=' + encodeURIComponent(v)).then(function(r){return r.json();}).then(function(d){
+      document.getElementById('calc-info').textContent = fmtInfo(d);
+      if (d.required_people == null) { out.textContent = 'Срок уже прошёл, сегодня, или трудоёмкость неизвестна — расчёт невозможен.'; return; }
+      out.textContent = 'Нужно ' + d.required_people + ' чел./день (' + d.working_days + ' рабочих дней до ' + TM35_RU_DATE.fmtDMY(d.target_date) + ').';
+    });
+  });
+  document.getElementById('calc-people-btn').addEventListener('click', function () {
+    var v = document.getElementById('calc-people').value;
+    var out = document.getElementById('calc-people-result');
+    if (!v) { out.textContent = 'Укажите число людей.'; return; }
+    fetch('/api/calculator?available_people=' + encodeURIComponent(v)).then(function(r){return r.json();}).then(function(d){
+      document.getElementById('calc-info').textContent = fmtInfo(d);
+      if (d.forecast_date == null) { out.textContent = 'Недостаточно данных или указано 0 человек.'; return; }
+      out.textContent = 'Завершение через ' + d.working_days_needed + ' рабочих дней — ' + TM35_RU_DATE.fmtDMY(d.forecast_date) + '.';
+    });
+  });
+})();
+</script>
+
+<h2>Топ-5 критических ограничений</h2>
+{% if blockers_total > 0 %}
+<p><a href="/blockers">Реестр ограничений ({{ blockers_total }})</a></p>
+{% else %}
+<div class="empty-note">Реестр ограничений пуст — данные по ограничениям пока не загружались.</div>
+{% endif %}
+{% endblock %}

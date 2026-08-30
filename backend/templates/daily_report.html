@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Ежедневная сводка</h1>
+<form class="filters" method="get" id="dr-form">
+  <span class="dm-picker" data-dm-picker>
+    <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+    <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+    <input type="hidden" name="date" value="{{ date }}">
+    <div class="dm-cal" hidden></div>
+  </span>
+  <button type="submit">Показать</button>
+</form>
+
+<h2>Что делалось {{ date|dmy }}</h2>
+{% if today_rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>План</th><th>Факт</th><th>Источник</th><th>Комментарий</th></tr>
+{% for r in today_rows %}
+<tr><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td>
+<td>{{ r.planned_crew if r.planned_crew is not none else '—' }}</td>
+<td>{{ r.actual_crew if r.actual_crew is not none else '—' }}</td>
+<td>{{ r.source|ru_dp_source }}</td><td>{{ r.comment|strip_source_marker or '—' }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% else %}<div class="empty-note">Нет записей на эту дату.</div>{% endif %}
+
+<h2>Планируется на следующий день</h2>
+{% if tomorrow_rows %}
+<div class="table-wrap">
+<table>
+<tr><th>Шифр</th><th>Наименование</th><th>План, чел.</th></tr>
+{% for r in tomorrow_rows %}
+<tr><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td><td>{{ r.planned_crew }}</td></tr>
+{% endfor %}
+</table>
+</div>
+{% else %}<div class="empty-note">Нет плановых записей на следующий день.</div>{% endif %}
+{% endblock %}

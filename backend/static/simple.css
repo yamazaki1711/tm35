@@ -1,0 +1,60 @@
+/* Главный экран для инженера ПТО — один список, без навигации, без
+   терминов. Крупный шрифт и большие поля ввода — рассчитано на человека,
+   который не пользуется компьютером как основным инструментом. */
+body.simple-page {
+  font-size: 20px;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1rem 1rem 4rem;
+}
+.simple-header { margin-bottom: 1.25rem; }
+.simple-header h1 { font-size: 1.7rem; margin: 0 0 .3rem; }
+.simple-header .date-line { color: var(--muted); font-size: 1.1rem; }
+.simple-header .date-line a { margin-left: .5rem; }
+
+.work-card {
+  border: 1px solid var(--border); border-radius: .7rem; padding: 1rem;
+  margin-bottom: 1rem; background: var(--panel);
+}
+.work-card .work-name { font-size: 1.15rem; font-weight: 700; margin-bottom: .6rem; line-height: 1.35; }
+.work-card .work-meta { color: var(--muted); font-size: .95rem; margin-bottom: .8rem; }
+.work-card .row2 { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; }
+.work-card .field { flex: 1; min-width: 130px; }
+.work-card label { display: block; font-size: 1rem; font-weight: 600; margin-bottom: .3rem; }
+.work-card input[type=number] {
+  width: 100%; font-size: 1.5rem; padding: .6rem; text-align: center;
+  border: 2px solid var(--border); border-radius: .5rem;
+}
+.work-card input[type=number]:focus { border-color: var(--accent); outline: none; }
+.work-card select {
+  width: 100%; font-size: 1.05rem; padding: .6rem; border: 2px solid var(--border); border-radius: .5rem;
+}
+.work-card .save-btn {
+  font-size: 1.15rem; padding: .8rem 1.5rem; margin-top: .9rem; width: 100%;
+}
+.work-card .save-ok {
+  display: none; margin-top: .6rem; color: var(--ok); font-weight: 700; font-size: 1.05rem;
+}
+.work-card .save-err {
+  display: none; margin-top: .6rem; color: var(--bad); font-weight: 700; font-size: 1rem;
+}
+.work-card.reason-hidden .reason-field { display: none; }
+
+.simple-empty {
+  text-align: center; padding: 2.5rem 1rem; color: var(--muted); font-size: 1.15rem;
+}
+.simple-footer {
+  text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border);
+  font-size: .95rem; color: var(--muted);
+}
+.other-work-toggle {
+  display: block; text-align: center; margin: 1.5rem 0; font-size: 1.05rem;
+  padding: .7rem; border: 1px dashed var(--border); border-radius: .6rem; cursor: pointer; background: none;
+  color: var(--accent); font-weight: 600; width: 100%;
+}
+#other-work-panel { display: none; }
+
+@media (max-width: 480px) {
+  body.simple-page { font-size: 18px; padding: .75rem .75rem 3rem; }
+  .work-card .row2 { flex-direction: column; align-items: stretch; }
+}
