@@ -111,6 +111,7 @@
   <div class="tile metric-flash" id="m-forecast"><div class="value">…</div><div class="label">Прогноз завершения</div></div>
   <div class="tile metric-flash" id="m-overdue"><div class="value">…</div><div class="label">Просрочено работ</div></div>
   <div class="tile metric-flash" id="m-deficit"><div class="value">…</div><div class="label">Дефицит людей (заявлено−факт)</div></div>
+  <div class="tile metric-flash" id="m-surplus"><div class="value">…</div><div class="label">Избыток людей (заявлено−факт)</div></div>
   <div class="tile metric-flash" id="m-coverage"><div class="value">…</div><div class="label">Покрытие ресурсом</div></div>
 </div>
 <p class="subtitle">Панель пересчитывается заново из БД после каждого сохранения в сетке (не только при
@@ -472,6 +473,7 @@
         setMetric('m-forecast', TM35_RU_DATE.fmtDMY(m.forecast_date), changed && m.forecast_date !== lastMetrics.forecast_date);
         setMetric('m-overdue', m.overdue_count != null ? String(m.overdue_count) : '—', changed && m.overdue_count !== lastMetrics.overdue_count);
         setMetric('m-deficit', m.deficit != null ? String(m.deficit) : '—', changed && m.deficit !== lastMetrics.deficit);
+        setMetric('m-surplus', m.surplus != null ? String(m.surplus) : '—', changed && m.surplus !== lastMetrics.surplus);
         setMetric('m-coverage', m.coverage_pct != null ? m.coverage_pct + '%' : '—', changed && m.coverage_pct !== lastMetrics.coverage_pct);
         lastMetrics = m;
       })
