@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Журнал входов и действий</h1>
+<p class="subtitle">Только для координатора. Записи, сделанные до введения учётных записей, остаются за
+общим пользователем «Веб-форма ТМ-35» — авторство не восстановлено и не выдумано.</p>
+
+<form class="filter-bar" method="get" action="/journal">
+  <div class="field">
+    <label for="f-user">Человек</label>
+    <select name="user_id" id="f-user">
+      <option value="">— все —</option>
+      {% for u in users %}
+      <option value="{{ u.id }}" {{ 'selected' if f_user_id==(u.id|string) }}>{{ u.full_name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="f-from">С даты</label>
+    <input type="date" name="date_from" id="f-from" value="{{ f_date_from }}">
+  </div>
+  <div class="field">
+    <label for="f-to">По дату</label>
+    <input type="date" name="date_to" id="f-to" value="{{ f_date_to }}">
+  </div>
+  <button type="submit">Применить</button>
+</form>
+
+<h2>Журнал входов ({{ logins|length }})</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Когда</th><th>Логин</th><th>Кто</th><th>Успех</th><th>Причина отказа</th><th>IP</th></tr></thead>
+  <tbody>
+  {% for l in logins %}
+  <tr>
+    <td class="nowrap">{{ l.created_at|dmy }}</td>
+    <td>{{ l.login_attempted }}</td>
+    <td>{{ l.full_name or '—' }}</td>
+    <td>{% if l.success %}<span class="row-status st-filled">успех</span>{% else %}<span class="row-status st-error">отказ</span>{% endif %}</td>
+    <td>{{ l.reason or '' }}</td>
+    <td>{{ l.ip or '—' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty-note">Записей нет.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>Журнал действий ({{ actions|length }})</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Когда</th><th>Кто</th><th>Сущность</th><th>№</th><th>Действие</th><th>Причина/форма</th></tr></thead>
+  <tbody>
+  {% for a in actions %}
+  <tr>
+    <td class="nowrap">{{ a.created_at|dmy }}</td>
+    <td>{{ a.full_name or 'Веб-форма ТМ-35 (общий вход)' }}</td>
+    <td>{{ a.entity_type | ru_entity_type }}</td>
+    <td>{{ a.entity_id }}</td>
+    <td>{{ a.action }}</td>
+    <td class="wrap">{{ a.reason or '' }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="6" class="empty-note">Записей нет.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,41 +1,58 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Качество данных</h1>
-<p class="subtitle">Отдельно от основных данных, не подмешано молча.</p>
+<p class="subtitle">Дефекты, найденные при импорте из Excel и помеченные для проверки ПТО — не
+исправлены молча, показаны как есть с пометкой, что именно не так.</p>
 
-<h2>Работы, требующие проверки ({{ flagged_works|length }})</h2>
+<h3>Работы, требующие проверки ({{ flagged_works|length }})</h3>
 {% if flagged_works %}
 <div class="table-wrap">
 <table>
-<tr><th>Шифр</th><th>Наименование</th><th>Замечание</th></tr>
-{% for r in flagged_works %}
-<tr><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td><td><span class="badge badge-warn">{{ r.data_quality_note }}</span></td></tr>
-{% endfor %}
+  <thead><tr><th>Шифр</th><th>Наименование</th><th>Замечание</th></tr></thead>
+  <tbody>
+  {% for w in flagged_works %}
+  <tr><td><code>{{ w.code }}</code></td><td class="wrap">{{ w.name }}</td><td class="wrap">{{ w.data_quality_note or '—' }}</td></tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
-{% else %}<div class="empty-note">Нет.</div>{% endif %}
+{% else %}
+<div class="empty-note">Работ, требующих проверки, нет.</div>
+{% endif %}
 
-<h2>Ежедневные записи, требующие проверки ({{ flagged_daily|length }})</h2>
+<h3>Записи плана/факта, требующие проверки ({{ flagged_daily|length }})</h3>
 {% if flagged_daily %}
 <div class="table-wrap">
 <table>
-<tr><th>Дата</th><th>Шифр</th><th>Замечание</th></tr>
-{% for r in flagged_daily %}<tr><td>{{ r.date|dmy }}</td><td><code>{{ r.code }}</code></td><td>{{ r.data_quality_note }}</td></tr>{% endfor %}
+  <thead><tr><th>Дата</th><th>Шифр</th><th>Замечание</th></tr></thead>
+  <tbody>
+  {% for r in flagged_daily %}
+  <tr><td>{{ r.date|dmy }}</td><td><code>{{ r.code }}</code></td><td class="wrap">{{ r.data_quality_note or '—' }}</td></tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
-{% else %}<div class="empty-note">Нет.</div>{% endif %}
+{% else %}
+<div class="empty-note">Записей плана/факта, требующих проверки, нет.</div>
+{% endif %}
 
-<h2>Нерешённые ячейки импорта ({{ unresolved|length }})</h2>
-<p class="subtitle">Записи не загружены вообще — для них не удалось однозначно определить дату.</p>
+<h3>Нераспознанные ячейки при импорте ({{ unresolved|length }})</h3>
 {% if unresolved %}
 <div class="table-wrap">
 <table>
-<tr><th>Лист</th><th>Ячейка</th><th>Шифр работы</th><th>Тип</th><th>Решено</th></tr>
-{% for r in unresolved %}
-<tr><td>{{ r.sheet }}</td><td><code>{{ r.cell_ref }}</code></td><td>{{ r.work_code or '—' }}</td>
-<td>{{ r.issue_type }}</td><td>{% if r.resolved %}<span class="badge badge-ok">да</span>{% else %}<span class="badge badge-bad">нет</span>{% endif %}</td></tr>
-{% endfor %}
+  <thead><tr><th>Лист</th><th>Ячейка</th><th>Шифр работы</th><th>Тип проблемы</th><th>Сырые данные</th><th>Статус</th></tr></thead>
+  <tbody>
+  {% for u in unresolved %}
+  <tr>
+    <td>{{ u.sheet }}</td><td><code>{{ u.cell_ref }}</code></td><td>{{ u.work_code or '—' }}</td>
+    <td>{{ u.issue_type }}</td><td class="wrap"><code>{{ u.raw_payload }}</code></td>
+    <td><span class="badge {{ 'badge-ok' if u.resolved else 'badge-warn' }}">{{ 'решено' if u.resolved else 'открыто' }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
-{% else %}<div class="empty-note">Нет.</div>{% endif %}
+{% else %}
+<div class="empty-note">Нераспознанных ячеек при импорте нет.</div>
+{% endif %}
 {% endblock %}

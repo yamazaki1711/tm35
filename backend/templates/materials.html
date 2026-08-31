@@ -1,17 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Материалы и поставки</h1>
+<p class="subtitle">Реестр материалов, которые могут блокировать работу — статус заявки/оплаты/доставки.</p>
+
 {% if rows %}
+<div class="table-wrap">
 <table>
-<tr><th>Наименование</th><th>Поставщик</th><th>Статус</th><th>Ожид. дата поставки</th><th>Блокирует работу</th></tr>
-{% for r in rows %}
-<tr><td>{{ r.name }}</td><td>{{ r.supplier or '—' }}</td><td>{{ r.status|ru_material_status }}</td>
-<td>{{ r.expected_delivery_date|dmy }}</td><td>{{ 'да' if r.blocks_work else 'нет' }}</td></tr>
-{% endfor %}
+  <thead><tr><th>Материал</th><th>Поставщик</th><th>Статус</th><th>Срок поставки план</th><th>Срок поставки факт</th><th>Блокирует работу</th><th>Комментарий</th></tr></thead>
+  <tbody>
+  {% for m in rows %}
+  <tr>
+    <td class="wrap">{{ m.name }}</td>
+    <td>{{ m.supplier or '—' }}</td>
+    <td><span class="badge {{ 'badge-bad' if m.status=='missing' else ('badge-ok' if m.status=='on_site' else 'badge-neutral') }}">{{ m.status|ru_material_status }}</span></td>
+    <td>{{ m.expected_delivery_date|dmy if m.expected_delivery_date else '—' }}</td>
+    <td>{{ m.actual_delivery_date|dmy if m.actual_delivery_date else '—' }}</td>
+    <td>{{ 'да' if m.blocks_work else 'нет' }}</td>
+    <td class="wrap">{{ m.comment or '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
 </table>
+</div>
 {% else %}
-<div class="empty-note">Реестр материалов пуст. Исходный файл не содержит отдельного структурированного
-реестра поставок (герметизаторы/изоляция/цемент и т.п. упоминаются только в текстовых примечаниях к
-отдельным работам) — реестр материалов пока не заполнялся.</div>
+<div class="empty-note">Реестр материалов пуст.</div>
 {% endif %}
 {% endblock %}

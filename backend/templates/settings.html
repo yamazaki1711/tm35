@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Настройки объекта</h1>
+<p class="subtitle">До 28.08.2026 эти значения менялись только прямым запросом в БД. Директивный срок
+показывается на «Сегодня». Координаты объекта — константа на весь объект (по опорам/участкам не
+разносится), используются автоподстановкой погоды на «Рапорт».</p>
+
+{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
+{% if errors %}
+<div class="flash flash-err"><b>Не сохранено — исправьте:</b>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form class="form-box" method="post" action="/settings" style="max-width:520px;">
+  <label>Директивный срок объекта
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="directive_deadline" value="{{ values.get('directive_deadline', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>Широта объекта
+    <input type="text" name="object_lat" value="{{ values.get('object_lat', '') }}" placeholder="например, 48.4852">
+  </label>
+  <label>Долгота объекта
+    <input type="text" name="object_lon" value="{{ values.get('object_lon', '') }}" placeholder="например, 135.0815">
+  </label>
+
+  <h2 style="margin-top:1.5rem">Окно отображения графиков</h2>
+  <p class="subtitle" style="margin-top:0">Ограничивает горизонтальную ось на «Графике производства работ» и
+  диаграммах «Успеваем?», а также точку отсчёта плитки «Прошло срока». Ввод факта задним числом это НЕ
+  ограничивает — данные вне окна остаются в базе, просто не рисуются на графиках.</p>
+  <label>Начало окна
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="display_window_start" value="{{ values.get('display_window_start', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>Конец окна
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="display_window_end" value="{{ values.get('display_window_end', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+
+  <button type="submit">Сохранить</button>
+</form>
+
+{% if current_user and current_user.role == 'admin' %}
+<p class="subtitle" style="margin-top:1.5rem">
+  <a href="/settings/users">Учётные записи и пароли →</a> ·
+  <a href="/journal">Журнал входов и действий →</a>
+</p>
+{% endif %}
+{% endblock %}

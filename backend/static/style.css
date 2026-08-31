@@ -1,217 +1,749 @@
-/* Светлая тема, крупный шрифт, адаптивная вёрстка — для людей, а не для
-   дизайнеров. Тёмная узкая версия была неудобна инженеру ПТО (60 лет). */
+/* ═══════════════════════════════════════════════
+   ТМ-35 — система оперативного учёта СМР и ИД
+   ═══════════════════════════════════════════════ */
+
 :root {
-  --bg: #ffffff; --panel: #f4f6f8; --border: #d6dbe1; --text: #1a2332;
-  --muted: #5a6472; --accent: #0b6fb0; --accent-text: #ffffff;
-  --ok: #1a7f37; --ok-bg: #e6f4ea;
-  --warn: #9a6700; --warn-bg: #fdf1d6;
-  --bad: #c0392b; --bad-bg: #fbe8e6;
+  /* Палитра */
+  --c-bg: #f3f5f8;
+  --c-surface: #ffffff;
+  --c-surface-alt: #f7f8fa;
+  --c-border: #e4e7ec;
+  --c-border-strong: #d0d5dd;
+
+  --c-text: #101828;
+  /* Контраст поднят 30.08.2026 (координатор — приглушённый текст плохо
+     читался по всему сайту, не только на /status): было #475467/#98a2b3.
+     Тёмная тема сайту не реализована (нет ни prefers-color-scheme, ни
+     переключателя нигде в style.css до этой правки) — координатор дал
+     и тёмные значения (#c9ccc2/#a4a89c) на будущее, но подключать их
+     сейчас нельзя: они рассчитаны на тёмный фон, а фон везде светлый
+     (--c-bg/--c-surface не имеют тёмного варианта) — если включить их
+     по prefers-color-scheme, текст станет светлым на светлом фоне у
+     любого посетителя с тёмной темой ОС, то есть станет ХУЖЕ, не
+     лучше. Оставлены закомментированы ниже — понадобятся, когда/если
+     на сайте появится настоящая тёмная тема (фон, поверхности, границы).
+     См. отчёт цикла — координатору на решение. */
+  --c-text-2: #3f4759;
+  --c-text-3: #5b6376;
+  /* --c-text-2-dark: #c9ccc2; --c-text-3-dark: #a4a89c; — не подключены, см. выше */
+
+  --c-primary: #1F3864;
+  --c-primary-light: #2E75B6;
+  --c-primary-bg: #eaf1fc;
+
+  --c-success: #12996a;
+  --c-success-bg: #e9f9f1;
+  --c-warning: #b5690a;
+  --c-warning-bg: #fff6e8;
+  --c-danger: #d13c30;
+  --c-danger-bg: #fdeeec;
+
+  /* Тени */
+  --shadow-sm: 0 1px 2px rgba(16,24,40,.05);
+  --shadow-md: 0 4px 10px -2px rgba(16,24,40,.08), 0 2px 4px -2px rgba(16,24,40,.06);
+  --shadow-lg: 0 16px 24px -6px rgba(16,24,40,.10), 0 4px 8px -2px rgba(16,24,40,.04);
+
+  /* Радиусы */
+  --r-sm: 7px;
+  --r-md: 11px;
+  --r-lg: 16px;
+
+  /* Переходы */
+  --t-fast: .13s ease;
+
+  /* Псевдонимы — старые имена токенов, встречающиеся во встроенных
+     стилях (gantt.html) и инлайн-стилях шаблонов. Раньше эти
+     переменные не были определены нигде, из-за чего график и часть
+     плашек рендерились совсем без цвета/границ/фона. */
+  --bg: var(--c-bg);
+  --panel: var(--c-surface);
+  --border: var(--c-border);
+  --text: var(--c-text);
+  --muted: var(--c-text-3);
+  --accent: var(--c-primary-light);
+  --accent-text: #ffffff;
+  --ok: var(--c-success);
+  --ok-bg: var(--c-success-bg);
+  --bad: var(--c-danger);
+  --bad-bg: var(--c-danger-bg);
+  --warn: var(--c-warning);
+  --warn-bg: var(--c-warning-bg);
+
+  /* График "Отклонение от директивного срока" (/status), 30.08.2026.
+     Цвета координатора (проверены валидатором на дальтонизм) заданы
+     переменными, чтобы тема переключалась в одном месте — но, как и
+     с --c-text-2/3 выше, сайт не имеет тёмного ФОНА нигде, поэтому
+     тёмный набор ниже НЕ включён через prefers-color-scheme: тёмные
+     оттенки (особенно --trend-deadline-dark) рассчитаны на тёмную
+     поверхность и проверялись на ней, а не на белой — включать их для
+     посетителей с тёмной темой ОС значило бы показывать непроверенное
+     сочетание. Значения записаны про запас, activируются вручную,
+     когда/если появится тёмная тема сайта.*/
+  --trend-pace: #eb6834;
+  --trend-plan: #2a78d6;
+  --trend-deadline: #d03b3b;
+  --trend-pace-dark: #d95926;
+  --trend-plan-dark: #3987e5;
+  --trend-deadline-dark: #e66767;
 }
-* { box-sizing: border-box; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
 html { -webkit-text-size-adjust: 100%; }
+
 body {
-  margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
-  background: var(--bg); color: var(--text); line-height: 1.55; font-size: 17px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+  background: var(--c-bg);
+  color: var(--c-text);
+  line-height: 1.6;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-a { color: var(--accent); }
-/* Ширина контейнера — 90% окна, отступы по 5% с каждого края, по
-   центру (координатор, 19-20.08.2026). Меню (nav) и содержимое (main)
-   выровнены по одной и той же ширине: фон nav — на всю ширину окна,
-   но его содержимое (.nav-inner) — в тех же границах, что main. */
+
+svg.icon { width: 1em; height: 1em; flex: none; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.15em; }
+
+/* ── Навигация ── */
 nav {
-  display: flex; padding: 0; background: var(--panel); border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; z-index: 10;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: var(--shadow-sm);
 }
 .nav-inner {
-  display: flex; flex-wrap: wrap; gap: .3rem; padding: .75rem 0;
-  max-width: 90%; margin: 0 auto; width: 90%;
+  display: flex;
+  align-items: center;
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  height: 58px;
+  gap: .2rem;
 }
+.nav-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: var(--c-primary);
+  text-decoration: none;
+  margin-right: 1rem;
+  white-space: nowrap;
+  letter-spacing: -.02em;
+}
+.nav-brand .mark {
+  width: 34px; height: 34px; border-radius: 9px;
+  background: linear-gradient(135deg, var(--c-primary), var(--c-primary-light));
+  color: #fff; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 800; letter-spacing: -.02em;
+}
+.nav-group { display: flex; align-items: center; gap: .15rem; }
+.nav-sep {
+  width: 1px; align-self: stretch; margin: .7rem .6rem;
+  background: var(--c-border);
+}
+.nav-spacer { flex: 1 1 auto; min-width: .5rem; }
 nav a {
-  color: var(--muted); text-decoration: none; padding: .5rem .8rem; border-radius: .4rem; font-size: .95rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  color: var(--c-text-2);
+  text-decoration: none;
+  padding: .5rem .7rem;
+  font-size: .87rem;
+  font-weight: 500;
+  border-radius: var(--r-sm);
+  transition: all var(--t-fast);
+  white-space: nowrap;
+  position: relative;
 }
-nav a:hover, nav a.active { background: var(--border); color: var(--text); }
-main { padding: 1.25rem 0; max-width: 90%; width: 90%; margin: 0 auto; }
-h1 { font-size: 1.6rem; margin: 0 0 .3rem; line-height: 1.3; }
-h2 { font-size: 1.25rem; margin: 1.5rem 0 .6rem; color: var(--accent); }
-.subtitle { color: var(--muted); margin-bottom: 1.5rem; font-size: 1rem; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
-.tile {
-  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem; padding: 1rem;
-}
-.tile .value { font-size: 1.7rem; font-weight: 700; }
-.tile .label { color: var(--muted); font-size: 15px; margin-top: .3rem; }
+nav a svg.icon { color: var(--c-text-3); transition: color var(--t-fast); }
+nav a:hover { color: var(--c-text); background: var(--c-surface-alt); }
+nav a:hover svg.icon { color: var(--c-text-2); }
+nav a.active { color: var(--c-primary); background: var(--c-primary-bg); font-weight: 600; }
+nav a.active svg.icon { color: var(--c-primary); }
+nav a.nav-service { color: var(--c-text-3); font-size: .82rem; }
+nav a.nav-service:hover { color: var(--c-text-2); }
+nav a.nav-service.active { color: var(--c-primary); }
 
-/* Таблицы — на узком экране превращаются в карточки, не сжимаются в кашу */
-.table-wrap { width: 100%; overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 16px; margin-bottom: 1.5rem; }
-th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--border); }
-/* Sticky-заголовок таблиц убран целиком (был `position:sticky; top:65px`
-   у голого `th`) — на страницах с несколькими таблицами подряд (/report,
-   возможно и другие) Chrome путает контекст прилипания между соседними
-   таблицами: заголовок одной таблицы визуально съезжает на чужую позицию,
-   и через щель проглядывает хвост строки данных (найдено 20.08.2026).
-   Правка top:48→65px (см. историю) симптом не убрала — источник не в
-   офсете, а в самом наложении нескольких sticky-заголовков на одной
-   странице. Не выдумываю более сложное исправление под риском новых
-   похожих багов — обычный статичный заголовок надёжнее. Сравнить: у
-   `/gantt` свой рабочий sticky-заголовок (`table.gantt thead th`,
-   `backend/templates/gantt.html`) — он не затронут, привязан к
-   собственному прокручиваемому контейнеру `#gantt-scroll`, а не к
-   скроллу страницы, и там только одна такая таблица на экране. */
-th { color: var(--muted); font-weight: 600; background: var(--bg); }
-tr:hover td { background: rgba(11,111,176,.05); }
-tr:nth-child(even) td { background: rgba(0,0,0,.025); }
+/* ── Выпадающие разделы меню (СМР/ИД) ── */
+.nav-dropdown { position: relative; }
+.nav-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  background: none;
+  border: none;
+  color: var(--c-text-2);
+  padding: .5rem .6rem .5rem .7rem;
+  margin: 0;
+  font-size: .87rem;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: var(--r-sm);
+  transition: all var(--t-fast);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.nav-dropdown-trigger:hover { color: var(--c-text); background: var(--c-surface-alt); box-shadow: none; transform: none; }
+.nav-dropdown-trigger svg.icon { color: var(--c-text-3); transition: color var(--t-fast); }
+.nav-dropdown-trigger:hover svg.icon { color: var(--c-text-2); }
+.nav-dropdown-trigger.active,
+.nav-dropdown-trigger[aria-expanded="true"] { color: var(--c-primary); background: var(--c-primary-bg); font-weight: 600; }
+.nav-dropdown-trigger.active svg.icon,
+.nav-dropdown-trigger[aria-expanded="true"] svg.icon { color: var(--c-primary); }
+.nav-dropdown-trigger .chevron { width: .8em; height: .8em; transition: transform var(--t-fast); }
+.nav-dropdown-trigger[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 
-.badge { display: inline-block; padding: .15rem .6rem; border-radius: 1rem; font-size: 14px; font-weight: 600; }
-.badge-ok { background: var(--ok-bg); color: var(--ok); }
-.badge-warn { background: var(--warn-bg); color: var(--warn); }
-.badge-bad { background: var(--bad-bg); color: var(--bad); }
-.empty-note {
-  padding: 1rem; border: 1px dashed var(--border); border-radius: .5rem; color: var(--muted); font-size: .9rem;
+.nav-dropdown-menu {
+  position: absolute;
+  top: calc(100% + .4rem);
+  left: 0;
+  min-width: 15rem;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  padding: .4rem;
+  z-index: 110;
+  flex-direction: column;
+  gap: .1rem;
 }
-/* Вспомогательный источник (ГЭСН на /norms) — визуально приглушён, не
-   перепутать с основным (СТО-ССР) списком результатов. */
-.muted-heading { color: var(--muted); font-size: 1.05rem; }
-.table-muted { opacity: .85; }
-.table-muted table { background: rgba(0,0,0,.015); }
-/* Панель фильтров — все элементы одной высоты, выровнены по центральной
-   оси (координатор, 19-20.08.2026: "гуляет по высоте, галка и подпись
-   сидят выше кнопок"). Высота 38px — в требуемом диапазоне 36-40px. */
-form.filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: 1rem; }
-form.filters select, form.filters input, form.filters button {
-  height: 38px; box-sizing: border-box; margin: 0; font-size: 15px;
+.nav-dropdown-menu[hidden] { display: none; }
+.nav-dropdown-menu:not([hidden]) { display: flex; }
+.nav-dropdown-menu a {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .55rem .7rem;
+  border-radius: var(--r-sm);
+  color: var(--c-text-2);
+  text-decoration: none;
+  font-size: .88rem;
+  font-weight: 500;
+  white-space: nowrap;
 }
-form.filters select, form.filters input {
-  background: #fff; border: 1px solid var(--border); color: var(--text);
-  padding: 0 .6rem; border-radius: .4rem;
+.nav-dropdown-menu a svg.icon { color: var(--c-text-3); flex: none; }
+.nav-dropdown-menu a:hover,
+.nav-dropdown-menu a:focus-visible { color: var(--c-text); background: var(--c-surface-alt); outline: none; }
+.nav-dropdown-menu a.active { color: var(--c-primary); background: var(--c-primary-bg); font-weight: 600; }
+.nav-dropdown-menu a.active svg.icon { color: var(--c-primary); }
+.nav-group-label {
+  padding: .5rem .7rem .3rem;
+  font-size: .68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--c-text-3);
 }
-form.filters button {
-  background: var(--accent); color: var(--accent-text); border: none;
-  padding: 0 1.1rem; border-radius: .4rem; font-weight: 700; cursor: pointer;
+.nav-group-label:not(:first-child) {
+  margin-top: .3rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--c-border);
 }
-form.filters label {
-  display: inline-flex; align-items: center; gap: .35rem; height: 38px; font-size: 15px; color: var(--text);
+
+/* ── Контейнер ── */
+main {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 2.25rem 1.5rem 4rem;
 }
-form.filters label input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
-form.filters .dm-picker { height: 38px; }
-form.filters .subtitle, form.filters span.subtitle {
-  display: inline-flex; align-items: center; height: 38px; margin: 0; font-size: 15px;
+
+/* ── Заголовки ── */
+h1 {
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  color: var(--c-text);
+  margin-bottom: .35rem;
 }
-.form-box { max-width: 480px; }
-.form-box label { display: block; margin-top: .9rem; font-size: .95rem; color: var(--text); font-weight: 600; }
+h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--c-text);
+  margin-bottom: .75rem;
+  letter-spacing: -.01em;
+}
+h3 {
+  font-size: .95rem;
+  font-weight: 700;
+  color: var(--c-text);
+  margin: 1.75rem 0 .85rem;
+  letter-spacing: -.01em;
+}
+.subtitle {
+  color: var(--c-text-3);
+  font-size: .875rem;
+  margin-bottom: 1.5rem;
+  max-width: 78ch;
+}
+
+/* ── Карточки ── */
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--t-fast), transform var(--t-fast);
+}
+.card:hover { box-shadow: var(--shadow-md); }
+.card-link { text-decoration: none; color: inherit; display: block; }
+.card-link:hover .card {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--c-primary-light);
+}
+
+/* ── Дашборд: заголовок ── */
+.dash-header { margin-bottom: 1.75rem; }
+
+/* ── Дашборд: KPI ряд ── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+.kpi {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: 1.25rem;
+  box-shadow: var(--shadow-sm);
+}
+.kpi-small .kpi { padding: 1rem; }
+.kpi-num {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--c-primary);
+  line-height: 1.1;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+}
+.kpi-small .kpi-num { font-size: 1.5rem; }
+.kpi-num.ok { color: var(--c-success); }
+.kpi-num.warn { color: var(--c-warning); }
+.kpi-num.danger { color: var(--c-danger); }
+.kpi-label { font-size: .8rem; color: var(--c-text-2); margin-top: .3rem; font-weight: 500; }
+.kpi-sub { font-size: .75rem; color: var(--c-text-3); margin-top: .2rem; }
+.kpi-hint {
+  font-size: .78rem; color: var(--c-text-3); margin-top: .6rem;
+  padding: .4rem .6rem; background: var(--c-surface-alt); border-radius: var(--r-sm);
+}
+
+/* Плитка "Недобор людей" (/status, 30.08.2026) — цвет цифры не
+   единственный носитель смысла, добавлена тонкая рамка тревоги и
+   слабая заливка того же цвета. */
+.kpi-alarm-outline {
+  border-color: var(--c-danger);
+  background: var(--c-danger-bg);
+}
+.kpi-sub-mono {
+  font-size: .74rem; color: var(--c-text-3); margin-top: .2rem;
+  font-family: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+/* Сигнал "срыв срока" — три уровня (не двоичный цвет). Значок + подпись
+   словами, цвет — только усиление, не единственный носитель смысла. */
+.deviation-badge {
+  display: inline-flex; align-items: center; gap: .35rem;
+  font-size: .8rem; font-weight: 600; margin-top: .3rem;
+}
+.deviation-badge svg.icon { width: 1.05em; height: 1.05em; }
+.deviation-badge.ok { color: var(--c-success); }
+.deviation-badge.risk { color: var(--c-warning); }
+.deviation-badge.danger { color: var(--c-danger); }
+
+/* Подсказка графика тренда — минимальный самодостаточный тултип, в
+   проекте раньше не было ни одного (grep по style.css/gantt.js — 0
+   совпадений), строится с нуля именно для этого графика. */
+.chart-tooltip {
+  position: fixed; z-index: 40; pointer-events: none;
+  background: var(--c-text); color: #fff;
+  font-size: .78rem; line-height: 1.5; padding: .5rem .65rem;
+  border-radius: var(--r-sm); box-shadow: var(--shadow-md);
+  max-width: 260px; opacity: 0; transition: opacity .1s ease;
+}
+.chart-tooltip.visible { opacity: 1; }
+.chart-tooltip b { font-weight: 700; }
+
+/* Легенды графиков /status (S-кривая, гистограмма, тренд) — класс
+   использовался в status.js с самого начала, но НИГДЕ не был описан в
+   CSS (grep — 0 совпадений до этой правки). Отсюда и жалоба "слиплась в
+   одну строку без цветовых меток" — не баг конкретно тренда, общий
+   пробел для всех трёх легенд страницы. Используется только здесь
+   (grep по static/templates — только status.js), безопасно чинить
+   одним местом. */
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: .4rem 1.25rem;
+  margin-top: .6rem; font-size: .82rem; color: var(--c-text-2);
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: .4rem; }
+.chart-legend i {
+  display: inline-block; width: .8rem; height: .8rem;
+  border-radius: 3px; flex: none;
+}
+
+.trend-point { cursor: pointer; }
+.trend-point:focus, .trend-point:focus-visible {
+  outline: 3px solid var(--c-primary-light);
+  outline-offset: 2px;
+}
+
+/* ── Быстрый доступ ── */
+.quick-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: .75rem;
+  margin-bottom: 1.75rem;
+}
+.qn-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .55rem;
+  padding: 1.2rem .5rem;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  text-decoration: none;
+  color: var(--c-text-2);
+  transition: all var(--t-fast);
+  box-shadow: var(--shadow-sm);
+}
+.qn-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--c-primary-light);
+  color: var(--c-primary);
+}
+.qn-icon {
+  width: 2.4rem; height: 2.4rem; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--c-primary-bg); color: var(--c-primary);
+}
+.qn-icon svg.icon { width: 1.3rem; height: 1.3rem; }
+.qn-item:hover .qn-icon { background: var(--c-primary); color: #fff; }
+.qn-text { font-size: .8rem; font-weight: 600; text-align: center; }
+
+/* ── Дашборд: секции ── */
+.dash-section { margin-bottom: 1.75rem; }
+.dash-section h2 { margin-bottom: .75rem; }
+
+/* ── Прогресс-бары ── */
+.progress-bar {
+  height: 8px; background: var(--c-surface-alt); border-radius: 4px;
+  overflow: hidden; margin-top: .5rem;
+}
+.progress-bar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
+.progress-bar-fill.ok { background: var(--c-success); }
+.progress-bar-fill.warn { background: var(--c-warning); }
+.progress-bar-fill.danger { background: var(--c-danger); }
+
+/* ── Таблицы ── */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-sm);
+}
+table, table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .89rem;
+  background: var(--c-surface);
+}
+th, td {
+  text-align: left;
+  padding: .65rem .85rem;
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+/* Перенос текста в ячейках — два явных состояния, единственное место, где
+   это решается. Локальные <style> на отдельных страницах НЕ переопределяют
+   white-space для table td/th — баг (клампы/эллипсисы на наименовании,
+   перенос шифра по дефису) уже возвращался дважды именно из-за такого
+   переопределения на /shift (найдено 28.08.2026).
+   .wrap  — длинный текст (наименование, описание, состав, комментарий):
+            переносится по словам целиком, строка таблицы растёт под
+            содержимое — никаких клампов, max-height, overflow:hidden.
+   .nowrap — шифры, даты, статусы: никогда не переносятся (у th/td это и
+            так значение по умолчанию выше; класс — чтобы колонка была явно
+            защищена от случайного white-space:normal у родителя/страницы,
+            а не просто "досталось от каскада"). */
+td.wrap, th.wrap { white-space: normal; overflow-wrap: break-word; min-width: 220px; }
+td.nowrap, th.nowrap { white-space: nowrap; }
+th {
+  color: var(--c-text-3);
+  font-weight: 600;
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  background: var(--c-surface-alt);
+  border-bottom: 2px solid var(--c-border-strong);
+}
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--c-surface-alt); }
+td form { margin: 0; }
+td button { margin-top: 0; }
+
+tr.row-overdue td { background: var(--c-danger-bg); color: var(--c-danger); font-weight: 700; }
+tr.row-done td { opacity: .55; }
+
+/* ── Бейджи ── */
+.badge {
+  display: inline-flex; align-items: center; gap: .3rem;
+  padding: .18rem .6rem; border-radius: 100px;
+  font-size: .72rem; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
+}
+.badge-ok { background: var(--c-success-bg); color: var(--c-success); }
+.badge-warn { background: var(--c-warning-bg); color: var(--c-warning); }
+.badge-bad { background: var(--c-danger-bg); color: var(--c-danger); }
+.badge-neutral { background: var(--c-surface-alt); color: var(--c-text-2); }
+
+/* ── Панель фильтра (компактная, в отличие от form-box для ввода записи) ── */
+.filter-bar {
+  display: flex; flex-wrap: wrap; align-items: end; gap: 1rem;
+  background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg);
+  padding: 1rem 1.25rem; margin-bottom: 1.5rem; box-shadow: var(--shadow-sm);
+}
+.filter-bar label {
+  display: flex; flex-direction: column; gap: .3rem;
+  font-size: .8rem; font-weight: 600; color: var(--c-text-2);
+}
+.filter-bar input, .filter-bar select {
+  background: var(--c-surface); border: 1px solid var(--c-border-strong); color: var(--c-text);
+  padding: .5rem .65rem; border-radius: var(--r-sm); font-size: .88rem; font-family: inherit; min-width: 10rem;
+}
+.filter-bar input:focus, .filter-bar select:focus {
+  outline: none; border-color: var(--c-primary-light); box-shadow: 0 0 0 3px rgba(46,117,182,.14);
+}
+.filter-bar button { margin-top: 0; }
+
+/* ── Формы ── */
+.form-box {
+  max-width: 620px;
+  margin: 0 auto;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: 1.5rem 1.75rem;
+  box-shadow: var(--shadow-sm);
+}
+.form-box:has(+ .table-wrap),
+.form-box:has(+ h3) { margin: 0 auto 2rem; }
+.form-box h3 { margin-top: 0; }
+.form-box label {
+  display: block; margin-top: 1rem; font-size: .85rem; font-weight: 600; color: var(--c-text-2);
+}
+.form-box label:first-child { margin-top: 0; }
 .form-box input, .form-box select, .form-box textarea {
-  width: 100%; background: #fff; border: 1px solid var(--border); color: var(--text);
-  padding: .6rem; border-radius: .4rem; margin-top: .3rem; font-size: 1rem;
+  width: 100%; background: var(--c-surface); border: 1px solid var(--c-border-strong);
+  color: var(--c-text); padding: .6rem .75rem; border-radius: var(--r-sm);
+  margin-top: .3rem; font-size: .9rem; font-family: inherit;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
 }
+.form-box input:focus, .form-box select:focus, .form-box textarea:focus {
+  outline: none; border-color: var(--c-primary-light); box-shadow: 0 0 0 3px rgba(46,117,182,.14);
+}
+.form-box textarea { resize: vertical; min-height: 60px; }
+
 button {
-  margin-top: 1.2rem; background: var(--accent); color: var(--accent-text); border: none;
-  padding: .7rem 1.3rem; border-radius: .5rem; font-weight: 700; font-size: 1rem; cursor: pointer;
+  margin-top: 1.25rem;
+  background: var(--c-primary);
+  color: #fff;
+  border: none;
+  padding: .65rem 1.75rem;
+  border-radius: var(--r-sm);
+  font-weight: 600;
+  font-size: .9rem;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
 }
-button:hover { opacity: .92; }
-.flash { padding: .8rem 1rem; border-radius: .5rem; margin-bottom: 1rem; font-size: 1rem; }
-.flash-ok { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
-.flash-err { background: var(--bad-bg); color: var(--bad); font-weight: 600; }
+button:hover { background: var(--c-primary-light); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+button:active { transform: translateY(0); }
+button.btn-ok { background: var(--c-success); }
+button.btn-ok:hover { background: #0f8a5c; }
+button.btn-secondary { background: var(--c-surface); color: var(--c-text-2); border: 1px solid var(--c-border-strong); }
+button.btn-secondary:hover { background: var(--c-surface-alt); color: var(--c-text); box-shadow: none; }
+
+/* Заметная кнопка-ссылка на "Обзоре" — тому, кто заходит вносить факт,
+   не нужно открывать меню СМР ради этого одного действия. */
+.cta-button {
+  display: inline-flex; align-items: center; gap: .55rem;
+  background: var(--c-primary); color: #fff; text-decoration: none;
+  padding: .8rem 1.4rem; border-radius: var(--r-md);
+  font-weight: 700; font-size: .95rem; white-space: nowrap;
+  box-shadow: var(--shadow-sm); transition: all var(--t-fast); flex: none;
+}
+.cta-button:hover { background: var(--c-primary-light); transform: translateY(-1px); box-shadow: var(--shadow-md); text-decoration: none; }
+.cta-button svg.icon { width: 1.2em; height: 1.2em; }
+
+.inline-edit { display: inline-flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.inline-edit input, .inline-edit button { margin-top: 0; }
+.inline-edit button { padding: .5rem 1rem; }
+
+/* ── Флэш-сообщения ── */
+.flash {
+  padding: .75rem 1rem; border-radius: var(--r-sm); margin-bottom: 1rem;
+  font-size: .88rem; font-weight: 500; display: flex; align-items: center; gap: .5rem;
+}
+.flash-ok { background: var(--c-success-bg); color: var(--c-success); }
+.flash-err { background: var(--c-danger-bg); color: var(--c-danger); }
+
+/* ── Данные: сетка реестров ── */
+.data-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: .9rem;
+}
+.data-card {
+  display: block;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  padding: 1rem 1.1rem;
+  text-decoration: none;
+  color: inherit;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--t-fast);
+  border-left: 3px solid var(--c-border);
+}
+.data-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-left-color: var(--c-primary-light);
+  text-decoration: none;
+}
+.data-card-title { font-size: .92rem; font-weight: 700; color: var(--c-text); margin-bottom: .3rem; }
+.data-card-count { font-size: .8rem; color: var(--c-text-3); }
+
+/* ── Отчёт (суточный рапорт) ── */
+.report-toolbar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: .75rem; margin-bottom: 1.5rem;
+  background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-md);
+  padding: .85rem 1.1rem; box-shadow: var(--shadow-sm);
+}
+.report-doc {
+  background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm); padding: 2rem 2.25rem; margin-bottom: 1.5rem;
+}
+.report-doc h1 { margin-bottom: .3rem; }
+.report-doc h2 { margin-top: 1.75rem; }
+.report-doc h2:first-of-type { margin-top: 1.5rem; }
+table.report-meta { width: auto; margin-bottom: 1.5rem; font-size: .9rem; }
+table.report-meta td { border: none; padding: .3rem 0; }
+table.report-meta td:first-child { color: var(--c-text-3); padding-right: 1.5rem; width: 9rem; }
+.report-signature {
+  margin-top: .5rem; padding: 1.75rem 0 .5rem; border-top: 1px dashed var(--c-border-strong);
+  font-weight: 600; color: var(--c-text-2); min-height: 1.5rem;
+}
+
+/* ── Прочее ── */
+.empty-note {
+  padding: 1rem 1.25rem; border: 1px dashed var(--c-border-strong); border-radius: var(--r-md);
+  color: var(--c-text-3); font-size: .88rem; text-align: center; background: var(--c-surface-alt);
+}
+a { color: var(--c-primary-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
 code {
-  background: var(--panel); padding: .1rem .3rem; border-radius: .3rem; font-size: 15px;
-  white-space: nowrap; word-break: keep-all; hyphens: none;
-}
-/* Короткие значения таблиц (шифры, даты, числа, единицы) не переносятся —
-   правило проекта, ширина колонки считается от содержимого. */
-.nowrap { white-space: nowrap; }
-/* Колонка/ячейка с шифром работы — не переносится, под самый длинный шифр
-   (TM35-MAIN-000 — 13 символов) отведена минимальная ширина. */
-.col-code, th.col-shifr, td.col-shifr {
-  white-space: nowrap; min-width: 8.5rem;
+  background: var(--c-surface-alt); padding: .1rem .35rem; border-radius: var(--r-sm); font-size: .85rem;
 }
 
-.chart-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin: .5rem 0 1.5rem; font-size: 14px; color: var(--muted); }
-.chart-legend span { display: inline-flex; align-items: center; gap: .35rem; }
-.chart-legend i { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; }
+/* ── Дата-пикер ── */
+.dm-picker { position: relative; display: inline-flex; align-items: stretch; gap: .3rem; }
+.dm-picker .dm-text {
+  width: 8.5rem; background: var(--c-surface); border: 1px solid var(--c-border-strong);
+  color: var(--c-text); padding: .5rem .6rem; border-radius: var(--r-sm);
+  font-size: .9rem; font-variant-numeric: tabular-nums;
+}
+.dm-picker .dm-text.dm-invalid { border-color: var(--c-danger); }
+.dm-picker .dm-btn {
+  margin: 0; background: var(--c-surface); border: 1px solid var(--c-border-strong);
+  color: var(--c-text-2); padding: 0 .6rem; border-radius: var(--r-sm); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.dm-picker .dm-btn:hover { border-color: var(--c-primary-light); color: var(--c-primary); }
+.dm-cal {
+  position: absolute; top: calc(100% + .3rem); left: 0; z-index: 40; width: 17rem;
+  background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg); padding: .6rem;
+}
+.dm-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
+.dm-cal-title { font-weight: 700; font-size: .9rem; color: var(--c-text); }
+.dm-cal-nav {
+  margin: 0; background: var(--c-surface-alt); border: 1px solid var(--c-border);
+  color: var(--c-text); width: 1.8rem; height: 1.8rem; border-radius: var(--r-sm);
+  font-size: 1rem; cursor: pointer; padding: 0;
+}
+.dm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: .15rem; }
+.dm-cal-wd { text-align: center; font-size: .72rem; color: var(--c-text-3); padding: .2rem 0; }
+.dm-cal-day {
+  margin: 0; background: none; border: none; color: var(--c-text);
+  border-radius: var(--r-sm); padding: .4rem 0; font-size: .85rem; cursor: pointer; text-align: center;
+}
+.dm-cal-day:hover { background: var(--c-surface-alt); }
+.dm-cal-today { font-weight: 700; color: var(--c-primary-light); }
+.dm-cal-selected { background: var(--c-primary); color: #fff; }
 
-form.inline-edit { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; margin: 0; }
-form.inline-edit input { padding: .35rem .5rem; font-size: 14px; margin: 0; }
-form.inline-edit button, .btn-ok { margin: 0; padding: .35rem .7rem; font-size: 14px; }
-.btn-ok { background: var(--ok); color: #fff; border: none; border-radius: .4rem; cursor: pointer; }
-
-/* Суточный рапорт — документ, печатается/сохраняется в PDF браузером */
-.report-toolbar { display: flex; gap: 1rem; align-items: center; margin-bottom: 1.2rem; }
-.report-toolbar input, .report-toolbar button { padding: .5rem .7rem; }
-.report-doc { border: 1px solid var(--border); border-radius: .6rem; padding: 1.5rem; background: var(--bg); }
-.report-meta td { padding: .5rem .8rem .5rem 0; border: none; }
-.report-signature { margin-top: .5rem; padding: .8rem 0; font-size: 1.1rem; border-top: 1px dashed var(--border); }
+/* ── Печать ── */
 @media print {
   nav, .no-print { display: none !important; }
   main { padding: 0; max-width: none; }
-  .report-doc { border: none; padding: 0; }
+  .card, .kpi, .report-doc { box-shadow: none; border: 1px solid #ccc; }
 }
 
-/* Столбчатые диаграммы (потери, PPC) — без библиотек, CSS-ширина */
-.bar-chart { display: flex; flex-direction: column; gap: .5rem; margin-bottom: 1.5rem; }
-.bar-row { display: grid; grid-template-columns: 12rem 1fr 8rem; align-items: center; gap: .6rem; }
-.bar-label { font-size: .9rem; color: var(--muted); text-align: right; }
-.bar-track { background: var(--panel); border-radius: .3rem; height: 1.2rem; overflow: hidden; }
-.bar-fill { background: var(--accent); height: 100%; border-radius: .3rem; }
-.bar-fill.bar-bad { background: var(--bad); }
-.bar-value { font-size: .9rem; font-weight: 600; }
-@media (max-width: 640px) {
-  .bar-row { grid-template-columns: 6.5rem 1fr 5.5rem; }
-  .bar-label, .bar-value { font-size: .78rem; }
-}
-
-/* Раздел "Данные" — карточки-ссылки на реестры вместо пунктов меню */
-.data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .9rem; }
-.data-card {
-  display: block; background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;
-  padding: 1rem 1.1rem; text-decoration: none; color: var(--text);
-}
-.data-card:hover { border-color: var(--accent); }
-.data-card-title { font-weight: 600; margin-bottom: .3rem; }
-.data-card-count { color: var(--muted); font-size: 15px; }
-
-/* Виджет ввода даты (ДД.ММ.ГГГГ) — заменяет нативный <input type="date">,
-   чей вид зависит от локали браузера/ОС пользователя, не от страницы. */
-.dm-picker { position: relative; display: inline-flex; align-items: stretch; gap: .3rem; }
-.dm-picker .dm-text {
-  width: 8.5rem; background: #fff; border: 1px solid var(--border); color: var(--text);
-  padding: .5rem .6rem; border-radius: .4rem; font-size: .95rem; font-variant-numeric: tabular-nums;
-}
-.dm-picker .dm-text.dm-invalid { border-color: var(--bad); color: var(--bad); }
-.dm-picker .dm-btn {
-  margin: 0; background: #fff; border: 1px solid var(--border); color: var(--text);
-  padding: 0 .6rem; border-radius: .4rem; font-size: 1rem; cursor: pointer; line-height: 1;
-}
-.dm-picker .dm-btn:hover { border-color: var(--accent); opacity: 1; }
-.dm-cal {
-  position: absolute; top: calc(100% + .3rem); left: 0; z-index: 40; width: 16.5rem;
-  background: var(--bg); border: 1px solid var(--border); border-radius: .5rem;
-  box-shadow: 0 6px 18px rgba(0,0,0,.15); padding: .6rem;
-}
-.dm-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .5rem; }
-.dm-cal-title { font-weight: 700; font-size: .9rem; }
-.dm-cal-nav {
-  margin: 0; background: var(--panel); border: 1px solid var(--border); color: var(--text);
-  width: 1.8rem; height: 1.8rem; border-radius: .35rem; font-size: 1rem; cursor: pointer; padding: 0;
-}
-.dm-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: .15rem; }
-.dm-cal-wd { text-align: center; font-size: .72rem; color: var(--muted); padding: .2rem 0; }
-.dm-cal-day {
-  margin: 0; background: none; border: none; color: var(--text); border-radius: .35rem;
-  padding: .4rem 0; font-size: .85rem; cursor: pointer; text-align: center;
-}
-.dm-cal-day:hover { background: var(--panel); }
-.dm-cal-today { font-weight: 700; color: var(--accent); }
-.dm-cal-selected { background: var(--accent); color: var(--accent-text); }
-@media (max-width: 640px) {
-  .dm-picker .dm-text { width: 7.2rem; font-size: .88rem; }
-}
-
-/* Адаптивность: на узких экранах — не разъезжаться, не резать по ширине */
-@media (max-width: 640px) {
-  body { font-size: 16px; }
-  main { padding: .75rem; }
-  nav { padding: .5rem; gap: .2rem; }
-  nav a { padding: .4rem .6rem; font-size: .85rem; }
+/* ── Адаптивность (телефоны — не входит в проверяемый диапазон рабочих
+     разрешений ПТО, но не должно ломаться) ── */
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+  main { padding: 1rem; }
+  .nav-inner { padding: 0 .5rem; height: 50px; }
+  nav a, .nav-dropdown-trigger { padding: .4rem .5rem; font-size: .8rem; }
   h1 { font-size: 1.3rem; }
-  .grid { grid-template-columns: 1fr 1fr; }
-  th, td { padding: .5rem; font-size: .88rem; }
+  .kpi-num { font-size: 1.5rem; }
+  .quick-nav { grid-template-columns: repeat(2, 1fr); }
+  .kpi-row { grid-template-columns: 1fr 1fr; }
+  th, td { padding: .45rem; font-size: .82rem; }
+  .form-box { padding: 1rem; }
+  .report-doc { padding: 1.25rem; }
 }
+
+/* Подписи и шеврон убираем только на реально узких телефонах (найдено
+   29.08.2026: жалоба "не работает на планшетах Android" — планшеты
+   612-768px попадали под старый порог 768px вместе с телефонами,
+   оставаясь без подписей "Обзор"/"СМР"/"ИД"/"Данные" И без шеврона
+   дропдауна — непонятно, что вообще кликать. Замерено: подписи + иконки
+   реально помещаются без переноса и без горизонтальной прокрутки до
+   480px включительно, ломаются только у 430px и уже. Планшеты (обычно
+   ≥600px даже в портретной ориентации) теперь всегда с подписями). */
+@media (max-width: 460px) {
+  nav a .nav-label, .nav-dropdown-trigger .nav-label { display: none; }
+  .nav-dropdown-trigger .chevron { display: none; }
+}
+
+/* Подготовка пилота, 30.08.2026 — /losses (шаблон был только локально,
+   backend/templates/losses.html, на сервере отсутствовал — 500). Плитки
+   переписаны на существующий .kpi-row/.kpi (см. остальной сайт), тут —
+   только горизонтальные бары, которых больше нигде на сайте нет. */
+.bar-chart { display: flex; flex-direction: column; gap: .55rem; margin: 1rem 0; }
+.bar-row { display: grid; grid-template-columns: minmax(120px, 200px) 1fr auto; align-items: center; gap: .75rem; font-size: .85rem; }
+.bar-label { color: var(--c-text-2); }
+.bar-track { background: var(--c-surface-alt); border: 1px solid var(--c-border); border-radius: var(--r-sm); height: .9rem; overflow: hidden; }
+.bar-fill { background: var(--c-primary-light); height: 100%; border-radius: var(--r-sm); }
+.bar-fill.bar-bad { background: var(--c-danger); }
+.bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--c-text); font-weight: 600; min-width: 4.5rem; }
+
+
+
+

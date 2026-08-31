@@ -1,19 +1,65 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Ограничения (стоп-факторы)</h1>
+
+{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
+{% if errors %}
+<div class="flash flash-err"><b>Не сохранено — исправьте:</b>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form id="blocker-form" class="form-box" method="post" action="/blockers" style="max-width:640px;">
+  <h3 style="margin-top:0;">Новый стоп-фактор</h3>
+  <label>Работа (если относится к конкретной работе)
+    <select name="work_id">
+      <option value="" {{ 'selected' if not values.get('work_id') }}>— без привязки к работе —</option>
+      {% for w in work_rows %}
+      <option value="{{ w.id }}" {{ 'selected' if values.get('work_id')|string == w.id|string }}>{{ w.code }} — {{ w.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Тип (обязательно)
+    <select name="blocker_type" required>
+      <option value="" {{ 'selected' if not values.get('blocker_type') }} disabled>— выбрать —</option>
+      {% for code, label in blocker_types %}
+      <option value="{{ code }}" {{ 'selected' if values.get('blocker_type') == code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Описание (обязательно)
+    <textarea name="description" rows="3" required>{{ values.get('description', '') }}</textarea>
+  </label>
+  <label>Ожидаемая дата снятия
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="expected_resolution_date" value="{{ values.get('expected_resolution_date', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>Ответственный
+    <input type="text" name="responsible_name" value="{{ values.get('responsible_name', '') }}">
+  </label>
+  <button type="submit">Создать</button>
+</form>
+
+<h3>Реестр <a href="/export/blockers.csv" style="font-size:.8rem;font-weight:500">Скачать CSV</a></h3>
 {% if rows %}
 <div class="table-wrap">
 <table>
 <tr><th>Работа</th><th>Тип</th><th>Описание</th><th>Статус</th><th>Возникло</th><th>Влияние, дней</th></tr>
 {% for r in rows %}
-<tr><td>{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td>{{ r.blocker_type|ru_blocker_type }}</td><td>{{ r.description|strip_source_marker }}</td>
+<tr><td>{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td>{{ r.blocker_type|ru_blocker_type }}</td><td class="wrap">{{ r.description|strip_source_marker }}</td>
 <td>{{ r.status|ru_blocker_status if r.status else '—' }}</td><td>{{ r.created_at|dmy }}</td><td>{{ r.impact_days or '—' }}</td></tr>
 {% endfor %}
 </table>
 </div>
 {% else %}
 <div class="empty-note">Реестр ограничений пуст. В разделе «Простои» уже видны текстовые комментарии из
-Excel, которые содержат причины остановок — но они пока не превращены в структурированные записи реестра
+из комментариев — превращаются в структурированные записи реестра
 ограничений (тип, статус, дата снятия). См. /downtime.</div>
 {% endif %}
 {% endblock %}
+
+

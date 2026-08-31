@@ -8,7 +8,23 @@
   var COLOR_FACT = "#1a7f37";
   var COLOR_FORECAST = "#9a6700";
   var COLOR_BAD = "#c0392b";
-  var COLOR_MUTED = "#5a6472";
+  // Контраст поднят 30.08.2026 вместе с --c-text-3 в style.css (тот же
+  // приглушённый текст, здесь — раз рисуется в SVG атрибутами, а не CSS).
+  var COLOR_MUTED = "#5b6376";
+
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    return (v && v.trim()) || fallback;
+  }
+
+  var _tooltipEl = null;
+  function ensureTooltip() {
+    if (_tooltipEl) return _tooltipEl;
+    _tooltipEl = document.createElement("div");
+    _tooltipEl.className = "chart-tooltip";
+    document.body.appendChild(_tooltipEl);
+    return _tooltipEl;
+  }
 
   function el(tag, attrs) {
     var e = document.createElementNS(SVGNS, tag);
@@ -173,9 +189,25 @@
     container.appendChild(legend);
   }
 
-  function buildTrend(container, trend) {
+  function buildTrend(container, trend, directiveDeadlineIso) {
     var pace = (trend && trend.pace) || [];
     var lag = (trend && trend.baseline_lag) || [];
+
+    if (!directiveDeadlineIso) {
+      container.innerHTML = '<div class="empty-note">Директивный срок не задан — задайте его выше' +
+        ', чтобы увидеть отклонение по неделям.</div>';
+      return;
+    }
+    var deadline = toDate(directiveDeadlineIso);
+    // Пункт 3, 30.08.2026: единое соглашение знаков с плиткой "Отклонение
+    // прогноза от директивного срока" наверху страницы — там просрочка уже
+    // считалась ПОЛОЖИТЕЛЬНЫМ числом (forecast - deadline). Геометрия
+    // графика (что выше/ниже нуля) не меняется — позже по времени всё
+    // так же ниже, это ось дат. Меняются только ЦИФРЫ подписей: geomValue
+    // двигает точку по Y (как раньше), overdueDays — то, что печатается.
+    function geomValue(p) { return dayDiff(toDate(p.forecast_date), deadline); }
+    function overdueDays(p) { return -geomValue(p); }
+
     if (Math.max(pace.length, lag.length) < 2) {
       var lines = [];
       if (pace.length) lines.push('по темпу: ' + window.TM35_RU_DATE.fmtDMY(pace[pace.length - 1].forecast_date));
@@ -184,63 +216,163 @@
         ' первая неделя (' + (lines.join(', ') || 'нет данных') + '), для линии тренда нужно минимум две. Зайдите через неделю.</div>';
       return;
     }
-    var W = 900, H = 260, PAD_L = 90, PAD_R = 20, PAD_T = 20, PAD_B = 40;
+
+    // PAD_R с запасом под самую длинную подпись конца линии
+    // ("План+просрочка −32") — 130 обрезалось SVG-вьюбоксом, живой скриншот
+    // это поймал (30.08.2026).
+    var W = 900, H = 280, PAD_L = 90, PAD_R = 175, PAD_T = 20, PAD_B = 40;
     var allWeeks = [];
     pace.forEach(function (p) { allWeeks.push(p.week); });
     lag.forEach(function (p) { if (allWeeks.indexOf(p.week) === -1) allWeeks.push(p.week); });
     allWeeks.sort();
-    var allDates = pace.concat(lag).map(function (p) { return toDate(p.forecast_date); });
-    var minD = new Date(Math.min.apply(null, allDates));
-    var maxD = new Date(Math.max.apply(null, allDates));
-    var span = Math.max(1, dayDiff(minD, maxD));
+
+    var values = pace.concat(lag).map(geomValue);
+    var rawMin = Math.min.apply(null, values.concat([0]));
+    var rawMax = Math.max.apply(null, values.concat([0]));
+    var span0 = Math.max(1, rawMax - rawMin);
+    var pad = Math.max(3, span0 * 0.18);
+    var yMin = rawMin - pad, yMax = rawMax + pad;
 
     function xs(week) { return PAD_L + allWeeks.indexOf(week) / Math.max(1, allWeeks.length - 1) * (W - PAD_L - PAD_R); }
-    function ys(d) { return PAD_T + dayDiff(minD, d) / span * (H - PAD_T - PAD_B); }
+    function ys(v) { return PAD_T + (yMax - v) / (yMax - yMin) * (H - PAD_T - PAD_B); }
 
-    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, width: "100%", style: "max-width:" + W + "px" });
+    var COLOR_PACE = cssVar("--trend-pace", "#eb6834");
+    var COLOR_PLAN2 = cssVar("--trend-plan", "#2a78d6");
+    var COLOR_DEADLINE = cssVar("--trend-deadline", "#d03b3b");
+
+    var svg = el("svg", {
+      viewBox: "0 0 " + W + " " + H, width: "100%", style: "max-width:" + W + "px",
+      role: "img", "aria-label": "График отклонения прогноза от директивного срока по неделям",
+    });
+
+    // Зона просрочки (ниже нуля) — слабая заливка, не спорит с линиями.
+    var zeroY = ys(0);
+    var zoneH = (H - PAD_B) - zeroY;
+    if (zoneH > 0) {
+      svg.appendChild(el("rect", {
+        x: PAD_L, y: zeroY, width: W - PAD_L - PAD_R, height: zoneH,
+        fill: COLOR_DEADLINE, "fill-opacity": 0.075,
+      }));
+    }
+
+    // Сетка/подписи Y — "круглый" шаг в днях, ноль подписан "срок".
+    var rangeSpan = yMax - yMin;
+    var niceSteps = [1, 2, 5, 10, 15, 20, 25, 50, 100];
+    var step = niceSteps[niceSteps.length - 1];
+    for (var si = 0; si < niceSteps.length; si++) {
+      if (niceSteps[si] >= rangeSpan / 5) { step = niceSteps[si]; break; }
+    }
+    var firstTick = Math.ceil(yMin / step) * step;
+    for (var v = firstTick; v <= yMax + 0.001; v += step) {
+      var rv = Math.round(v);          // геометрия (положение по Y) — не меняем
+      var dispRv = -rv;                // подпись — просрочка положительная
+      var ty = ys(v);
+      svg.appendChild(el("line", { x1: PAD_L, x2: W - PAD_R, y1: ty, y2: ty, stroke: "#eef1f3", "stroke-width": 1 }));
+      var tl = el("text", { x: PAD_L - 10, y: ty + 4, "text-anchor": "end", "font-size": 13, fill: COLOR_MUTED });
+      tl.textContent = (rv === 0) ? "срок" : (dispRv > 0 ? "+" + dispRv : String(dispRv));
+      if (rv === 0) tl.setAttribute("font-weight", "700");
+      svg.appendChild(tl);
+    }
+
+    // Ось X — недели (дата понедельника, не номер недели — правило проекта).
     allWeeks.forEach(function (w) {
       var x = xs(w);
-      var lbl = el("text", { x: x, y: H - PAD_B + 16, "text-anchor": "middle", "font-size": 14, fill: COLOR_MUTED });
-      lbl.textContent = fmtDM(toDate(w));  // w — дата понедельника этой недели (ГГГГ-ММ-ДД из backend), не номер недели
+      var lbl = el("text", { x: x, y: H - PAD_B + 18, "text-anchor": "middle", "font-size": 13, fill: COLOR_MUTED });
+      lbl.textContent = fmtDM(toDate(w));
       svg.appendChild(lbl);
     });
-    function drawLine(points, color) {
-      if (points.length < 1) return;
-      var pts = points.map(function (p) { return xs(p.week) + "," + ys(toDate(p.forecast_date)); }).join(" ");
-      if (points.length > 1) svg.appendChild(el("polyline", { points: pts, fill: "none", stroke: color, "stroke-width": 2.5 }));
-      points.forEach(function (p) {
-        svg.appendChild(el("circle", { cx: xs(p.week), cy: ys(toDate(p.forecast_date)), r: 3.5, fill: color }));
+
+    // Линия директивного срока — поверх зоны/сетки, подписана датой справа.
+    svg.appendChild(el("line", {
+      x1: PAD_L, x2: W - PAD_R, y1: zeroY, y2: zeroY, stroke: COLOR_DEADLINE,
+      "stroke-width": 2, "stroke-dasharray": "7,4",
+    }));
+    var deadlineLbl = el("text", {
+      x: W - PAD_R + 8, y: zeroY + 4, "font-size": 13, "font-weight": 700, fill: COLOR_DEADLINE,
+    });
+    deadlineLbl.textContent = window.TM35_RU_DATE.fmtDMY(directiveDeadlineIso);
+    svg.appendChild(deadlineLbl);
+
+    var tooltip = ensureTooltip();
+
+    function drawSeries(points, color, seriesName) {
+      if (!points.length) return null;
+      var pts = points.map(function (p) { return { x: xs(p.week), y: ys(geomValue(p)), p: p }; });
+      if (pts.length > 1) {
+        svg.appendChild(el("polyline", {
+          points: pts.map(function (pt) { return pt.x + "," + pt.y; }).join(" "),
+          fill: "none", stroke: color, "stroke-width": 2.5,
+        }));
+      }
+      pts.forEach(function (pt) {
+        var dv = Math.round(overdueDays(pt.p));
+        var dvTxt = (dv >= 0 ? "+" + dv : String(dv)) + " дн.";
+        var circle = el("circle", {
+          cx: pt.x, cy: pt.y, r: 5, fill: color, stroke: "#fff", "stroke-width": 1.5,
+          tabindex: "0",
+        });
+        circle.setAttribute("role", "img");
+        circle.setAttribute("aria-label",
+          seriesName + ", неделя " + fmtDM(toDate(pt.p.week)) + ", прогноз " +
+          window.TM35_RU_DATE.fmtDMY(pt.p.forecast_date) + ", отклонение " + dvTxt);
+        circle.classList.add("trend-point");
+        var showTip = function () {
+          tooltip.innerHTML = "<b>" + seriesName + "</b><br>неделя замера: " + fmtDM(toDate(pt.p.week)) +
+            "<br>прогноз: " + window.TM35_RU_DATE.fmtDMY(pt.p.forecast_date) +
+            "<br>отклонение: " + dvTxt;
+          var rect = circle.getBoundingClientRect();
+          tooltip.style.left = (rect.left + rect.width / 2) + "px";
+          tooltip.style.top = (rect.top - 10) + "px";
+          tooltip.style.transform = "translate(-50%,-100%)";
+          tooltip.classList.add("visible");
+        };
+        var hideTip = function () { tooltip.classList.remove("visible"); };
+        circle.addEventListener("mouseenter", showTip);
+        circle.addEventListener("mouseleave", hideTip);
+        circle.addEventListener("focus", showTip);
+        circle.addEventListener("blur", hideTip);
+        svg.appendChild(circle);
       });
+      return pts[pts.length - 1];
     }
-    // Y — подписи дат по левому краю. Названия рядов — не текстом в углу
-    // SVG (при узком диапазоне дат налезали на первую подпись оси, особенно
-    // с крупным шрифтом), а обычной HTML-легендой под графиком, как у
-    // остальных диаграмм на этой странице.
-    var lastLabelText = null;
-    for (var i = 0; i <= 4; i++) {
-      var dd = new Date(minD.getTime() + span / 4 * i * 86400000);
-      var yy = ys(dd);
-      svg.appendChild(el("line", { x1: PAD_L, x2: W - PAD_R, y1: yy, y2: yy, stroke: "#eef1f3", "stroke-width": 1 }));
-      var text = fmtDM(dd);
-      // При маленьком диапазоне (мало недель накоплено) соседние деления
-      // округляются до одной и той же календарной даты — не повторять
-      // подпись подряд, гридлинию всё равно рисуем.
-      if (text === lastLabelText) continue;
-      lastLabelText = text;
-      var l2 = el("text", { x: PAD_L - 8, y: yy + 3, "text-anchor": "end", "font-size": 14, fill: COLOR_MUTED });
-      l2.textContent = text;
-      svg.appendChild(l2);
+
+    // Пункт 3, 30.08.2026: "По темпу" здесь — НЕ то же число, что в плитке
+    // "Отклонение..." наверху страницы, хотя формула та же (прогноз минус
+    // срок). Плитка считает на СЕЙЧАС, эта точка — снимок на начало ISO-
+    // недели (пишется не чаще раза в неделю, см. record_forecast_snapshot).
+    // Формулы совпадают, момент времени — нет: живьём разошлись 32 (снимок
+    // с понедельника 24.08) и 17 (сегодняшний живой расчёт) — не баг,
+    // координатор попросил разницу сделать видимой из подписи, не считать
+    // равными.
+    var lastPace = drawSeries(pace, COLOR_PACE, "По темпу (на начало недели)");
+    var lastLag = drawSeries(lag, COLOR_PLAN2, "План + просрочка (на начало недели)");
+
+    // Подписи у концов линий, с текущим значением — разводим по вертикали,
+    // если серии близки по значению (иначе текст налезает друг на друга).
+    var endLabels = [];
+    if (lastPace) endLabels.push({ pt: lastPace, color: COLOR_PACE, name: "По темпу", dv: Math.round(overdueDays(lastPace.p)) });
+    if (lastLag) endLabels.push({ pt: lastLag, color: COLOR_PLAN2, name: "План+просрочка", dv: Math.round(overdueDays(lastLag.p)) });
+    if (endLabels.length === 2 && Math.abs(endLabels[0].pt.y - endLabels[1].pt.y) < 16) {
+      if (endLabels[0].pt.y <= endLabels[1].pt.y) { endLabels[0].dy = -6; endLabels[1].dy = 12; }
+      else { endLabels[0].dy = 12; endLabels[1].dy = -6; }
+    } else {
+      endLabels.forEach(function (l) { l.dy = 4; });
     }
-    drawLine(pace, COLOR_FACT);
-    drawLine(lag, COLOR_FORECAST);
+    endLabels.forEach(function (l) {
+      var t = el("text", { x: l.pt.x + 9, y: l.pt.y + l.dy, "font-size": 13, "font-weight": 700, fill: l.color });
+      t.textContent = l.name + " " + (l.dv >= 0 ? "+" + l.dv : l.dv);
+      svg.appendChild(t);
+    });
 
     container.innerHTML = "";
     container.appendChild(svg);
     var legend = document.createElement("div");
     legend.className = "chart-legend";
     legend.innerHTML =
-      '<span><i style="background:' + COLOR_FACT + '"></i>по темпу</span>' +
-      '<span><i style="background:' + COLOR_FORECAST + '"></i>по плану+просрочке</span>';
+      '<span><i style="background:' + COLOR_PACE + '"></i>по темпу (на начало недели)</span>' +
+      '<span><i style="background:' + COLOR_PLAN2 + '"></i>план + просрочка (на начало недели)</span>' +
+      '<span><i style="background:' + COLOR_DEADLINE + '"></i>директивный срок ' +
+      window.TM35_RU_DATE.fmtDMY(directiveDeadlineIso) + '</span>';
     container.appendChild(legend);
   }
 
@@ -252,6 +384,6 @@
     var tEl = document.getElementById("trend-chart");
     if (scEl) buildSCurve(scEl, data);
     if (hEl) buildHistogram(hEl, data);
-    if (tEl) buildTrend(tEl, data.trend);
+    if (tEl) buildTrend(tEl, data.trend, data.directive_deadline);
   });
 })();

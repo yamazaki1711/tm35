@@ -19,11 +19,19 @@ S-кривые: план и факт трудозатрат нарастающи
     {% if avg_pace %}<div class="kpi-sub">{{ avg_pace }} чел-дн/раб.день, посл. 14 дней с данными</div>{% endif %}
   </div>
   <div class="kpi">
-    <div class="kpi-num {{ 'danger' if deviation_days and deviation_days > 0 else ('ok' if deviation_days is not none) }}">
+    <div class="kpi-num {{ 'danger' if deviation_days and deviation_days > 7 else ('warn' if deviation_days and deviation_days > 0 else ('ok' if deviation_days is not none)) }}">
       {% if deviation_days is not none %}{{ '+' if deviation_days > 0 }}{{ deviation_days }}{% else %}—{% endif %}
     </div>
     <div class="kpi-label">Отклонение прогноза от директивного срока, дней</div>
-    {% if not directive_deadline %}<div class="kpi-sub">срок не задан ниже</div>{% endif %}
+    {% if deviation_days is none %}
+    <div class="kpi-sub">срок не задан ниже</div>
+    {% elif deviation_days <= 0 %}
+    <div class="deviation-badge ok"><svg class="icon" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>в графике</div>
+    {% elif deviation_days <= 7 %}
+    <div class="deviation-badge risk"><svg class="icon" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>риск срыва</div>
+    {% else %}
+    <div class="deviation-badge danger"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>срыв срока</div>
+    {% endif %}
   </div>
 </div>
 
@@ -92,10 +100,12 @@ S-кривые: план и факт трудозатрат нарастающи
 <h2>Численность по дням: план / факт</h2>
 <div id="hist-chart"></div>
 
-<h2>Тренд прогнозной даты по неделям</h2>
+<h2>Отклонение от директивного срока по неделям</h2>
 <p class="subtitle">
-Если точки ползут вправо (дальше в будущее) неделя за неделей — исполнение ухудшается, даже если
-текущий процент выглядит нормально. Копится по одной точке в неделю с {{ today|dmy }}.
+Ноль — директивный срок (штриховая линия). Просрочка — положительное число дней (та же величина, что
+и в плитке выше: прогноз минус срок), опережение — отрицательное. Ниже нуля (залито слабым красным) —
+просрочка. Точки — по состоянию на начало недели, не пересчитываются задним числом: могут отличаться
+от плитки «Отклонение…» наверху, которая считает на сейчас. Копится по одной точке в неделю с {{ today|dmy }}.
 </p>
 <div id="trend-chart" class="table-wrap"></div>
 
@@ -103,9 +113,28 @@ S-кривые: план и факт трудозатрат нарастающи
 {% if directive_deadline %}
   {% if required_to_deadline is not none %}
   <div class="kpi-row">
-    <div class="kpi"><div class="kpi-num">{{ required_to_deadline }}</div><div class="kpi-label">Нужно чел./день до {{ directive_deadline|dmy }}</div><div class="kpi-sub">{{ working_days_to_deadline }} раб. дн.{% if directive_start and directive_start > today %} с {{ directive_start|dmy }} (начало графика){% endif %}</div></div>
-    <div class="kpi"><div class="kpi-num">{{ crit.actual_crew if crit.actual_crew is not none else '—' }}</div><div class="kpi-label">Фактически выходит</div><div class="kpi-sub">на {{ crit.last_actual_date|dmy }}</div></div>
-    <div class="kpi"><div class="kpi-num {{ 'danger' if deadline_deficit and deadline_deficit > 0 else 'ok' }}">{{ deadline_deficit if deadline_deficit is not none else '—' }}</div><div class="kpi-label">Недобор людей</div></div>
+    <div class="kpi">
+      <div class="kpi-num">{{ required_to_deadline }}</div>
+      <div class="kpi-label">Нужно человек в день</div>
+      <div class="kpi-sub-mono">до {{ directive_deadline|dmy }} · {{ working_days_to_deadline }} раб. дн.{% if directive_start and directive_start > today %} с {{ directive_start|dmy }}{% endif %}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ crit.actual_crew if crit.actual_crew is not none else '—' }}</div>
+      <div class="kpi-label">Фактически выходит</div>
+      <div class="kpi-sub-mono">на {{ crit.last_actual_date|dmy }} · {{ deadline_coverage_pct }}% от нормы{% if deadline_coverage_pct is not none %}{% endif %}</div>
+    </div>
+    <div class="kpi {{ 'kpi-alarm-outline' if deadline_deficit and deadline_deficit > 0 }}">
+      <div class="kpi-num {{ 'danger' if deadline_deficit and deadline_deficit > 0 else 'ok' }}">{{ deadline_deficit if deadline_deficit is not none else '—' }}</div>
+      <div class="kpi-label">Недобор людей</div>
+      <div class="kpi-sub-mono">от нормы {{ required_to_deadline }} чел./день</div>
+    </div>
+    {% if deadline_surplus is not none %}
+    <div class="kpi">
+      <div class="kpi-num ok">{{ deadline_surplus }}</div>
+      <div class="kpi-label">Избыток людей</div>
+      <div class="kpi-sub-mono">сверх нормы {{ required_to_deadline }} чел./день</div>
+    </div>
+    {% endif %}
   </div>
   {% else %}
   <div class="empty-note">Срок уже наступил или трудоёмкость неизвестна — расчёт невозможен.</div>

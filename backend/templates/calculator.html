@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Люди ↔ срок</h1>
+<p class="subtitle">
+Сколько человек в день нужно держать на объекте, чтобы успеть к дате — и наоборот: до какой даты
+успеем с тем количеством людей, что реально есть. Считает по остатку трудоёмкости (человеко-дни, ещё
+не сделано) и рабочим дням календаря — та же арифметика, что и «Дефицит ресурса» на
+<a href="/status">«Успеваем?»</a>, не отдельный расчёт.
+{% if directive_start and directive_start > today %}
+Отсчёт рабочих дней ниже — с <b>{{ directive_start|dmy }}</b> (начало работ по графику), не с
+сегодняшнего дня ({{ today|dmy }}) — дни до начала графика не считаются доступными для выполнения
+директивного объёма.
+{% endif %}
+</p>
+
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-num">{{ remaining_effort_days }}</div>
+    <div class="kpi-label">Осталось трудозатрат, чел.-дн.</div>
+    <div class="kpi-sub">по {{ known_work_count }} из {{ known_work_count + excluded_work_count }} активных работ с календарными данными</div>
+  </div>
+  {% if directive_start %}
+  <div class="kpi">
+    <div class="kpi-num" style="font-size:1.3rem">{{ directive_start|dmy }}</div>
+    <div class="kpi-label">Начало работ по графику</div>
+  </div>
+  {% endif %}
+  {% if directive_deadline %}
+  <div class="kpi">
+    <div class="kpi-num" style="font-size:1.3rem">{{ directive_deadline|dmy }}</div>
+    <div class="kpi-label">Окончание работ по графику</div>
+    <div class="kpi-sub">можно проверить в поле «Дата → люди» ниже</div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="dash-section">
+  <h2>Дата → люди</h2>
+  <p class="subtitle">Введите желаемую дату завершения — покажем, сколько человек в день нужно держать на объекте.</p>
+  <form class="filter-bar" id="calc-date-form">
+    <div class="field">
+      <label for="calc-date-hidden" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Целевая дата</label>
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" id="calc-date-hidden">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </div>
+    <button type="submit">Посчитать</button>
+  </form>
+  <div id="calc-date-result"></div>
+</div>
+
+<div class="dash-section">
+  <h2>Люди → дата</h2>
+  <p class="subtitle">Введите, сколько человек в день реально есть на объекте — покажем прогнозную дату завершения.</p>
+  <form class="filter-bar" id="calc-people-form">
+    <div class="field">
+      <label for="calc-people-value" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Людей в день</label>
+      <input type="number" id="calc-people-value" min="1" step="1" style="width:8rem">
+    </div>
+    <button type="submit">Посчитать</button>
+  </form>
+  <div id="calc-people-result"></div>
+</div>
+
+<script>
+(function () {
+  function fmtDMY(iso) { return window.TM35_RU_DATE.fmtDMY(iso); }
+
+  var dateForm = document.getElementById('calc-date-form');
+  var dateHidden = document.getElementById('calc-date-hidden');
+  var dateResult = document.getElementById('calc-date-result');
+  dateForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (!dateHidden.value) {
+      dateResult.innerHTML = '<div class="empty-note">Укажите дату.</div>';
+      return;
+    }
+    dateResult.textContent = 'Считаю…';
+    fetch('/api/calculator?target_date=' + encodeURIComponent(dateHidden.value))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) { dateResult.innerHTML = '<div class="empty-note">' + d.error + '</div>'; return; }
+        if (d.required_people == null) {
+          dateResult.innerHTML = '<div class="empty-note">Дата уже наступила или прошла — расчёт невозможен.</div>';
+          return;
+        }
+        dateResult.innerHTML = '<div class="kpi-row kpi-small"><div class="kpi">' +
+          '<div class="kpi-num">' + d.required_people + '</div>' +
+          '<div class="kpi-label">Человек в день нужно держать</div>' +
+          '<div class="kpi-sub">' + d.working_days + ' раб. дн. с ' + fmtDMY(d.calc_start) + ' до ' + fmtDMY(d.target_date) + '</div>' +
+          '</div></div>';
+      })
+      .catch(function () { dateResult.innerHTML = '<div class="empty-note">Нет связи с сервером.</div>'; });
+  });
+
+  var peopleForm = document.getElementById('calc-people-form');
+  var peopleValue = document.getElementById('calc-people-value');
+  var peopleResult = document.getElementById('calc-people-result');
+  peopleForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = peopleValue.value;
+    if (!v || Number(v) <= 0) {
+      peopleResult.innerHTML = '<div class="empty-note">Укажите число людей больше нуля.</div>';
+      return;
+    }
+    peopleResult.textContent = 'Считаю…';
+    fetch('/api/calculator?available_people=' + encodeURIComponent(v))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) { peopleResult.innerHTML = '<div class="empty-note">' + d.error + '</div>'; return; }
+        if (!d.forecast_date) {
+          peopleResult.innerHTML = '<div class="empty-note">С таким числом людей прогноз не считается.</div>';
+          return;
+        }
+        peopleResult.innerHTML = '<div class="kpi-row kpi-small"><div class="kpi">' +
+          '<div class="kpi-num" style="font-size:1.3rem">' + fmtDMY(d.forecast_date) + '</div>' +
+          '<div class="kpi-label">Прогноз завершения</div>' +
+          '<div class="kpi-sub">' + d.working_days_needed + ' раб. дн. при ' + d.available_people + ' чел./день, с ' + fmtDMY(d.calc_start) + '</div>' +
+          '</div></div>';
+      })
+      .catch(function () { peopleResult.innerHTML = '<div class="empty-note">Нет связи с сервером.</div>'; });
+  });
+})();
+</script>
+{% endblock %}

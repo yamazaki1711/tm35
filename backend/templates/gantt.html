@@ -26,6 +26,14 @@
   .sticky-col { position: sticky; background: #fff; z-index: 2; }
   thead .sticky-col { z-index: 4; background: var(--panel); }
   .col-code { left: 0; min-width: 7.5rem; white-space: nowrap; }
+  /* Единственное намеренное исключение из правила "никаких многоточий в
+     наименовании" (см. style.css, .wrap/.nowrap): строка здесь — не
+     самостоятельная запись, а срез синхронизированной с ней матрицы
+     день-ячеек справа; дать имени расти по высоте — рассинхронизировать
+     сетку по вертикали для всех дней в строке. Текст не теряется —
+     полное наименование в title (hover) и в модалке по клику (data-open-work,
+     см. ниже). Тот же принцип, что и у горизонтальной прокрутки самой
+     сетки (CLAUDE.md, ТМ-35: единственное разрешённое место). */
   .col-name { left: 7.5rem; min-width: 16rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
   .col-pct { left: 23.5rem; min-width: 3.2rem; text-align: right; }
   .col-status { left: 26.7rem; min-width: 6rem; }
@@ -89,7 +97,7 @@
 </style>
 
 <h1>График производства работ</h1>
-<p class="subtitle">Интерактивная сетка по дням — 165 работ, окно дат ниже (не весь диапазон разом).
+<p class="subtitle">Интерактивная сетка по дням — <span id="gantt-total">…</span> работ, окно дат ниже (не весь диапазон разом).
 Цвет ячейки: <span style="color:var(--accent)">план без факта</span> ·
 <span style="color:var(--ok)">факт ≥ плана</span> · <span style="color:var(--bad)">факт &lt; плана</span> ·
 <span style="color:#a855f7">факт без плана</span>. Строка приглушена — работа завершена. Шифр красным — просрочена
@@ -152,7 +160,7 @@
     <label>Дата начала (текущий план)
       <span class="dm-picker" data-dm-picker>
         <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
         <input type="hidden" id="mw-start">
         <div class="dm-cal" hidden></div>
       </span>
@@ -160,7 +168,7 @@
     <label>Дата окончания (текущий план)
       <span class="dm-picker" data-dm-picker>
         <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
         <input type="hidden" id="mw-finish">
         <div class="dm-cal" hidden></div>
       </span>
@@ -257,6 +265,12 @@
     todayStr = data.today;
     reasonCodes = data.reason_codes;
     workIndex = {};
+
+    var totalEl = document.getElementById('gantt-total');
+    if (totalEl) {
+      var total = data.groups.reduce(function (sum, g) { return sum + g.works.length; }, 0);
+      totalEl.textContent = total;
+    }
 
     var html = '<table class="gantt"><thead><tr>';
     html += '<th class="sticky-col col-code">Шифр</th><th class="sticky-col col-name">Наименование</th>';
@@ -469,6 +483,16 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         render(data);
+        // Сервер зажимает диапазон в окно отображения (01.08-28.11 по
+        // умолчанию) — синхронизируем состояние клиента с тем, что
+        // РЕАЛЬНО вернулось, иначе повторный клик "пред./след." будет
+        // считать от старого, уже не актуального значения и визуально
+        // ничего не менять.
+        state.start = new Date(data.start + 'T00:00:00Z');
+        state.windowStart = data.window_start;
+        state.windowEnd = data.window_end;
+        document.getElementById('btn-prev').disabled = (data.start <= data.window_start);
+        document.getElementById('btn-next').disabled = (data.end >= data.window_end);
         statusEl.textContent = TM35_RU_DATE.fmtDMY(data.start) + ' … ' + TM35_RU_DATE.fmtDMY(data.end);
       })
       .catch(function (e) { statusEl.textContent = 'Ошибка загрузки: ' + e; });
@@ -481,7 +505,7 @@
     state.start = addDays(state.start, state.days); load();
   });
   document.getElementById('btn-today').addEventListener('click', function () {
-    state.start = addDays(new Date(), -7); load();
+    state.start = addDays(window.TM35_OBJECT_TODAY || new Date(), -7); load();
   });
   function applyFilters() {
     state.days = parseInt(document.getElementById('sel-days').value, 10);
@@ -500,9 +524,10 @@
     if (e.key === 'Enter') applyFilters();
   });
 
-  state.start = addDays(new Date(), -7);
+  state.start = addDays(window.TM35_OBJECT_TODAY || new Date(), -7);
   load();
   loadMetrics();
 })();
 </script>
 {% endblock %}
+

@@ -1,37 +1,64 @@
 {% extends "base.html" %}
 {% block content %}
+{% set DQ_LABELS = {'ok': 'ок', 'needs_review': 'проверить'} %}
+{% set DQ_BADGE = {'ok': 'badge-ok', 'needs_review': 'badge-warn'} %}
 <h1>Реестр работ</h1>
-<form class="filters" method="get">
-  <select name="source"><option value="">Источник: все</option>
-    {% for s in sources %}<option value="{{ s.source }}" {{ 'selected' if s.source==f_source }}>{{ s.source|ru_source }}</option>{% endfor %}
-  </select>
-  <select name="status"><option value="">Статус: все</option>
-    {% for s in statuses %}<option value="{{ s.status }}" {{ 'selected' if s.status==f_status }}>{{ s.status|ru_status }}</option>{% endfor %}
-  </select>
-  <select name="executor_type"><option value="">Исполнитель: все</option>
-    <option value="own_forces" {{ 'selected' if f_executor=='own_forces' }}>Собственные силы</option>
-    <option value="subcontract" {{ 'selected' if f_executor=='subcontract' }}>Субподряд</option>
-  </select>
-  <input type="text" name="q" placeholder="Поиск по наименованию" value="{{ f_q }}">
+<p class="subtitle">Все {{ rows|length }} работ из графика производства работ, с фильтром по листу-источнику,
+статусу, исполнителю и наименованию.</p>
+
+<form class="filter-bar" method="get" action="/works">
+  <label>Источник (лист графика)
+    <select name="source">
+      <option value="">— все —</option>
+      {% for s in sources %}<option value="{{ s.source }}" {{ 'selected' if f_source==s.source }}>{{ s.source|ru_source }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Статус
+    <select name="status">
+      <option value="">— все —</option>
+      {% for s in statuses %}<option value="{{ s.status }}" {{ 'selected' if f_status==s.status }}>{{ s.status|ru_status }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Исполнитель
+    <select name="executor_type">
+      <option value="">— все —</option>
+      <option value="own_forces" {{ 'selected' if f_executor=='own_forces' }}>свои силы</option>
+      <option value="subcontract" {{ 'selected' if f_executor=='subcontract' }}>субподряд</option>
+    </select>
+  </label>
+  <label>Наименование содержит
+    <input type="text" name="q" value="{{ f_q }}" placeholder="например, герметизация">
+  </label>
   <button type="submit">Применить</button>
+  <a href="/export/works.csv?source={{ f_source }}&status={{ f_status }}&executor_type={{ f_executor }}&q={{ f_q }}"
+     style="text-decoration:none;display:inline-flex;align-items:center;gap:.45rem;background:var(--c-surface);color:var(--c-text-2);border:1px solid var(--c-border-strong);padding:.65rem 1.25rem;border-radius:.35rem;font-weight:600;font-size:.9rem">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v13M7 11l5 5 5-5M4 21h16"/></svg> Скачать CSV
+  </a>
 </form>
-<p class="subtitle">Найдено: {{ rows|length }}</p>
+
+{% if rows %}
+<h3>Найдено: {{ rows|length }}</h3>
 <div class="table-wrap">
 <table>
-<tr><th>Шифр</th><th>Источник</th><th>Наименование</th><th>Участок</th><th>Ед.</th><th>Статус</th><th>Исполнитель</th><th>% вып.</th><th>Качество</th></tr>
-{% for r in rows %}
-<tr>
-  <td><code>{{ r.code }}</code></td>
-  <td>{{ r.source|ru_source }}</td>
-  <td>{{ r.name }}</td>
-  <td>{{ r.location or '—' }}</td>
-  <td>{{ r.unit or '—' }}</td>
-  <td>{{ r.status|ru_status }}</td>
-  <td>{{ 'субподряд' if r.executor_type=='subcontract' else 'свои силы' }}</td>
-  <td>{% if r.fact_pct is not none %}{{ r.fact_pct }}%{% elif r.fact_pct_raw %}<span class="badge badge-warn">{{ r.fact_pct_raw }}</span>{% else %}—{% endif %}</td>
-  <td>{% if r.data_quality_flag=='needs_review' %}<span class="badge badge-warn">проверить</span>{% else %}<span class="badge badge-ok">ок</span>{% endif %}</td>
-</tr>
-{% endfor %}
+  <thead><tr><th>Шифр</th><th>Источник</th><th>Участок</th><th>Наименование</th><th>Ед.</th><th>Статус</th><th>Исполнитель</th><th class="num">% факт</th><th>Качество</th></tr></thead>
+  <tbody>
+  {% for w in rows %}
+  <tr>
+    <td><code>{{ w.code }}</code></td>
+    <td>{{ w.source|ru_source }}</td>
+    <td>{{ w.location or '—' }}</td>
+    <td class="wrap">{{ w.name }}</td>
+    <td>{{ w.unit or '—' }}</td>
+    <td>{{ w.status|ru_status }}</td>
+    <td>{{ w.executor_type|ru_executor if w.executor_type else '—' }}</td>
+    <td class="num">{{ w.fact_pct if w.fact_pct is not none else (w.fact_pct_raw or '—') }}</td>
+    <td><span class="badge {{ DQ_BADGE.get(w.data_quality_flag, 'badge-neutral') }}">{{ DQ_LABELS.get(w.data_quality_flag, w.data_quality_flag) }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
+{% else %}
+<div class="empty-note">По этому фильтру ничего не найдено.</div>
+{% endif %}
 {% endblock %}

@@ -46,10 +46,10 @@
 {% endif %}
 
 <h2>Срок снятия ограничений</h2>
-<div class="grid">
-  <div class="tile"><div class="value">{{ avg_resolution_days if avg_resolution_days is not none else '—' }}</div><div class="label">Средний срок снятия, дней (по {{ resolved_count }} снятым)</div></div>
-  <div class="tile"><div class="value">{{ open_blocker_count }}</div><div class="label">Сейчас висит без снятия</div></div>
-  <div class="tile"><div class="value">{{ open_blocker_avg_age if open_blocker_avg_age is not none else '—' }}</div><div class="label">Средний возраст открытых, дней</div></div>
+<div class="kpi-row">
+  <div class="kpi"><div class="kpi-num">{{ avg_resolution_days if avg_resolution_days is not none else '—' }}</div><div class="kpi-label">Средний срок снятия, дней (по {{ resolved_count }} снятым)</div></div>
+  <div class="kpi"><div class="kpi-num">{{ open_blocker_count }}</div><div class="kpi-label">Сейчас висит без снятия</div></div>
+  <div class="kpi"><div class="kpi-num">{{ open_blocker_avg_age if open_blocker_avg_age is not none else '—' }}</div><div class="kpi-label">Средний возраст открытых, дней</div></div>
 </div>
 {% if resolved_count == 0 %}
 <div class="empty-note">Ни одно ограничение ещё не отмечено снятым (кнопка «Снято» на /today) — статистика появится после первого снятия.</div>

@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Ввод факта — веб-форма</h1>
-<p class="subtitle">Опциональный второй канал (роль Исполнитель), параллельный Excel-импорту.
-Не заменяет Excel — сотрудник ПТО ИКС продолжает вести файл как обычно. При конфликте на ту же
-дату+работу побеждает более поздняя по времени запись; обе версии сохраняются в истории изменений.</p>
+<p class="subtitle">Единая форма оператора: вид работ, план/факт людей, % выполнения, плановый срок окончания.
+Один оператор (роль Координатор ОП) ежедневно собирает информацию и рассчитывает % вручную.
+При сохранении % обновляется как запись дня, так и итоговый % по работе.</p>
 
 {% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
 {% if errors %}
@@ -25,14 +25,14 @@
     <select name="work_id" id="work_id" required>
       <option value="" {{ 'selected' if not values.get('work_id') }} disabled>— выбрать —</option>
       {% for w in work_rows %}
-      <option value="{{ w.id }}" {{ 'selected' if values.get('work_id')|string == w.id|string }}>{{ w.code }} — {{ w.name[:60] }}</option>
+      <option value="{{ w.id }}" {{ 'selected' if values.get('work_id')|string == w.id|string }}>{{ w.code }} — {{ w.name }}</option>
       {% endfor %}
     </select>
   </label>
   <label>Дата
     <span class="dm-picker" data-dm-picker>
       <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
       <input type="hidden" name="date" id="date" value="{{ values.get('date', '') }}" required>
       <div class="dm-cal" hidden></div>
     </span>
@@ -42,6 +42,17 @@
   </label>
   <label>Факт людей (0–50)
     <input type="number" name="actual_crew" min="0" max="50" step="1" value="{{ values.get('actual_crew', '') }}">
+  </label>
+  <label>Процент выполнения, % (0–100)
+    <input type="number" name="fact_pct" id="fact_pct" min="0" max="100" step="1" value="{{ values.get('fact_pct', '') }}" placeholder="например, 65">
+  </label>
+  <label>Плановый срок окончания
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="plan_finish_date" id="plan_finish_date" value="{{ values.get('plan_finish_date', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
   </label>
   <label>Причина простоя (если был)
     <select name="reason_code" id="reason_code">
@@ -71,10 +82,16 @@
       .then(function (data) {
         if (data.exists) {
           note.style.display = 'block';
-          note.textContent = 'На эту дату по этой работе уже есть запись через форму: план ' +
+          var pctTxt = data.fact_pct === null || data.fact_pct === undefined ? '—' : data.fact_pct + '%';
+          var finishTxt = data.plan_finish_date ? ', срок окончания: ' + TM35_RU_DATE.fmtDMY(data.plan_finish_date) : '';
+          note.innerHTML = 'На эту дату по этой работе уже есть запись через форму: план ' +
             (data.planned_crew === null ? '—' : data.planned_crew) + ', факт ' +
             (data.actual_crew === null ? '—' : data.actual_crew) +
+            ', % выполнения: ' + pctTxt + finishTxt +
             '. Сохранение перезапишет её (время последнего изменения: ' + TM35_RU_DATE.fmtDMYHM(data.updated_at) + ').';
+          if (data.fact_pct !== null && data.fact_pct !== undefined) {
+            document.getElementById('fact_pct').value = data.fact_pct;
+          }
         } else {
           note.style.display = 'none';
         }
@@ -88,3 +105,4 @@
 })();
 </script>
 {% endblock %}
+

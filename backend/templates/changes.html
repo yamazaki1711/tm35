@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% set CH_LABELS = {'DRAFT': 'Черновик', 'REQUEST_SENT': 'Запрос направлен',
+  'IN_WORK_DESIGNER': 'В работе у проектировщика', 'SOLUTION_RECEIVED': 'Техрешение получено',
+  'IKS_ORDER': 'Приказ ИКС-Х', 'INCLUDED_IN_RD': 'Включено в РД', 'ARCHIVED': 'Архив'} %}
+{% block content %}
+<h1>Реестр изменений ПД/РД (ИЗМ)</h1>
+<p class="subtitle">{{ total }} {{ 'активное' if total % 10 == 1 and total % 100 != 11 else 'активных' }} ИЗМ.
+Нормативный срок ответа проектировщика (например, В.А. Гулеенов):
+14/21/35/49 дней (Уровень 0/1/2/3). Просроченные выделены красным.</p>
+
+{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
+{% if errors %}
+<div class="flash flash-err"><b>Не сохранено — исправьте:</b>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form class="form-box" method="post" action="/changes" style="max-width:680px;">
+  <h3 style="margin-top:0;">Новое изменение (ИЗМ)</h3>
+  <label>Код (auto, если пусто)
+    <input type="text" name="code" value="{{ values.get('code', '') }}" placeholder="например, ИЗМ-19-КЖ" autocomplete="off">
+  </label>
+  <label>Шифр раздела
+    <select name="section_code">
+      <option value="">— выбрать —</option>
+      {% for sc in ['ТКР','КЖ','КМ','ПОС','ООС','ТС','ГП','ИЛО','КЖ2'] %}
+      <option value="{{ sc }}" {{ 'selected' if values.get('section_code')==sc }}>{{ sc }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Номер изменения
+    <input type="number" name="change_number" min="1" value="{{ values.get('change_number', '') }}">
+  </label>
+  <label>Тема (обязательно)
+    <input type="text" name="topic" value="{{ values.get('topic', '') }}" required>
+  </label>
+  <label>Описание
+    <textarea name="description" rows="3">{{ values.get('description', '') }}</textarea>
+  </label>
+  <label>Инициатор
+    <select name="initiator">
+      <option value="RSK" {{ 'selected' if values.get('initiator')=='RSK' }}>РСК</option>
+      <option value="DPR" {{ 'selected' if values.get('initiator')=='DPR' }}>ДПР</option>
+      <option value="IKS" {{ 'selected' if values.get('initiator')=='IKS' }}>ИКС</option>
+      <option value="SSR" {{ 'selected' if values.get('initiator')=='SSR' }}>ССР (подрядчик)</option>
+    </select>
+  </label>
+  <label>Статус
+    <select name="status">
+      <option value="DRAFT" {{ 'selected' if values.get('status')=='DRAFT' }}>Черновик</option>
+      <option value="REQUEST_SENT" {{ 'selected' if values.get('status')=='REQUEST_SENT' }}>Запрос направлен</option>
+      <option value="IN_WORK_DESIGNER" {{ 'selected' if values.get('status')=='IN_WORK_DESIGNER' }}>В работе у проектировщика</option>
+      <option value="SOLUTION_RECEIVED" {{ 'selected' if values.get('status')=='SOLUTION_RECEIVED' }}>Техрешение получено</option>
+      <option value="IKS_ORDER" {{ 'selected' if values.get('status')=='IKS_ORDER' }}>Приказ ИКС-Х</option>
+      <option value="INCLUDED_IN_RD" {{ 'selected' if values.get('status')=='INCLUDED_IN_RD' }}>Включено в РД</option>
+      <option value="ARCHIVED" {{ 'selected' if values.get('status')=='ARCHIVED' }}>Архив</option>
+    </select>
+  </label>
+  <label>ГИП проектировщика (ФИО)
+    <input type="text" name="designer_name" value="{{ values.get('designer_name', '') }}" placeholder="например, В.А. Гулеенов">
+  </label>
+  <label>Дата запроса
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="request_date" value="{{ values.get('request_date', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>SLA, дней (по умолчанию 14)
+    <input type="number" name="sla_days" min="1" value="{{ values.get('sla_days', '14') }}">
+  </label>
+  <label>Сумма под блокировкой, ₽
+    <input type="number" name="blocked_amount_rub" min="0" step="0.01" value="{{ values.get('blocked_amount_rub', '') }}">
+  </label>
+  <label>Ссылка на запрос (Drive)
+    <input type="url" name="request_file_url" value="{{ values.get('request_file_url', '') }}" placeholder="https://drive.google.com/...">
+  </label>
+  <label>Комментарий
+    <textarea name="comment" rows="2">{{ values.get('comment', '') }}</textarea>
+  </label>
+  <button type="submit">Добавить ИЗМ</button>
+</form>
+
+<h3>Активные ИЗМ (всего: {{ total }}, просрочено: {{ overdue }})</h3>
+<div class="table-wrap">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Код</th>
+      <th>Шифр</th>
+      <th>Тема</th>
+      <th>Статус</th>
+      <th>Запрос</th>
+      <th>SLA</th>
+      <th>План. ответ</th>
+      <th>Факт. ответ</th>
+      <th>Просрочка</th>
+      <th>Эск.</th>
+      <th>₽ под блок.</th>
+      {% if can_edit %}<th>Изменить статус</th>{% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in changes %}
+    <tr class="{{ 'row-overdue' if c.overdue_days and c.overdue_days > 0 else '' }}">
+      <td>{{ c.code or '—' }}</td>
+      <td>{{ c.section_code or '—' }}</td>
+      <td class="wrap">{{ c.topic or '' }}</td>
+      <td><span class="badge badge-neutral" title="Код статуса: {{ c.status }}">{{ CH_LABELS.get(c.status, c.status) }}</span></td>
+      <td>{{ c.request_date|fmt_dmy if c.request_date else '—' }}</td>
+      <td>{{ c.sla_days or '—' }}</td>
+      <td>{{ c.planned_response_date|fmt_dmy if c.planned_response_date else '—' }}</td>
+      <td>{{ c.actual_response_date|fmt_dmy if c.actual_response_date else '—' }}</td>
+      <td>{{ c.overdue_days if c.overdue_days is not none else '—' }}</td>
+      <td>L{{ c.escalation_level }}</td>
+      <td>{{ '{:,.0f}'.format(c.blocked_amount_rub)|replace(',', ' ') if c.blocked_amount_rub else '—' }}</td>
+      {% if can_edit %}
+      <td>
+        <form class="inline-edit" method="post" action="/api/change/{{ c.id }}/status">
+          <select name="status" onchange="this.form.submit()">
+            {% for code, label in CH_LABELS.items() %}
+            <option value="{{ code }}" {{ 'selected' if c.status==code }}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
+
+

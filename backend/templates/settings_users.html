@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Учётные записи</h1>
+<p class="subtitle">Смена пароля любой учётной записи. Требования: ровно 8 знаков, только цифры и строчные
+латинские буквы (без 0, 1, l, o — легко перепутать при вводе с бумаги). После смены все действующие входы
+этого человека завершаются — придётся войти заново новым паролем.</p>
+
+{% if ok %}<div class="flash flash-ok">Пароль изменён.</div>{% endif %}
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>ФИО</th><th>Логин</th><th>Разрешения</th><th>Пароль менялся</th><th>Новый пароль</th></tr></thead>
+  <tbody>
+  {% for u in users %}
+  <tr>
+    <td>{{ u.full_name }}</td>
+    <td><code>{{ u.login }}</code></td>
+    <td class="wrap">{{ (u.perms | ru_permission_list) if u.perms else '—' }}</td>
+    <td class="nowrap">{{ u.password_changed_at|dmy }}</td>
+    <td>
+      <form class="inline-edit" method="post" action="/settings/users/{{ u.id }}/password" style="display:flex;gap:.4rem">
+        <input type="text" name="new_password" placeholder="8 знаков" pattern="[a-z2-9]{8}" maxlength="8" minlength="8" required>
+        <button type="submit">Сохранить</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .shift-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .9rem; }
+  .shift-controls .field { display: flex; flex-direction: column; gap: .3rem; }
+  .shift-controls label.chk { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 600; color: var(--c-text-2); height: 2.35rem; }
+  .shift-controls input[type="text"].search { min-width: 14rem; }
+  #shift-count { font-size: .82rem; color: var(--c-text-3); align-self: center; margin-left: auto; }
+
+  /* table-layout:fixed без явной min-width на самой таблице сжимает
+     колонки ПРОПОРЦИОНАЛЬНО ширине контейнера, а не по объявленным rem —
+     на планшетах (найдено 29.08.2026, ~640-768px) колонка «Наименование»
+     схлопывалась почти до нуля, и текст переносился по одной букве на
+     строку (кол-во строк — как у стены текста). min-width = сумма всех
+     колонок ниже заставляет таблицу держать реальный размер, а
+     .table-wrap (overflow-x:auto) даёт горизонтальную прокрутку вместо
+     сжатия — то же решение, что уже используется в /gantt. */
+  table.shift { table-layout: fixed; min-width: 80rem; }
+  table.shift col.c-code { width: 8.5rem; }
+  table.shift col.c-name { width: 18rem; }
+  table.shift col.c-loc { width: 7rem; }
+  table.shift col.c-pct { width: 6.5rem; }
+  table.shift col.c-crew { width: 7rem; }
+  table.shift col.c-reason { width: 11rem; }
+  table.shift col.c-comment { width: 14rem; }
+  table.shift col.c-status { width: 8rem; }
+  /* Перенос текста в ячейках — общими классами .wrap/.nowrap из style.css,
+     не локальными правилами здесь (баг 28.08.2026: white-space:normal на
+     всех td/th этой таблицы одновременно резал шифр по дефису и позволял
+     тексту наименования наползать на соседнюю строку — сочетание
+     -webkit-line-clamp с overflow:hidden в table-layout:fixed не даёт
+     ячейке расти и не обрезает надёжно одновременно). vertical-align
+     оставлен — не конфликтует с общими классами. */
+  table.shift td, table.shift th { vertical-align: top; }
+  table.shift input, table.shift select {
+    width: 100%; background: var(--c-surface); border: 1px solid var(--c-border-strong);
+    color: var(--c-text); padding: .4rem .5rem; border-radius: var(--r-sm); font-size: .88rem;
+    font-family: inherit;
+  }
+  table.shift input:focus, table.shift select:focus {
+    outline: none; border-color: var(--c-primary-light); box-shadow: 0 0 0 3px rgba(46,117,182,.14);
+  }
+  table.shift input.cell-invalid { border-color: var(--c-danger); box-shadow: 0 0 0 3px rgba(209,60,48,.12); }
+  table.shift td.num { text-align: right; }
+  table.shift td.num:has(.planned-hint) { display: flex; flex-direction: column; align-items: flex-end; }
+  table.shift td.num:has(.planned-hint) input { width: auto; align-self: stretch; }
+  tr.row-filled td.c-code, tr.row-filled td.c-name { box-shadow: inset 3px 0 0 var(--c-success); }
+  .row-status { font-size: .74rem; font-weight: 600; white-space: nowrap; }
+  .row-status.st-empty { color: var(--c-text-3); }
+  .row-status.st-filled { color: var(--c-success); }
+  .row-status.st-saving { color: var(--c-primary-light); }
+  .row-status.st-error { color: var(--c-danger); cursor: help; }
+  .row-status .dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; margin-right: .3rem; background: currentColor; }
+  .placeholder-hint { color: var(--c-text-3); }
+  table.shift td.num { position: relative; }
+  .planned-hint { display: block; margin-top: .2rem; font-size: .74rem; color: var(--c-text-3); white-space: nowrap; }
+
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(16,24,40,.5); z-index: 50; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg); padding: 1.25rem 1.5rem; width: 380px; max-width: 92vw; box-shadow: var(--shadow-lg); }
+  .modal-box h3 { margin: 0 0 .75rem; font-size: 1.05rem; }
+  .modal-box label { display: block; margin-top: .8rem; font-size: .85rem; font-weight: 600; color: var(--c-text-2); }
+  .modal-box input, .modal-box select { width: 100%; margin-top: .3rem; }
+  .modal-errors { color: var(--c-danger); font-size: .82rem; margin-top: .6rem; min-height: 1em; }
+  .modal-actions { display: flex; gap: .5rem; margin-top: 1.1rem; justify-content: flex-end; }
+
+  #toast {
+    position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-success); color: #fff;
+    padding: .6rem 1rem; border-radius: var(--r-sm); font-size: .88rem; font-weight: 600;
+    display: none; z-index: 60; box-shadow: var(--shadow-lg);
+  }
+</style>
+
+<h1>Экран смены</h1>
+<p class="subtitle">Ежедневный ввод факта по работам сеткой — замена Excel-графика. Строки — работы, не
+завершённые физически (по умолчанию). Сохранение — по уходу из ячейки, каждое поле независимо.
+Клавиатура: Tab/Shift+Tab между ячейками, Enter/↓/↑ — по столбцу вниз/вверх.
+Нужно внести только одну запись — проще через <a href="/form">форму «Ввод факта»</a>.
+По умолчанию открывается ВЧЕРАШНИЙ день (регламент: вносим до 11:00 за вчера) — дату можно сменить.</p>
+
+<div class="filter-bar shift-controls">
+  <div class="field">
+    <label for="shift-date" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Дата</label>
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" id="shift-date">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </div>
+  <label class="chk"><input type="checkbox" id="chk-all"> показать все работы</label>
+  <div class="field">
+    <label for="inp-search" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Поиск по шифру/наименованию</label>
+    <input type="text" id="inp-search" class="search" placeholder="например, УТ13 или герметизация">
+  </div>
+  <button type="button" id="btn-add-work" class="btn-secondary">+ добавить работу</button>
+  <span id="shift-count"></span>
+</div>
+
+<div class="table-wrap" style="margin-top:1rem">
+  <table class="shift">
+    <colgroup>
+      <col class="c-code"><col class="c-name"><col class="c-loc"><col class="c-pct">
+      <col class="c-crew"><col class="c-reason"><col class="c-comment"><col class="c-status">
+    </colgroup>
+    <thead>
+      <tr>
+        <th>Шифр</th><th>Наименование</th><th>Участок</th><th>% готовности</th>
+        <th>Люди</th><th>Простой</th><th>Комментарий</th><th>Статус</th>
+      </tr>
+    </thead>
+    <tbody id="shift-body">
+      <tr><td colspan="8" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Модалка: новая работа -->
+<div class="modal-overlay" id="modal-new-work">
+  <div class="modal-box">
+    <h3>Добавить работу</h3>
+    <label>Категория
+      <select id="nw-source">
+        <option value="main">Основные работы</option>
+        <option value="aux" selected>Вспомогательные работы</option>
+      </select>
+    </label>
+    <label>Наименование<input type="text" id="nw-name"></label>
+    <label>Ед. изм.<input type="text" id="nw-unit"></label>
+    <label>Участок<input type="text" id="nw-location" placeholder="например УТ13"></label>
+    <div class="modal-errors" id="nw-errors"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-close="modal-new-work">Отмена</button>
+      <button type="button" class="btn-ok" id="nw-save">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(function () {
+  var COLS = ['pct', 'crew', 'reason', 'comment'];
+  var state = { date: null, all: false, q: '' };
+  var order = [];          // порядок id работ в текущей отрисовке — для навигации стрелками
+  var lastSaved = {};      // "id:field" -> последнее сохранённое строковое значение
+  var reasonCodes = [];    // приходит в каждом ответе /api/shift
+
+  function toast(msg, ok) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.style.background = ok === false ? 'var(--c-danger)' : 'var(--c-success)';
+    t.style.display = 'block';
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.style.display = 'none'; }, 2500);
+  }
+
+  function openModal(id) { document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  document.querySelectorAll('[data-close]').forEach(function (btn) {
+    btn.addEventListener('click', function () { closeModal(btn.getAttribute('data-close')); });
+  });
+  document.querySelectorAll('.modal-overlay').forEach(function (ov) {
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('open'); });
+  });
+
+  function postForm(url, data) {
+    var body = new URLSearchParams(data);
+    return fetch(url, { method: 'POST', body: body })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, body: j }; }); });
+  }
+  function formatErrors(res) {
+    if (res.body && Array.isArray(res.body.errors)) return res.body.errors.join(' ');
+    if (res.body && res.body.detail) return typeof res.body.detail === 'string' ? res.body.detail : JSON.stringify(res.body.detail);
+    return 'Ошибка сервера (' + res.status + ')';
+  }
+
+  function reasonOptionsHtml(selected) {
+    var html = '<option value="">— нет —</option>';
+    reasonCodes.forEach(function (rc) {
+      html += '<option value="' + rc[0] + '"' + (rc[0] === selected ? ' selected' : '') + '>' + rc[1] + '</option>';
+    });
+    return html;
+  }
+
+  function setRowStatus(id, mode, title) {
+    var el = document.querySelector('.row-status[data-row-status="' + id + '"]');
+    if (!el) return;
+    el.className = 'row-status st-' + mode;
+    el.title = title || '';
+    var labels = { empty: 'не заполнено', filled: 'заполнено', saving: 'сохранение…', error: 'ошибка' };
+    el.innerHTML = '<span class="dot"></span>' + (labels[mode] || mode);
+  }
+
+  function render(data) {
+    reasonCodes = data.reason_codes;
+    order = data.items.map(function (it) { return it.id; });
+    var countLabel;
+    if (state.all) {
+      countLabel = ' (все)';
+    } else if (data.has_plan_for_date) {
+      countLabel = ' (по графику на эту дату)';
+    } else {
+      countLabel = ' (плана на эту дату нет — показаны незавершённые)';
+    }
+    document.getElementById('shift-count').textContent = data.items.length + ' работ' + countLabel;
+
+    // Дата — авторитет сервера (object_today()/object_yesterday() по
+    // календарю объекта), не клиентские часы браузера. Синхронизируем
+    // виджет с тем, что реально загружено, включая видимый текст
+    // (datepicker.js не даёт внешнего доступа к своей синхронизации).
+    state.date = data.date;
+    if (dateHidden.value !== data.date) {
+      dateHidden.value = data.date;
+      var dmText = dateHidden.parentElement.querySelector('.dm-text');
+      if (dmText) dmText.value = TM35_RU_DATE.fmtDMY(data.date);
+    }
+
+    if (!data.items.length) {
+      document.getElementById('shift-body').innerHTML =
+        '<tr><td colspan="8" class="empty-note" style="border:none">Ничего не найдено — попробуйте ' +
+        '«показать все» или измените поиск.</td></tr>';
+      return;
+    }
+
+    var html = '';
+    data.items.forEach(function (it) {
+      lastSaved[it.id + ':pct'] = it.fact_pct == null ? '' : String(it.fact_pct);
+      lastSaved[it.id + ':crew'] = it.actual_crew == null ? '' : String(it.actual_crew);
+      lastSaved[it.id + ':reason'] = it.reason_code || '';
+      lastSaved[it.id + ':comment'] = it.comment || '';
+
+      var pctPlaceholder = (it.fact_pct == null && it.work_fact_pct != null) ? (it.work_fact_pct + '%, тек.') : '';
+
+      html += '<tr data-work-row="' + it.id + '"' + (it.filled ? ' class="row-filled"' : '') + '>';
+      html += '<td class="c-code nowrap"><code>' + it.code + '</code></td>';
+      html += '<td class="wrap">' + it.name + '</td>';
+      html += '<td>' + (it.location || '—') + '</td>';
+      html += '<td class="num"><input type="number" min="0" max="100" step="0.1" inputmode="decimal" ' +
+        'data-work="' + it.id + '" data-field="pct" value="' + (it.fact_pct == null ? '' : it.fact_pct) + '" ' +
+        (pctPlaceholder ? 'placeholder="' + pctPlaceholder + '"' : '') + '></td>';
+      var plannedHint = it.planned_crew != null ? ('<span class="planned-hint">план ' + it.planned_crew + '</span>') : '';
+      html += '<td class="num"><input type="number" min="0" max="50" step="1" inputmode="numeric" ' +
+        'data-work="' + it.id + '" data-field="crew" value="' + (it.actual_crew == null ? '' : it.actual_crew) + '">' +
+        plannedHint + '</td>';
+      html += '<td><select data-work="' + it.id + '" data-field="reason">' + reasonOptionsHtml(it.reason_code) + '</select></td>';
+      html += '<td><input type="text" data-work="' + it.id + '" data-field="comment" value="' +
+        (it.comment ? it.comment.replace(/"/g, '&quot;') : '') + '"></td>';
+      html += '<td><span class="row-status" data-row-status="' + it.id + '"></span></td>';
+      html += '</tr>';
+    });
+    document.getElementById('shift-body').innerHTML = html;
+
+    data.items.forEach(function (it) {
+      setRowStatus(it.id, it.filled ? 'filled' : 'empty',
+        it.filled && it.updated_at ? 'изменено ' + TM35_RU_DATE.fmtDMYHM(it.updated_at) : '');
+    });
+
+    wireCells();
+  }
+
+  function fieldEl(id, field) {
+    return document.querySelector('[data-work="' + id + '"][data-field="' + field + '"]');
+  }
+
+  function focusCell(id, field) {
+    var el = fieldEl(id, field);
+    if (el) { el.focus(); if (el.select) { try { el.select(); } catch (e) {} } }
+  }
+
+  function saveField(el) {
+    var id = parseInt(el.getAttribute('data-work'), 10);
+    var field = el.getAttribute('data-field');
+    var val = el.value;
+    var key = id + ':' + field;
+    var prevVal = lastSaved[key];
+    if (prevVal === val) return;  // не изменилось — не дёргаем сервер
+    // Отмечаем как "отправлено" сразу (оптимистично): Enter/стрелки вызывают
+    // saveField() явно И тут же переносят фокус, что синхронно порождает
+    // событие blur на том же поле — без этой пометки второй вызов успел бы
+    // застать ещё не отвеченный fetch и отправить тот же самый POST второй
+    // раз (не портит данные — идемпотентно, но лишний запрос и лишняя
+    // запись в audit_log). При ошибке возвращаем prevVal, чтобы повторный
+    // уход из ячейки без изменений всё же повторил попытку сохранить.
+    lastSaved[key] = val;
+
+    el.classList.remove('cell-invalid');
+    setRowStatus(id, 'saving');
+    postForm('/api/shift/cell', { work_id: id, date: state.date, field: field, value: val })
+      .then(function (res) {
+        if (res.body.ok) {
+          el.classList.remove('cell-invalid');
+          var row = document.querySelector('tr[data-work-row="' + id + '"]');
+          if (row) row.classList.add('row-filled');
+          setRowStatus(id, 'filled', 'изменено ' + TM35_RU_DATE.fmtDMYHM(res.body.updated_at));
+        } else {
+          lastSaved[key] = prevVal;
+          el.classList.add('cell-invalid');
+          setRowStatus(id, 'error', formatErrors(res));
+          toast('Не сохранено: ' + formatErrors(res), false);
+        }
+      })
+      .catch(function (e) {
+        lastSaved[key] = prevVal;
+        el.classList.add('cell-invalid');
+        setRowStatus(id, 'error', 'Ошибка сети: ' + e);
+        toast('Ошибка сети — значение НЕ сохранено, введите снова после восстановления связи.', false);
+      });
+  }
+
+  function moveTo(id, field, deltaRow) {
+    var idx = order.indexOf(id);
+    var targetIdx = idx + deltaRow;
+    if (targetIdx < 0 || targetIdx >= order.length) return false;
+    focusCell(order[targetIdx], field);
+    return true;
+  }
+
+  function wireCells() {
+    document.querySelectorAll('#shift-body [data-work][data-field]').forEach(function (el) {
+      el.addEventListener('blur', function () { saveField(el); });
+      el.addEventListener('keydown', function (e) {
+        var id = parseInt(el.getAttribute('data-work'), 10);
+        var field = el.getAttribute('data-field');
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          saveField(el);
+          moveTo(id, field, 1);
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          saveField(el);
+          moveTo(id, field, 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          saveField(el);
+          moveTo(id, field, -1);
+        } else if (e.key === 'ArrowLeft' && el.tagName !== 'SELECT') {
+          if (el.selectionStart === 0 && el.selectionEnd === 0) {
+            var ci = COLS.indexOf(field);
+            if (ci > 0) { e.preventDefault(); saveField(el); focusCell(id, COLS[ci - 1]); }
+          }
+        } else if (e.key === 'ArrowRight' && el.tagName !== 'SELECT') {
+          var len = el.value.length;
+          if (el.selectionStart === len && el.selectionEnd === len) {
+            var ci2 = COLS.indexOf(field);
+            if (ci2 < COLS.length - 1) { e.preventDefault(); saveField(el); focusCell(id, COLS[ci2 + 1]); }
+          }
+        }
+      });
+    });
+  }
+
+  function load() {
+    var params = new URLSearchParams();
+    if (state.date) params.set('date', state.date);
+    if (state.all) params.set('all', '1');
+    if (state.q) params.set('q', state.q);
+    document.getElementById('shift-body').innerHTML =
+      '<tr><td colspan="8" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>';
+    fetch('/api/shift?' + params.toString())
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function (e) {
+        document.getElementById('shift-body').innerHTML =
+          '<tr><td colspan="8" style="color:var(--c-danger);padding:1rem">Ошибка загрузки: ' + e + '</td></tr>';
+      });
+  }
+
+  var dateHidden = document.getElementById('shift-date');
+  dateHidden.addEventListener('change', function () {
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    state.date = dateHidden.value;
+    load();
+  });
+
+  document.getElementById('chk-all').addEventListener('change', function () {
+    state.all = this.checked;
+    load();
+  });
+  var searchTimer = null;
+  document.getElementById('inp-search').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { state.q = this.value; load(); }
+  });
+  document.getElementById('inp-search').addEventListener('blur', function () {
+    if (state.q !== this.value) { state.q = this.value; load(); }
+  });
+
+  document.getElementById('btn-add-work').addEventListener('click', function () {
+    document.getElementById('nw-name').value = '';
+    document.getElementById('nw-unit').value = '';
+    document.getElementById('nw-location').value = '';
+    document.getElementById('nw-errors').textContent = '';
+    openModal('modal-new-work');
+  });
+  document.getElementById('nw-save').addEventListener('click', function () {
+    var errEl = document.getElementById('nw-errors');
+    errEl.textContent = '';
+    postForm('/api/gantt/work', {
+      source: document.getElementById('nw-source').value,
+      name: document.getElementById('nw-name').value,
+      unit: document.getElementById('nw-unit').value,
+      location: document.getElementById('nw-location').value,
+    }).then(function (res) {
+      if (res.body.ok) {
+        closeModal('modal-new-work');
+        toast('Добавлено: ' + res.body.code);
+        load();
+      } else {
+        errEl.textContent = formatErrors(res);
+      }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
+  // Инициализация: дата по умолчанию — ВЧЕРА по календарю объекта
+  // (регламент: заполняем до 11:00 за предыдущий день). Не считаем на
+  // клиенте (часы браузера ненадёжны — см. /main.py::object_today) —
+  // просто не передаём date, сервер сам подставит object_yesterday(),
+  // виджет синхронизируется в render() из ответа.
+  load();
+})();
+</script>
+{% endblock %}
+
+

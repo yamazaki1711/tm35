@@ -1,33 +1,102 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Субподрядчики</h1>
+<p class="subtitle">Работы с исполнителем «субподряд» показаны ниже отдельно (без привязки к юрлицу) —
+это не то же самое, что реестр организаций слева.</p>
 
-<h2>Реестр субподрядчиков</h2>
+{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
+{% if errors %}
+<div class="flash flash-err"><b>Не сохранено — исправьте:</b>
+  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+
+<form class="form-box" method="post" action="/subcontractors" style="max-width:640px;">
+  <h3 style="margin-top:0;">Новая субподрядная организация</h3>
+  <label>Организация (обязательно)
+    <input type="text" name="name" value="{{ values.get('name', '') }}" required>
+  </label>
+  <label>Вид работ
+    <input type="text" name="work_type" value="{{ values.get('work_type', '') }}">
+  </label>
+  <label>Статус договора
+    <input type="text" name="contract_status" value="{{ values.get('contract_status', '') }}" placeholder="например, подписан">
+  </label>
+  <label>Статус мобилизации
+    <input type="text" name="mobilization_status" value="{{ values.get('mobilization_status', '') }}" placeholder="например, на объекте">
+  </label>
+  <label>Бригада, чел. (0–50)
+    <input type="number" name="crew_size" min="0" max="50" step="1" value="{{ values.get('crew_size', '') }}">
+  </label>
+  <label>Начало план
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="expected_start_date" value="{{ values.get('expected_start_date', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>Начало факт
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="actual_start_date" value="{{ values.get('actual_start_date', '') }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>Причина задержки (если есть)
+    <input type="text" name="reason_delayed" value="{{ values.get('reason_delayed', '') }}">
+  </label>
+  <label>Влияние
+    <input type="text" name="impact" value="{{ values.get('impact', '') }}">
+  </label>
+  <label>Комментарий
+    <textarea name="comment" rows="2">{{ values.get('comment', '') }}</textarea>
+  </label>
+  <button type="submit">Добавить</button>
+</form>
+
+<h3>Реестр субподрядных организаций</h3>
 {% if registry_rows %}
 <div class="table-wrap">
 <table>
-<tr><th>Наименование</th><th>Вид работ</th><th>Статус договора</th><th>Готовность</th><th>Ожид. дата выхода</th></tr>
-{% for r in registry_rows %}
-<tr><td>{{ r.name }}</td><td>{{ r.work_type or '—' }}</td><td>{{ r.contract_status or '—' }}</td>
-<td>{{ r.mobilization_status or '—' }}</td><td>{{ r.expected_start_date|dmy }}</td></tr>
-{% endfor %}
+  <thead><tr><th>Организация</th><th>Вид работ</th><th>Договор</th><th>Мобилизация</th><th class="num">Бригада</th><th>Начало план</th><th>Начало факт</th></tr></thead>
+  <tbody>
+  {% for r in registry_rows %}
+  <tr>
+    <td class="wrap">{{ r.name }}</td><td>{{ r.work_type or '—' }}</td><td>{{ r.contract_status or '—' }}</td>
+    <td>{{ r.mobilization_status or '—' }}</td><td class="num">{{ r.crew_size if r.crew_size is not none else '—' }}</td>
+    <td>{{ r.expected_start_date|dmy if r.expected_start_date else '—' }}</td>
+    <td>{{ r.actual_start_date|dmy if r.actual_start_date else '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
 {% else %}
-<div class="empty-note">Структурированный реестр (статус договора, готовность, ожидаемая дата выхода) пока
-не заполнялся. Ниже — работы с пометкой «субподряд» из реестра работ (не полноценный реестр
-субподрядчиков).</div>
+<div class="empty-note">Реестр организаций пуст — данные о субподрядчиках как отдельных юрлицах ещё
+не заведены.</div>
 {% endif %}
 
-<h2>Работы с исполнением субподрядом</h2>
+<h3>Работы на субподряде ({{ proxy_rows|length }})</h3>
 {% if proxy_rows %}
 <div class="table-wrap">
 <table>
-<tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Примечание (из Excel)</th></tr>
-{% for r in proxy_rows %}
-<tr><td><code>{{ r.code }}</code></td><td>{{ r.name }}</td><td>{{ r.location or '—' }}</td><td>{{ r.comment|strip_source_marker or '—' }}</td></tr>
-{% endfor %}
+  <thead><tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Комментарий</th></tr></thead>
+  <tbody>
+  {% for w in proxy_rows %}
+  <tr>
+    <td><code>{{ w.code }}</code></td>
+    <td class="wrap">{{ w.name }}</td>
+    <td>{{ w.location or '—' }}</td>
+    <td class="wrap">{{ w.comment|strip_source_marker if w.comment else '—' }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
 </table>
 </div>
-{% else %}<div class="empty-note">Работ с исполнением субподрядом не найдено.</div>{% endif %}
+{% else %}
+<div class="empty-note">Работ с исполнителем «субподряд» нет.</div>
+{% endif %}
 {% endblock %}
+

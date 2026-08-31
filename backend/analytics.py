@@ -60,6 +60,29 @@ def compute_project_forecast(active_baseline_finishes, overdue_lag_days):
     return baseline_date + timedelta(days=avg_lag), avg_lag, baseline_date
 
 
+def compute_schedule_position(start, end, today):
+    """
+    Доля планового срока объекта, уже прошедшая на сегодня — считается от
+    того же baseline_schedule, что и "Плановый срок объекта"/"Прогноз
+    окончания" (compute_project_forecast), чтобы на дашборде не было двух
+    разных "плановых окончаний" из разных источников.
+    start — самое раннее plan_start в baseline_schedule, end — то же
+    значение, что crit.baseline_date (самый поздний plan_finish среди
+    незавершённых работ).
+    Если end<=start (баг в baseline, а не рабочая ситуация) — не считаем,
+    возвращаем None, а не произвольное число.
+    elapsed_pct может быть <0 (срок ещё не начался) или >100 (плановый
+    срок уже прошёл) — показывается как есть, не обрезается.
+    Возвращает (elapsed_days, total_days, elapsed_pct).
+    """
+    total_days = (end - start).days
+    if total_days <= 0:
+        return None, None, None
+    elapsed_days = (today - start).days
+    elapsed_pct = round(100 * elapsed_days / total_days, 1)
+    return elapsed_days, total_days, elapsed_pct
+
+
 def compute_work_weight(trudoemkost, baseline_crew):
     """
     Вес работы для взвешенного прогресса/EVM. Приоритет источника:
@@ -218,18 +241,28 @@ def compute_resource_deficit(required_crew_total, actual_crew_total):
         на дашборде).
     actual_crew_total: фактически вышло людей на последний день с данными.
 
-    Возвращает (deficit, coverage_pct) — coverage_pct = какая доля
-    заявленной потребности реально обеспечена ресурсом.
+    Возвращает (deficit, surplus, coverage_pct) — coverage_pct = какая
+    доля заявленной потребности реально обеспечена ресурсом.
+
+    Правка 31.08.2026 (координатор, тот же принцип, что на "Обзоре" и
+    "/resources"): раньше deficit был голой разностью required-actual и
+    мог быть отрицательным под подписью "Дефицит"/"Недобор людей" — при
+    факте больше требуемого это читалось как "недобор -5", хотя на деле
+    избыток. Теперь deficit никогда не отрицателен (None, если недобора
+    нет), surplus — отдельно и только когда факт реально больше нормы,
+    при точном равенстве оба None.
     """
     if required_crew_total is None or actual_crew_total is None:
-        return None, None
-    deficit = required_crew_total - actual_crew_total
+        return None, None, None
+    diff = required_crew_total - actual_crew_total
+    deficit = diff if diff > 0 else None
+    surplus = -diff if diff < 0 else None
     coverage_pct = (
         round(100 * actual_crew_total / required_crew_total, 1)
         if required_crew_total > 0
         else None
     )
-    return deficit, coverage_pct
+    return deficit, surplus, coverage_pct
 
 
 # --------------------------- self-test --------------------------------
@@ -267,13 +300,25 @@ if __name__ == "__main__":
     assert forecast3 is None and baseline3 is None
     print("compute_project_forecast (нет baseline): OK")
 
-    deficit, coverage = compute_resource_deficit(30, 12)
-    assert deficit == 18 and coverage == 40.0
-    print("compute_resource_deficit: OK", deficit, coverage)
+    ed, td, ep = compute_schedule_position(date(2026, 7, 1), date(2026, 11, 28), date(2026, 8, 27))
+    assert td == 150 and ed == 57 and abs(ep - 38.0) < 0.05, (ed, td, ep)
+    print("compute_schedule_position: OK", ed, td, ep)
 
-    deficit0, coverage0 = compute_resource_deficit(0, 5)
-    assert deficit0 == -5 and coverage0 is None
-    print("compute_resource_deficit (required=0): OK")
+    ed0, td0, ep0 = compute_schedule_position(date(2026, 8, 1), date(2026, 8, 1), date(2026, 8, 27))
+    assert ed0 is None and td0 is None and ep0 is None
+    print("compute_schedule_position (end<=start, баг baseline): OK")
+
+    deficit, surplus, coverage = compute_resource_deficit(30, 12)
+    assert deficit == 18 and surplus is None and coverage == 40.0
+    print("compute_resource_deficit: OK", deficit, surplus, coverage)
+
+    # 31.08.2026: раньше этот же вызов (required=0, actual=5, то есть
+    # факт больше нормы) ожидал deficit0 == -5 — тест закреплял старый
+    # баг знака как правильное поведение. Теперь отрицательного дефицита
+    # не бывает: это избыток, deficit0 отсутствует (None), surplus0 = 5.
+    deficit0, surplus0, coverage0 = compute_resource_deficit(0, 5)
+    assert deficit0 is None and surplus0 == 5 and coverage0 is None
+    print("compute_resource_deficit (required=0, изб.): OK")
 
     # --- EVM/PPC (доменный разбор v2.0) ---
     w, src = compute_work_weight(30, 5)
@@ -353,3 +398,4 @@ if __name__ == "__main__":
     print("compute_forecast_by_pace (нулевой темп — буксуем): OK")
 
     print("\nВсе самотесты analytics.py прошли.")
+

@@ -100,7 +100,10 @@
     }
     function openCal() {
       var iso = hiddenEl.value;
-      var base = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + "T00:00:00Z") : new Date();
+      // Без значения — открываем на "сегодня" ОБЪЕКТА (window.TM35_OBJECT_TODAY,
+      // из base.html), не браузера зрителя (решение координатора 29.08.2026).
+      var baseIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : (window.TM35_OBJECT_TODAY || iso);
+      var base = /^\d{4}-\d{2}-\d{2}$/.test(baseIso) ? new Date(baseIso + "T00:00:00Z") : new Date();
       viewYear = base.getUTCFullYear();
       viewMonth = base.getUTCMonth();
       renderCal();
@@ -156,7 +159,8 @@
       var firstOfMonth = new Date(Date.UTC(viewYear, viewMonth, 1));
       var startOffset = (firstOfMonth.getUTCDay() + 6) % 7; // Monday=0
       var daysInMonth = new Date(Date.UTC(viewYear, viewMonth + 1, 0)).getUTCDate();
-      var todayIso = new Date().toISOString().slice(0, 10);
+      // "Сегодня" в календарике — по объекту, не по браузеру зрителя.
+      var todayIso = window.TM35_OBJECT_TODAY || new Date().toISOString().slice(0, 10);
       var selectedIso = hiddenEl.value;
 
       for (var i = 0; i < startOffset; i++) {

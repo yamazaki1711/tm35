@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Вход</h1>
+<p class="subtitle">Просмотр сайта открыт без пароля. Вход нужен только для ввода и изменения данных.</p>
+
+{% if err == 'badpass' %}
+<div class="flash flash-err">Неверный логин или пароль.</div>
+{% elif err == 'layout' %}
+<div class="flash flash-err">В логине или пароле встретились русские буквы — похоже, включена не та раскладка
+клавиатуры. Переключите на английскую (обычно Alt+Shift или Ctrl+Shift) и наберите заново — пароль состоит
+только из цифр и строчных латинских букв.</div>
+{% endif %}
+
+<form class="form-box" method="post" action="/login" style="max-width:360px">
+  <input type="hidden" name="next" value="{{ next }}">
+  <label>Логин
+    <input type="text" name="login" autocomplete="username" autocapitalize="off" autocorrect="off" required>
+  </label>
+  <label>Пароль
+    <input type="password" name="password" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Войти</button>
+</form>
+{% endblock %}

@@ -13,10 +13,10 @@
 {% for w in lookahead %}
 <tr>
   <td><code>{{ w.code }}</code></td>
-  <td>{{ w.name }}</td>
+  <td class="wrap">{{ w.name }}</td>
   <td>{{ w.location or '—' }}</td>
   <td>{{ w.plan_start|dmy }}</td>
-  <td>
+  <td class="wrap">
     {% if w.obstacles %}
       {% for o in w.obstacles %}<span class="badge badge-warn">{{ o }}</span> {% endfor %}
     {% else %}
@@ -33,7 +33,7 @@
 
 <h2>Критичные работы по правилу ({{ critical|length }})</h2>
 <p class="subtitle">
-Не «приоритет 1-5» из Excel, а явное правило: работа просрочена относительно своего планового срока,
+Явное правило (не «приоритет 1-5»): работа просрочена относительно своего планового срока,
 ИЛИ её плановый срок позже директивного срока проекта, ИЛИ на неё напрямую висит неснятое ограничение.
 «Добавить людей» — сколько нужно на эту работу, чтобы уложиться в более жёсткий из двух сроков (её
 собственный или директивный), при известной трудоёмкости.
@@ -45,9 +45,9 @@
 {% for w in critical %}
 <tr>
   <td><code>{{ w.code }}</code></td>
-  <td>{{ w.name }}</td>
+  <td class="wrap">{{ w.name }}</td>
   <td>{{ w.plan_finish|dmy }}</td>
-  <td>{% for r in w.reasons %}<span class="badge badge-bad">{{ r }}</span> {% endfor %}</td>
+  <td class="wrap">{% for r in w.reasons %}<span class="badge badge-bad">{{ r }}</span> {% endfor %}</td>
   <td>{{ w.additional_people if w.additional_people is not none else '—' }}</td>
 </tr>
 {% endfor %}
@@ -59,7 +59,7 @@
 
 <h2>Ограничения к снятию ({{ open_blockers|length }})</h2>
 <p class="subtitle">
-Дата снятия и ответственный не приходят из Excel — задаются здесь вручную, чтобы список был
+Дата снятия и ответственный задаются вручную, чтобы список был
 действием, а не просто текстом.
 </p>
 {% if open_blockers %}
@@ -69,13 +69,13 @@
 {% for b in open_blockers %}
 <tr>
   <td>{{ b.blocker_type|ru_blocker_type }}</td>
-  <td>{{ (b.description|strip_source_marker)[:140] }}{% if (b.description|strip_source_marker)|length > 140 %}…{% endif %}</td>
-  <td>{{ b.created_at.strftime('%d.%m.%Y') if b.created_at else '—' }}</td>
+  <td class="wrap">{{ b.description|strip_source_marker }}</td>
+  <td>{{ b.created_at|dmy }}</td>
   <td>
     <form class="inline-edit" method="post" action="/api/blocker/{{ b.id }}">
       <span class="dm-picker" data-dm-picker>
         <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь">📅</button>
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
         <input type="hidden" name="expected_resolution_date" value="{{ b.expected_resolution_date or '' }}">
         <div class="dm-cal" hidden></div>
       </span>
@@ -97,5 +97,6 @@
 <div class="empty-note">Активных ограничений нет.</div>
 {% endif %}
 
-<p><a href="/gantt">Интерактивный график (рабочая поверхность) →</a> · <a href="/status">Успеваем? →</a></p>
+<p><a href="/gantt">Интерактивный график (рабочая поверхность) →</a> · <a href="/dashboard">Успеваем? →</a></p>
 {% endblock %}
+

@@ -1,24 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Обоснование Исполнителя</h1>
-<p class="subtitle">Реальные агрегаты по фактически внесённым данным (не пример из ТЗ «30 vs 12» — те цифры
-не подтверждены документально, см. открытые вопросы ТЗ п.27.7, здесь считаются фактические данные).</p>
+<p class="subtitle">Свод по фактически отработанным дням — сколько всего человек выведено, среднее
+за день, и сколько работ ведётся своими силами против субподряда. Для писем/отчётов заказчику о
+фактически задействованном ресурсе.</p>
 
-<div class="grid">
-  <div class="tile"><div class="value">{{ agg.total_planned or 0 }}</div><div class="label">Суммарно план, чел.-дней</div></div>
-  <div class="tile"><div class="value">{{ agg.total_actual or 0 }}</div><div class="label">Суммарно факт, чел.-дней</div></div>
-  <div class="tile"><div class="value">{{ agg.avg_planned or 0 }}</div><div class="label">Средний план, чел./день</div></div>
-  <div class="tile"><div class="value">{{ agg.avg_actual or 0 }}</div><div class="label">Средний факт, чел./день</div></div>
-  <div class="tile"><div class="value">{{ agg.days_with_data or 0 }}</div><div class="label">Дней с данными</div></div>
-  <div class="tile"><div class="value">{{ subcontract_count }}</div><div class="label">Работ на субподряде</div></div>
+<div class="kpi-row kpi-small">
+  <div class="kpi"><div class="kpi-num">{{ agg.days_with_data or 0 }}</div><div class="kpi-label">Дней с фактом</div></div>
+  <div class="kpi"><div class="kpi-num">{{ agg.total_planned or 0 }}</div><div class="kpi-label">Сумма план, чел.-дней</div></div>
+  <div class="kpi"><div class="kpi-num">{{ agg.total_actual or 0 }}</div><div class="kpi-label">Сумма факт, чел.-дней</div></div>
+  <div class="kpi"><div class="kpi-num">{{ agg.avg_planned if agg.avg_planned is not none else '—' }}</div><div class="kpi-label">Среднее план/день</div></div>
+  <div class="kpi"><div class="kpi-num">{{ agg.avg_actual if agg.avg_actual is not none else '—' }}</div><div class="kpi-label">Среднее факт/день</div></div>
 </div>
 
-<h2>Работы по источнику</h2>
+<h3>Работы по листу-источнику графика</h3>
+<div class="table-wrap">
 <table>
-<tr><th>Источник</th><th>Кол-во работ</th></tr>
-{% for r in by_source_type %}<tr><td>{{ r.source|ru_source }}</td><td>{{ r.n }}</td></tr>{% endfor %}
+  <thead><tr><th>Источник</th><th class="num">Кол-во работ</th></tr></thead>
+  <tbody>
+  {% for r in by_source_type %}
+  <tr><td>{{ r.source|ru_source }}</td><td class="num">{{ r.n }}</td></tr>
+  {% endfor %}
+  </tbody>
 </table>
+</div>
 
-<div class="empty-note">Влияние дефицита на срок и потери из-за внешних факторов не рассчитываются —
-для этого нужен плановый график и прогнозная дата завершения, которых пока нет.</div>
+<div class="kpi-row kpi-small" style="margin-top:1.5rem">
+  <div class="kpi"><div class="kpi-num">{{ subcontract_count }}</div><div class="kpi-label">Работ на субподряде</div></div>
+</div>
 {% endblock %}
