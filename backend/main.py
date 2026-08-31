@@ -2369,8 +2369,9 @@ def api_gantt_metrics():
 
 
 @app.get("/api/gantt")
-def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: str = ""):
+def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: str = "", started_only: str = ""):
     active_only = bool(active_only)
+    started_only = bool(started_only)
     if start:
         try:
             start_date = date_cls.fromisoformat(start)
@@ -2402,6 +2403,25 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
     if location.strip():
         where_extra += " and w.location ilike %s"
         params.append(f"%{location.strip()}%")
+    if started_only:
+        # "Есть факт" (координатор, 31.08.2026) — вариант (в), подтверждён
+        # после сверки чисел: work.fact_pct > 0 ИЛИ есть ячейка с
+        # actual_crew в ТЕКУЩЕМ окне дат. Обязательно через LATEST_DP_CTE
+        # (латест-wins), не сырую daily_progress — иначе фильтр мог бы
+        # пометить работу "есть факт", а в самой сетке ни одной ячейки
+        # с фактом не было бы видно (дедуп мог их скрыть). Работает
+        # вместе с "только активные" через AND (два независимых
+        # "and"-условия), не заменяет его.
+        where_extra += f""" and (
+            w.fact_pct > 0
+            or w.id in (
+                {LATEST_DP_CTE}
+                select distinct work_id from latest_dp
+                where date between %s and %s and actual_crew is not null
+            )
+        )"""
+        params.append(start_date)
+        params.append(end_date)
 
     works = query(
         f"""
