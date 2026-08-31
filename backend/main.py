@@ -3240,17 +3240,22 @@ def baseline_post(
 
 @app.get("/data")
 def data_hub(request: Request):
+    # Числа-превью на этом хабе раньше считались СВОИМИ, упрощёнными
+    # запросами — не совпадали с тем, что показывает целевая страница по
+    # клику (координатор, 31.08.2026: "Критичные работы" 15 на хабе против
+    # 9 на /critical; "Простои" 3 на хабе против 1 на /downtime). Правило:
+    # хаб вызывает ТЕ ЖЕ функции/запросы, что и страница, не пишет свою
+    # логику заново.
+    crit_for_hub = get_criticality_data()
+    downtime_total = query_one(
+        LATEST_DP_CTE + "select count(*) as n from latest_dp where comment is not null and comment <> ''"
+    )["n"]
     counts = {
         "dashboard": query_one("select count(*) as n from work")["n"],
-        "critical": query_one(
-            "select count(*) as n from baseline_schedule where plan_finish < %s and confidence in ('high','medium')",
-            (object_today(),),
-        )["n"],
+        "critical": crit_for_hub["overdue_count"],
         "works": query_one("select count(*) as n from work")["n"],
         "resources": query_one("select count(distinct date) as n from daily_progress")["n"],
-        "downtime": query_one(
-            "select count(*) as n from daily_progress where comment is not null and comment <> ''"
-        )["n"],
+        "downtime": downtime_total,
         "subcontractors": query_one("select count(*) as n from subcontractor")["n"],
         "materials": query_one("select count(*) as n from material")["n"],
         "blockers": query_one("select count(*) as n from blocker where status='active'")["n"],
