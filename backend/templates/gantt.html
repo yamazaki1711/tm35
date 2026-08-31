@@ -110,18 +110,11 @@
   <div class="tile metric-flash" id="m-ppc"><div class="value">…</div><div class="label">Надёжность планирования (14 дн.)</div></div>
   <div class="tile metric-flash" id="m-forecast"><div class="value">…</div><div class="label">Прогноз завершения</div></div>
   <div class="tile metric-flash" id="m-overdue"><div class="value">…</div><div class="label">Просрочено работ</div></div>
-  <div class="tile metric-flash" id="m-deficit"><div class="value">…</div><div class="label">Дефицит людей (заявлено−факт)</div></div>
-  <div class="tile metric-flash" id="m-surplus"><div class="value">…</div><div class="label">Избыток людей (заявлено−факт)</div></div>
+  <div class="tile metric-flash" id="m-deficit"><div class="value">…</div><div class="label" id="m-deficit-label">Дефицит людей (заявлено−факт)</div></div>
   <div class="tile metric-flash" id="m-coverage"><div class="value">…</div><div class="label">Покрытие ресурсом</div></div>
 </div>
 <p class="subtitle">Панель пересчитывается заново из БД после каждого сохранения в сетке (не только при
 перезагрузке страницы) — подробности формул на <a href="/dashboard">главной</a>.</p>
-
-{% if not can_write %}
-<div class="empty-note" style="border-color:var(--c-warning);color:var(--c-text)">
-  Раздел ведёт группа СМР — у вас нет прав на запись, просмотр доступен.
-</div>
-{% endif %}
 
 <div class="gantt-controls">
   <button id="btn-prev">← пред.</button>
@@ -472,8 +465,13 @@
         setMetric('m-ppc', m.ppc_pct != null ? m.ppc_pct + '% (' + m.ppc_met + '/' + m.ppc_promised + ')' : '—', changed && m.ppc_pct !== lastMetrics.ppc_pct);
         setMetric('m-forecast', TM35_RU_DATE.fmtDMY(m.forecast_date), changed && m.forecast_date !== lastMetrics.forecast_date);
         setMetric('m-overdue', m.overdue_count != null ? String(m.overdue_count) : '—', changed && m.overdue_count !== lastMetrics.overdue_count);
-        setMetric('m-deficit', m.deficit != null ? String(m.deficit) : '—', changed && m.deficit !== lastMetrics.deficit);
-        setMetric('m-surplus', m.surplus != null ? String(m.surplus) : '—', changed && m.surplus !== lastMetrics.surplus);
+        // Дефицит и избыток людей взаимоисключающие (одно из двух всегда
+        // "—") - координатор, 31.08.2026: свести в одну плитку вместо
+        // двух, подпись меняется по тому, что реально есть.
+        document.getElementById('m-deficit-label').textContent =
+          m.surplus != null ? 'Избыток людей (заявлено−факт)' : 'Дефицит людей (заявлено−факт)';
+        setMetric('m-deficit', m.deficit != null ? String(m.deficit) : (m.surplus != null ? String(m.surplus) : '—'),
+          changed && (m.deficit !== lastMetrics.deficit || m.surplus !== lastMetrics.surplus));
         setMetric('m-coverage', m.coverage_pct != null ? m.coverage_pct + '%' : '—', changed && m.coverage_pct !== lastMetrics.coverage_pct);
         lastMetrics = m;
       })
