@@ -2315,11 +2315,13 @@ def form_get(request: Request, ok: str = "", w: str = ""):
     # день до 11:00 ЗА ПРЕДЫДУЩИЙ день — дата по умолчанию вчера по
     # календарю объекта, не сегодня и не пустая (было пустой — искать
     # дату вручную не должно быть нужно).
+    can_write = has_permission(request.state.user, "smr:write")
     return render(
         request, "form.html", "form",
         work_rows=work_rows, reason_codes=REASON_CODES,
         errors=[], warnings=warnings, ok=bool(ok),
         values={"date": object_yesterday().isoformat()},
+        can_write=can_write,
     )
 
 
@@ -2337,7 +2339,8 @@ SOURCE_LABELS = {
 
 @app.get("/gantt")
 def gantt_page(request: Request):
-    return render(request, "gantt.html", "gantt")
+    can_write = has_permission(request.state.user, "smr:write")
+    return render(request, "gantt.html", "gantt", can_write=can_write)
 
 
 @app.get("/api/gantt-metrics")
@@ -2699,7 +2702,8 @@ SHIFT_FIELD_COLUMNS = {
 
 @app.get("/shift")
 def shift_page(request: Request):
-    return render(request, "shift.html", "shift")
+    can_write = has_permission(request.state.user, "smr:write")
+    return render(request, "shift.html", "shift", can_write=can_write)
 
 
 @app.get("/api/shift")

@@ -116,6 +116,12 @@
 <p class="subtitle">Панель пересчитывается заново из БД после каждого сохранения в сетке (не только при
 перезагрузке страницы) — подробности формул на <a href="/dashboard">главной</a>.</p>
 
+{% if not can_write %}
+<div class="empty-note" style="border-color:var(--c-warning);color:var(--c-text)">
+  Раздел ведёт группа СМР — у вас нет прав на запись, просмотр доступен.
+</div>
+{% endif %}
+
 <div class="gantt-controls">
   <button id="btn-prev">← пред.</button>
   <button id="btn-today">Сегодня</button>
@@ -132,7 +138,7 @@
   <span id="gantt-status"></span>
 </div>
 
-<div id="gantt-scroll"><div style="padding:1rem;color:var(--muted)">Загрузка…</div></div>
+<div id="gantt-scroll" {{ 'style="pointer-events:none"' if not can_write }}><div style="padding:1rem;color:var(--muted)">Загрузка…</div></div>
 
 <!-- Модалка: правка ячейки дня -->
 <div class="modal-overlay" id="modal-cell">

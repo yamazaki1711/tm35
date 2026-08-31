@@ -18,8 +18,15 @@
 </div>
 {% endif %}
 
+{% if not can_write %}
+<div class="empty-note" style="border-color:var(--c-warning);color:var(--c-text)">
+  Раздел ведёт группа СМР — у вас нет прав на запись, просмотр доступен.
+</div>
+{% endif %}
+
 <div id="existing-note" class="empty-note" style="display:none; max-width:480px;"></div>
 
+{% if can_write %}
 <form class="form-box" method="post" action="/form" id="dp-form">
   <label>Работа
     <select name="work_id" id="work_id" required>
@@ -104,5 +111,6 @@
   if (workSel.value && dateInp.value) checkExisting();
 })();
 </script>
+{% endif %}
 {% endblock %}
 

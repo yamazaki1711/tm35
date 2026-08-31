@@ -78,7 +78,13 @@
 Нужно внести только одну запись — проще через <a href="/form">форму «Ввод факта»</a>.
 По умолчанию открывается ВЧЕРАШНИЙ день (регламент: вносим до 11:00 за вчера) — дату можно сменить.</p>
 
-<div class="filter-bar shift-controls">
+{% if not can_write %}
+<div class="empty-note" style="border-color:var(--c-warning);color:var(--c-text)">
+  Раздел ведёт группа СМР — у вас нет прав на запись, просмотр доступен.
+</div>
+{% endif %}
+
+<div class="filter-bar shift-controls" {{ 'style="pointer-events:none;opacity:.55"' if not can_write }}>
   <div class="field">
     <label for="shift-date" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Дата</label>
     <span class="dm-picker" data-dm-picker>
@@ -97,7 +103,7 @@
   <span id="shift-count"></span>
 </div>
 
-<div class="table-wrap" style="margin-top:1rem">
+<div class="table-wrap" style="margin-top:1rem{{ ';pointer-events:none' if not can_write }}">
   <table class="shift">
     <colgroup>
       <col class="c-code"><col class="c-name"><col class="c-loc"><col class="c-pct">
