@@ -1825,6 +1825,15 @@ def subcontractors_post(
 
 @app.get("/journal")
 def journal_page(request: Request, user_id: str = "", date_from: str = "", date_to: str = ""):
+    # Отключено 31.08.2026 по указанию координатора (вопрос 19 из
+    # TM35_вопросы_20260830_ответы: «Все журналы убираем вообще»).
+    # Формулировка допускает два прочтения — убрать эту страницу или
+    # весь механизм audit_log — координатор ещё не уточнил, какое.
+    # Сегодня сделано только обратимое: страница и ссылка на неё
+    # (settings.html) убраны из интерфейса. Запись в audit_log НЕ
+    # отключена — на ней держится наблюдение по дефекту №5
+    # (KNOWN_ISSUES.md §9). Обратимо: убрать этот return.
+    return RedirectResponse(url="/dashboard", status_code=302)
     if not is_admin(request.state.user):
         return RedirectResponse(url="/login?next=/journal", status_code=303)
 
