@@ -1,0 +1,49 @@
+[
+  {
+    "sheet": "График СМР",
+    "row": 108,
+    "type": "crew_looks_like_date",
+    "value": "2026-05-04T00:00:00",
+    "cell": "E108"
+  },
+  {
+    "sheet": "График СМР",
+    "row": 123,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G123",
+    "work_code": "TM35-AUX-117"
+  },
+  {
+    "sheet": "График СМР",
+    "row": 130,
+    "type": "pct_not_numeric",
+    "value": "Переодично",
+    "cell": "G130",
+    "work_code": "TM35-AUX-124"
+  },
+  {
+    "sheet": "График СМР",
+    "row": 137,
+    "type": "pct_not_numeric",
+    "value": "9 шт",
+    "cell": "G137",
+    "work_code": "TM35-AUX-131"
+  },
+  {
+    "sheet": "График СМР",
+    "row": 139,
+    "type": "pct_not_numeric",
+    "value": "56шт",
+    "cell": "G139",
+    "work_code": "TM35-AUX-133"
+  },
+  {
+    "sheet": "График СМР",
+    "row": 139,
+    "type": "volume_not_numeric",
+    "value": "70шт",
+    "cell": "D139",
+    "work_code": "TM35-AUX-133"
+  }
+]
