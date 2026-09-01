@@ -2484,15 +2484,29 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
     )
     totals = {t["date"].isoformat(): {"p": t["planned"] or 0, "a": t["actual"] or 0} for t in totals_rows}
 
+    # Правка 01.09.2026 (координатор, находка про значок ⚠ на /gantt):
+    # раньше group by считал только количество по (дата, тип) и наружу
+    # уходил сырой blocker_type ('id_docs') без перевода — здесь это
+    # JSON-эндпоинт, Jinja-фильтр ru_blocker_type к нему не применяется
+    # (это единственное место в коде, где blocker_type отдаётся клиенту
+    # непереведённым — остальные 5 мест проверены, все идут через
+    # шаблоны с |ru_blocker_type). Статус тоже не учитывался — снятый
+    # стоп-фактор выглядел неотличимо от действующего. Теперь отдаём
+    # построчно (а не count) с готовым переводом и статусом — значок
+    # и подпись строятся из этого на фронте, а не пересчитывают сами.
     day_blockers_rows = query(
-        "select date(created_at) as d, blocker_type, count(*) as n from blocker "
+        "select created_at::date as d, blocker_type, status from blocker "
         "where work_id is null and created_at::date between %s and %s "
-        "group by date(created_at), blocker_type",
+        "order by created_at",
         (start_date, end_date),
     )
     day_blockers = {}
     for r in day_blockers_rows:
-        day_blockers.setdefault(r["d"].isoformat(), []).append(r["blocker_type"])
+        day_blockers.setdefault(r["d"].isoformat(), []).append({
+            "type_ru": RU_BLOCKER_TYPE.get(r["blocker_type"], r["blocker_type"]),
+            "status": r["status"],
+            "status_ru": RU_BLOCKER_STATUS.get(r["status"], r["status"]),
+        })
 
     groups = {}
     for w in works:

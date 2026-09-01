@@ -40,6 +40,12 @@
   .daycol { min-width: 2.6rem; text-align: center; }
   .daycol.today { background: rgba(11,111,176,.10); }
   th.daycol.today { background: rgba(11,111,176,.22); }
+  /* .day-blocker-marker раньше не была описана вообще — "оранжевый"
+     эмодзи "⚠" был цветом глифа шрифта браузера, не стилем сайта. */
+  .day-blocker-marker { display: flex; justify-content: center; margin-top: .15rem; }
+  .day-blocker-marker svg.icon { width: .95em; height: .95em; }
+  .day-blocker-marker.active { color: var(--c-warning); }
+  .day-blocker-marker.resolved { color: var(--muted); opacity: .6; }
   .group-row td { background: var(--panel); font-weight: 700; cursor: pointer; position: sticky; left: 0; }
   .group-row.collapsed + .work-row-of-group { display: none; }
   .row-done { opacity: .6; }
@@ -286,8 +292,24 @@
       var isToday = d === todayStr;
       var db = data.day_blockers[d];
       var short = d.slice(8, 10) + '.' + d.slice(5, 7);
-      html += '<th class="daycol' + (isToday ? ' today' : '') + '" title="' + TM35_RU_DATE.fmtDMY(d) + (db ? ' — ' + db.join(', ') : '') + '">'
-        + short + (db ? '<div class="day-blocker-marker">⚠</div>' : '') + '</th>';
+      // Правка 01.09.2026: эмодзи "⚠" (по-разному рисуется в разных
+      // системах, тот же разворот 27.08, что убрал эмодзи везде) заменён
+      // на тот же SVG-значок warning-triangle, что уже используется на
+      // /status (.deviation-badge.risk) — не новая иконка, переиспользована
+      // существующая. Действующий/снятый стоп-фактор различаются классом
+      // (active/resolved), не молчаливым цветом браузера — снятый не
+      // прячется (правдивая история дня), но приглушён.
+      var titleSuffix = '';
+      var markerHtml = '';
+      if (db && db.length) {
+        var hasActive = db.some(function (b) { return b.status === 'active'; });
+        titleSuffix = ' — ' + db.map(function (b) { return b.type_ru + ' (' + b.status_ru + ')'; }).join(', ');
+        markerHtml = '<div class="day-blocker-marker ' + (hasActive ? 'active' : 'resolved') + '">'
+          + '<svg class="icon" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+          + '</div>';
+      }
+      html += '<th class="daycol' + (isToday ? ' today' : '') + '" title="' + TM35_RU_DATE.fmtDMY(d) + titleSuffix + '">'
+        + short + markerHtml + '</th>';
     });
     html += '</tr></thead><tbody>';
 

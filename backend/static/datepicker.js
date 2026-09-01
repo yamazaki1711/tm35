@@ -6,7 +6,7 @@
    Разметка (см. любой шаблон с data-dm-picker):
      <span class="dm-picker" data-dm-picker>
        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ">
-       <button type="button" class="dm-btn">📅</button>
+       <button type="button" class="dm-btn"><svg class="icon" viewBox="0 0 24 24">calendar</svg></button>
        <input type="hidden" id="..." name="..." value="{ISO или пусто}">
        <div class="dm-cal" hidden></div>
      </span>
