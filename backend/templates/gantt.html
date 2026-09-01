@@ -206,6 +206,12 @@
 <script>
 (function () {
   var state = { start: null, days: 30, active: false, location: '', started: false };
+  // Правка 01.09.2026: открытие страницы с нуля показывает начало окна
+  // отображения (display_window_start, сейчас 01.08), не "сегодня-7" —
+  // координатор: "начальная дата - или 01.08, или 01.09, но никак не
+  // 25.08". Кнопка "Сегодня" ниже намеренно продолжает использовать
+  // "сегодня-7" — другой смысл, не тронута.
+  var GANTT_DEFAULT_START = "{{ display_window_start_iso }}";
   var RU_STATUS = {
     not_started: 'не начата', in_progress: 'в работе', suspended: 'приостановлена',
     limited: 'ограничена', done_physically: 'выполнена физически', submitted: 'предъявлена',
@@ -534,7 +540,7 @@
     if (e.key === 'Enter') applyFilters();
   });
 
-  state.start = addDays(window.TM35_OBJECT_TODAY || new Date(), -7);
+  state.start = new Date(GANTT_DEFAULT_START + 'T00:00:00Z');
   load();
   loadMetrics();
 })();

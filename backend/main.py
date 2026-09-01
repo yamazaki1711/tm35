@@ -2340,7 +2340,11 @@ SOURCE_LABELS = {
 @app.get("/gantt")
 def gantt_page(request: Request):
     can_write = has_permission(request.state.user, "smr:write")
-    return render(request, "gantt.html", "gantt", can_write=can_write)
+    window_start, _window_end = get_display_window()
+    return render(
+        request, "gantt.html", "gantt",
+        can_write=can_write, display_window_start_iso=window_start.isoformat(),
+    )
 
 
 @app.get("/api/gantt-metrics")
@@ -2376,9 +2380,18 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
         try:
             start_date = date_cls.fromisoformat(start)
         except ValueError:
-            start_date = object_today() - timedelta(days=7)
+            start_date = get_display_window()[0]
     else:
-        start_date = object_today() - timedelta(days=7)
+        # Правка 01.09.2026 (координатор): по умолчанию график открывался
+        # с "сегодня-7", а не с начала окна отображения — 25.08 вместо
+        # 01.08, при этом "сегодня-7" не была ни одной из двух дат,
+        # которые координатор считал допустимыми (01.08/01.09). Теперь
+        # дефолт — начало окна отображения (get_display_window()),
+        # которое совпадает с directive_start после правки вопроса 12.
+        # Кнопка "Сегодня" (frontend, gantt.html) намеренно не тронута —
+        # у неё другой смысл (показать текущий момент), не открытие
+        # страницы с нуля.
+        start_date = get_display_window()[0]
     days = max(7, min(days, 90))
     end_date = start_date + timedelta(days=days - 1)
 
