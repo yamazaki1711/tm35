@@ -8,7 +8,7 @@ import urllib.parse
 from datetime import date as date_cls, datetime as datetime_cls, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import RedirectResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -37,6 +37,15 @@ class NoCacheStaticFiles(StaticFiles):
 
 app = FastAPI(title="ТМ-35 Мониторинг")
 app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
+
+# Загруженные PDF предписаний (координатор, 04.09.2026 — п.C1). Тот же
+# уровень надёжности хранения, что у остального кода приложения: живёт в
+# писуемом слое контейнера, не на отдельном volume (его тут нет ни у чего
+# другого) — переживает docker restart, не переживёт пересоздание
+# контейнера без повторного docker cp, как и main.py/templates.
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "prescriptions")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+app.mount("/uploads/prescriptions", StaticFiles(directory=UPLOADS_DIR), name="prescription_uploads")
 templates = Jinja2Templates(directory="templates")
 
 # =======================================================================
@@ -135,7 +144,7 @@ def has_permission(user, permission):
     # месте, а не отдельная ветка в каждом вызывающем коде. Когда
     # понадобится точечно сузить кого-то из группы — снять "zone:id" и
     # выдать конкретные id_tab:xxx, код трогать не придётся.
-    if "zone:id" in perms and (permission.startswith("id_tab:") or permission in ("changes:submit", "prescriptions:submit")):
+    if "zone:id" in perms and (permission.startswith("id_tab:") or permission in ("changes:submit", "prescriptions:submit", "id-folders:submit")):
         return True
     if "zone:smr" in perms and permission == "smr:write":
         return True
@@ -3038,20 +3047,34 @@ def export_daily_progress_csv(date_from: str = "", date_to: str = ""):
 
 @app.get("/export/id-packages.csv")
 def export_id_packages_csv():
-    rows = query(
-        "select seq_no, section_no, location, composition, amount_no_vat, status_code, status_formation "
-        "from id_package order by seq_no"
-    )
-    S_LABELS = {"S00": "Черновик", "S10": "Сформирован", "S20": "В РСК", "S40": "Заблокирован ИЗМ",
-                "S60": "Подписан РСК", "S80": "В СДО", "S90": "Закрыт в КС-2"}
+    # Тот же источник и тот же набор колонок, что на странице /id-packages
+    # (id_form_row/id_form_entry, не устаревший id_package) — см. ID_ROW_LIST_SQL.
+    rows = query("""
+        with latest as (
+            select distinct on (row_id) row_id, status_id, status_date, rsk_signer_name
+            from id_form_entry
+            order by row_id, created_at desc
+        )
+        select t.label as tab_label, r.section_label,
+               resp.full_name as responsible_name,
+               s.label as status_label, le.status_date, le.rsk_signer_name
+        from id_form_row r
+        join id_form_tab t on t.id = r.tab_id
+        left join id_form_responsible resp
+            on resp.tab_id = t.id and resp.role = 'Ответственный за ввод данных'
+        left join latest le on le.row_id = r.id
+        left join id_form_status s on s.id = le.status_id
+        where t.code not in ('opv', 'n')
+        order by t.label, r.source_row
+    """)
     out = [
-        (r["seq_no"], r["section_no"], r["location"], r["composition"], r["amount_no_vat"],
-         S_LABELS.get(r["status_code"], r["status_code"] or "Черновик"), r["status_formation"])
+        (r["tab_label"], r["section_label"], r["responsible_name"],
+         r["status_label"] or "нет записи", _csv_dmy(r["status_date"]), r["rsk_signer_name"])
         for r in rows
     ]
     return _csv_response(
-        "id_packages.csv",
-        ["№", "Раздел", "Участок", "Состав", "Сумма без НДС", "Статус", "Статус формирования (источник)"],
+        "id_sections.csv",
+        ["Категория", "Раздел", "Ответственный", "Статус", "Дата статуса", "Подписант РСК"],
         out,
     )
 
@@ -3533,19 +3556,297 @@ def api_existing_entry(work_id: int, date: str):
     }
 
 
-# ====== GET /id-packages — список пакетов ИД ======
+ID_ROW_LIST_SQL = """
+    with latest as (
+        select distinct on (row_id) row_id, status_id, status_date, rsk_signer_name
+        from id_form_entry
+        order by row_id, created_at desc
+    )
+    select r.id, t.label as tab_label, r.section_label,
+           resp.full_name as responsible_name,
+           s.label as status_label, le.status_date, le.rsk_signer_name
+    from id_form_row r
+    join id_form_tab t on t.id = r.tab_id
+    left join id_form_responsible resp
+        on resp.tab_id = t.id and resp.role = 'Ответственный за ввод данных'
+    left join latest le on le.row_id = r.id
+    left join id_form_status s on s.id = le.status_id
+    where t.code not in ('opv', 'n')
+    order by t.label, r.source_row
+"""
+
+
+# ====== GET /id-packages — реестр разделов ИД (единица учёта — раздел, не пакет) ======
+# Раньше читал устаревшую разовую таблицу id_package (импорт от 17.08.2026,
+# 306 строк из майского xls, застывший снимок) — переведено на актуальный
+# источник id_form_row/id_form_entry (координатор, 04.09.2026), тот же,
+# что уже питает форму «Ввод по разделам». Колонки Участок/Состав/Сумма
+# были агрегатами уровня "папки" в старой модели — здесь их нет, это
+# задача будущей формы «Выполнение» (сборка папок), не этой страницы.
 @app.get("/id-packages")
 def id_packages_page(request: Request):
-    packages = query(
-        "select seq_no, section_no, location, composition, amount_no_vat, status_formation, status_code, "
-        "date_s10_formed, date_s20_to_rsk, date_s60_signed, date_s90_closed_ks, drive_folder_url "
-        "from id_package order by seq_no limit 500"
-    )
-    stats_rows = query("select status_code, count(*) as cnt from id_package group by status_code")
-    stats = {r['status_code']: r['cnt'] for r in stats_rows} if stats_rows else {}
-    total = sum(stats.values()) if stats else 0
+    rows = query(ID_ROW_LIST_SQL)
+    total = len(rows)
+    with_entry = sum(1 for r in rows if r["status_label"])
+    no_entry = total - with_entry
+    status_counts = {}
+    for r in rows:
+        if r["status_label"]:
+            status_counts[r["status_label"]] = status_counts.get(r["status_label"], 0) + 1
     return render(request, "id_packages.html", "id-packages",
-                  packages=packages, stats=stats, total=total)
+                  rows=rows, total=total, with_entry=with_entry, no_entry=no_entry,
+                  status_counts=status_counts)
+
+
+# =======================================================================
+# Форма «Выполнение» — сборка папок ИД (координатор, 04.09.2026, блок D).
+# Единица учёта папки — раздел id_form_row, отбираем только те, у кого
+# последняя запись id_form_entry имеет статус «Подписано» (тот же паттерн
+# distinct-on, что и в ID_ROW_LIST_SQL выше). Один раздел — не больше чем
+# в одной папке: обеспечено UNIQUE(row_id) в id_folder_row на уровне БД,
+# а не только проверкой в коде — прямая вставка дубля упадёт сама.
+# Диапазон 10-100 разделов на папку и сумма 10 000–500 000 ₽ — сумма
+# провалидирована жёстко (реальные деньги), количество разделов оставлено
+# только подсказкой в интерфейсе, не жёсткой блокировкой: исторические
+# папки заносятся задним числом уже сейчас, блокировать по количеству,
+# пока их набирают, значило бы мешать координатору тем же способом,
+# каким блокировка по прошлому опыту проекта уже один раз мешала (см.
+# CLAUDE.md — "прогресс — выполненная работа, не число итераций").
+# =======================================================================
+
+ID_FOLDER_CONTRACT_TOTAL = 4078191380.98  # Всего с НДС по контракту — координатор, докс-ТЗ
+
+ID_AVAILABLE_ROWS_SQL = """
+    with latest as (
+        select distinct on (row_id) row_id, status_id
+        from id_form_entry
+        order by row_id, created_at desc
+    )
+    select r.id, t.label as tab_label, r.section_label
+    from id_form_row r
+    join id_form_tab t on t.id = r.tab_id
+    join latest le on le.row_id = r.id
+    join id_form_status s on s.id = le.status_id and s.code = 'Подписано'
+    where t.code not in ('opv', 'n')
+      and not exists (select 1 from id_folder_row fr where fr.row_id = r.id)
+    order by t.label, r.source_row
+"""
+
+
+def compute_id_folder_stats():
+    """Общая сводка для /id-folders и плитки дашборда — один источник цифр,
+    не считать дважды в двух местах по-разному."""
+    total_rows = query_one(
+        "select count(*) as n from id_form_row r join id_form_tab t on t.id=r.tab_id "
+        "where t.code not in ('opv','n')"
+    )["n"]
+    signed_total = query_one(
+        "select count(*) as n from id_form_row r join id_form_tab t on t.id=r.tab_id "
+        "where t.code not in ('opv','n') and exists ("
+        "  select 1 from id_form_entry e join id_form_status s on s.id=e.status_id "
+        "  where e.row_id=r.id and s.code='Подписано' "
+        "  and e.created_at = (select max(created_at) from id_form_entry e2 where e2.row_id=r.id)"
+        ")"
+    )["n"]
+    # "Остаток неподписанных разделов" (координатор, докс D5) — буквально
+    # разделы, которые ещё не в статусе «Подписано», а не «подписанные,
+    # но ещё не в папке» (для второго смысла ниже отдельная переменная,
+    # не одно и то же — не путать).
+    unsigned_count = total_rows - signed_total
+
+    in_folder_total = query_one("select count(*) as n from id_folder_row")["n"]
+    signed_not_in_folder = signed_total - in_folder_total if signed_total >= in_folder_total else 0
+
+    folders_count = query_one("select count(*) as n from id_folder")["n"]
+
+    signed_folders_sum = query_one(
+        "select coalesce(sum(fr.amount_rub), 0) as s from id_folder f "
+        "join id_folder_row fr on fr.folder_id=f.id where f.sdo_transfer_date is not null"
+    )["s"]
+    money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum)
+
+    manual_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_manual_volume")["s"]
+
+    return {
+        "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,
+        "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
+        "signed_folders_sum": signed_folders_sum, "money_remaining": money_remaining,
+        "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
+    }
+
+
+@app.get("/id-folders")
+def id_folders_page(request: Request):
+    folders = query("""
+        select f.id, f.name, f.folder_date, f.sdo_transfer_date, f.sdo_signer_name,
+               count(fr.id) as row_count, coalesce(sum(fr.amount_rub), 0) as amount_sum
+        from id_folder f
+        left join id_folder_row fr on fr.folder_id = f.id
+        group by f.id
+        order by f.id desc
+    """)
+    stats = compute_id_folder_stats()
+    manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
+
+    return render(request, "id_folders.html", "id-folders",
+                  folders=folders, stats=stats, manual_volumes=manual_volumes)
+
+
+@app.post("/api/id-folder")
+def api_id_folder_create(request: Request, name: str = Form(""), folder_date: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    date_val = _parse_date(folder_date)
+    if not date_val:
+        return RedirectResponse(
+            url="/id-folders?err=" + urllib.parse.quote("Дата создания папки указана некорректно."),
+            status_code=303,
+        )
+
+    name_val = name.strip()
+    if not name_val:
+        next_id = query_one("select coalesce(max(id), 0) + 1 as next from id_folder")["next"]
+        name_val = str(next_id)
+
+    user_id = current_user_id_or_web_form()
+
+    def _do(cur):
+        cur.execute(
+            "insert into id_folder (name, folder_date, created_by) values (%s, %s, %s) returning id",
+            (name_val, date_val, user_id),
+        )
+        return cur.fetchone()["id"]
+    folder_id = run_in_transaction(_do)
+    return RedirectResponse(url=f"/id-folders/{folder_id}", status_code=303)
+
+
+@app.get("/id-folders/{folder_id}")
+def id_folder_detail_page(request: Request, folder_id: int):
+    folder = query_one("select * from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders", status_code=303)
+    rows_in_folder = query(
+        "select fr.id as folder_row_id, fr.amount_rub, r.section_label, t.label as tab_label "
+        "from id_folder_row fr join id_form_row r on r.id=fr.row_id join id_form_tab t on t.id=r.tab_id "
+        "where fr.folder_id=%s order by t.label, r.source_row",
+        (folder_id,),
+    )
+    amount_sum = sum(float(r["amount_rub"]) for r in rows_in_folder if r["amount_rub"]) if rows_in_folder else 0
+    available = query(ID_AVAILABLE_ROWS_SQL)
+    available_by_tab = {}
+    for r in available:
+        available_by_tab.setdefault(r["tab_label"], []).append(r)
+    return render(request, "id_folder_detail.html", "id-folders",
+                  folder=folder, rows_in_folder=rows_in_folder, amount_sum=amount_sum,
+                  available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS)
+
+
+@app.post("/api/id-folder/{folder_id}/rows")
+def api_id_folder_add_rows(request: Request, folder_id: int, row_ids: list[int] = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    errors = []
+
+    def _do(cur):
+        for row_id in row_ids:
+            cur.execute("select id from id_folder_row where row_id=%s", (row_id,))
+            if cur.fetchone():
+                errors.append(f"Раздел #{row_id} уже в другой папке — пропущен.")
+                continue
+            cur.execute(
+                "insert into id_folder_row (folder_id, row_id) values (%s, %s)",
+                (folder_id, row_id),
+            )
+    run_in_transaction(_do)
+    return RedirectResponse(url=f"/id-folders/{folder_id}" + ("?warn=1" if errors else ""), status_code=303)
+
+
+@app.post("/api/id-folder-row/{folder_row_id}/remove")
+def api_id_folder_row_remove(request: Request, folder_row_id: int):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    row = query_one("select folder_id from id_folder_row where id=%s", (folder_row_id,))
+    if not row:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Запись не найдена."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute("delete from id_folder_row where id=%s", (folder_row_id,)))
+    return RedirectResponse(url=f"/id-folders/{row['folder_id']}", status_code=303)
+
+
+@app.post("/api/id-folder-row/{folder_row_id}/amount")
+def api_id_folder_row_amount(request: Request, folder_row_id: int, amount_rub: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    row = query_one("select folder_id from id_folder_row where id=%s", (folder_row_id,))
+    if not row:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Запись не найдена."), status_code=303)
+    back_url = f"/id-folders/{row['folder_id']}"
+    try:
+        amt = float(amount_rub.replace(",", "."))
+    except ValueError:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сумма указана некорректно."), status_code=303)
+    if not (10000 <= amt <= 500000):
+        return RedirectResponse(
+            url=back_url + "?err=" + urllib.parse.quote("Сумма за раздел должна быть от 10 000,00 до 500 000,00 ₽."),
+            status_code=303,
+        )
+    run_in_transaction(
+        lambda cur: cur.execute("update id_folder_row set amount_rub=%s where id=%s", (amt, folder_row_id))
+    )
+    return RedirectResponse(url=back_url, status_code=303)
+
+
+@app.post("/api/id-folder/{folder_id}/sdo")
+def api_id_folder_sdo(request: Request, folder_id: int,
+                       sdo_transfer_date: str = Form(...), sdo_signer_name: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    date_val = _parse_date(sdo_transfer_date)
+    if not date_val:
+        return RedirectResponse(
+            url=back_url + "?err=" + urllib.parse.quote("Дата передачи в СДО указана некорректно."), status_code=303
+        )
+    if sdo_signer_name not in RSK_SIGNERS:
+        return RedirectResponse(
+            url=back_url + "?err=" + urllib.parse.quote("Недопустимый подписант реестра передачи."), status_code=303
+        )
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set sdo_transfer_date=%s, sdo_signer_name=%s where id=%s",
+        (date_val, sdo_signer_name, folder_id),
+    ))
+    return RedirectResponse(url=back_url, status_code=303)
+
+
+@app.post("/api/manual-volume")
+def api_manual_volume_create(request: Request, description: str = Form(...), amount_rub: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    if not description.strip():
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Описание обязательно."), status_code=303)
+    try:
+        amt = float(amount_rub.replace(",", "."))
+    except ValueError:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Сумма указана некорректно."), status_code=303)
+    user_id = current_user_id_or_web_form()
+    run_in_transaction(lambda cur: cur.execute(
+        "insert into id_manual_volume (description, amount_rub, created_by) values (%s, %s, %s)",
+        (description.strip(), amt, user_id),
+    ))
+    return RedirectResponse(url="/id-folders", status_code=303)
+
+
+@app.post("/api/manual-volume/{volume_id}/delete")
+def api_manual_volume_delete(request: Request, volume_id: int):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute("delete from id_manual_volume where id=%s", (volume_id,)))
+    return RedirectResponse(url="/id-folders", status_code=303)
 
 
 # ====== GET /changes — список ИЗМ ======
@@ -3611,8 +3912,8 @@ def changes_post(
     change_number: str = Form(""),
     topic: str = Form(""),
     description: str = Form(""),
-    initiator: str = Form("RSK"),
-    status: str = Form("DRAFT"),
+    initiator: str = Form("SSR"),
+    status: str = Form("IN_WORK_DESIGNER"),
     designer_name: str = Form(""),
     request_date: str = Form(""),
     sla_days: str = Form("14"),
@@ -3726,13 +4027,30 @@ def changes_post(
 def prescriptions_page(request: Request):
     rows = query(
         "select id, code, source, document_number, document_date, category, area, description, "
-        "required_action, due_date, status, amount_unblocked "
+        "required_action, due_date, status, amount_unblocked, document_file_path "
         "from prescription order by status, document_date desc nulls last limit 300"
     )
     total = len(rows) if rows else 0
     can_edit = has_permission(request.state.user, "prescriptions:submit")
+    # Еженедельная динамика (координатор, докс-заметка 02.09.2026): всего,
+    # устранено/появилось за последние 7 дней, осталось устранить. Считаем
+    # live при каждом заходе на страницу, а не по вторникам разовой
+    # рассылкой — у приложения нет канала push-уведомлений (Telegram
+    # исключён решением координатора, см. CLAUDE.md §5), единственный
+    # реальный канал показа — сама страница.
+    week_ago = object_today() - _td(days=7)
+    open_count = sum(1 for r in rows if r["status"] == "OPEN") if rows else 0
+    resolved_7d = query_one(
+        "select count(*) as n from prescription where actual_close_date >= %s", (week_ago,)
+    )["n"]
+    new_7d = query_one(
+        "select count(*) as n from prescription where created_at::date >= %s", (week_ago,)
+    )["n"]
+    presc_weekly = {"total": total, "resolved_7d": resolved_7d, "new_7d": new_7d, "remaining": open_count,
+                     "period_from": week_ago, "period_to": object_today()}
     return render(request, "prescriptions.html", "prescriptions",
-                  prescriptions=rows or [], total=total, errors=[], values={}, can_edit=can_edit)
+                  prescriptions=rows or [], total=total, errors=[], values={}, can_edit=can_edit,
+                  presc_weekly=presc_weekly)
 
 
 @app.post("/api/prescription/{prescription_id}/status")
@@ -3779,8 +4097,8 @@ def prescriptions_post(
     required_action: str = Form("TECH_SOLUTION"),
     due_date: str = Form(""),
     amount_unblocked: str = Form(""),
-    document_url: str = Form(""),
     comment: str = Form(""),
+    document_pdf: UploadFile | None = File(None),
 ):
     errors = []
     # Права по веткам, 30.08.2026 — та же находка, что у changes_post:
@@ -3795,8 +4113,21 @@ def prescriptions_post(
     doc_num_val = document_number.strip() or None
     cat_val = category.strip() or None
     area_val = area.strip() or None
-    url_val = document_url.strip() or None
     comment_val = comment.strip() or None
+
+    # PDF предписания (координатор, 04.09.2026, п.C1) — вместо текстовой
+    # ссылки на внешний Drive теперь реальный файл, сохраняется на сервере,
+    # ссылка на скачивание — в реестре. Валидация — только расширение/
+    # content-type, антивирусной проверки в приложении нет и не было ни у
+    # одной другой формы этого проекта.
+    pdf_path_val = None
+    if document_pdf is not None and document_pdf.filename:
+        orig_name = document_pdf.filename
+        if not orig_name.lower().endswith(".pdf"):
+            errors.append("Файл предписания должен быть в формате PDF.")
+        else:
+            safe_name = f"{secrets.token_hex(8)}_{re.sub(r'[^A-Za-zА-Яа-я0-9._-]', '_', orig_name)}"
+            pdf_path_val = safe_name
 
     # document_date
     doc_date_val = None
@@ -3834,7 +4165,7 @@ def prescriptions_post(
                           "document_date": document_date, "category": category, "area": area,
                           "description": description, "required_action": required_action,
                           "due_date": due_date, "amount_unblocked": amount_unblocked,
-                          "document_url": document_url, "comment": comment,
+                          "comment": comment,
                       })
 
     # Auto-generate code
@@ -3843,15 +4174,19 @@ def prescriptions_post(
         next_id = query_one("select coalesce(max(id),0)+1 as next from prescription")
         code_val = f"{prefix}-{next_id['next']:03d}"
 
+    if pdf_path_val:
+        with open(os.path.join(UPLOADS_DIR, pdf_path_val), "wb") as f:
+            f.write(document_pdf.file.read())
+
     def _insert_prescription(cur):
         cur.execute(
             """insert into prescription
             (code, source, document_number, document_date, category, area, description,
-             required_action, due_date, status, amount_unblocked, document_url, comment)
+             required_action, due_date, status, amount_unblocked, document_file_path, comment)
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'OPEN', %s, %s, %s)
             returning id""",
             (code_val, source, doc_num_val, doc_date_val, cat_val, area_val, description.strip(),
-             required_action, due_val, amt_val, url_val, comment_val)
+             required_action, due_val, amt_val, pdf_path_val, comment_val)
         )
         return cur.fetchone()['id']
     run_in_transaction(_insert_prescription)
@@ -3933,13 +4268,34 @@ def home_v2(request: Request):
         "where b.status='active' order by b.created_at asc limit 5"
     )
 
-    # Новые статистики для карточек навигации
+    # Новые статистики для карточек навигации. Источник — id_form_row
+    # (актуальные 15 категорий ПТО, без ОПВ/Н), не устаревший id_package
+    # (координатор, 04.09.2026 — тот же перевод, что на странице /id-packages).
+    # "Подписано" — по последней записи id_form_entry этого раздела, статус
+    # с кодом id_form_status.code='Подписано'; "заблокировано" — активная
+    # (unblocked_at is null) блокировка ИЗМ через id_form_block.
     id_stats_row = query_one("""
-        select 
+        with latest as (
+            select distinct on (row_id) row_id, status_id
+            from id_form_entry
+            order by row_id, created_at desc
+        )
+        select
             count(*) as total,
-            count(*) filter (where status_code = 'S60' or date_s60_signed is not null) as signed,
-            count(*) filter (where status_code = 'S40' or date_s40_blocked is not null) as blocked
-        from id_package
+            count(*) filter (
+                where s.code = 'Подписано'
+            ) as signed,
+            count(*) filter (
+                where exists (
+                    select 1 from id_form_block b
+                    where b.row_id = r.id and b.unblocked_at is null
+                )
+            ) as blocked
+        from id_form_row r
+        join id_form_tab t on t.id = r.tab_id
+        left join latest le on le.row_id = r.id
+        left join id_form_status s on s.id = le.status_id
+        where t.code not in ('opv', 'n')
     """) or {"total": 0, "signed": 0, "blocked": 0}
 
     change_stats_row = query_one("""
@@ -3973,6 +4329,7 @@ def home_v2(request: Request):
         id_stats=id_stats_row,
         change_stats=change_stats_row,
         presc_stats=presc_stats_row,
+        folder_stats=compute_id_folder_stats(),
     )
 
 
@@ -3981,8 +4338,11 @@ def home_v2(request: Request):
 # Контур ИД — форма ввода по ответам ПТО (28.08.2026,
 # TM35_ID_TZ_po_otvetam_PTO.md). Единица учёта — РАЗДЕЛ (строка
 # вкладки), термин «папка» в интерфейсе не используется — папка
-# появляется позже из нескольких подписанных разделов (id_package
-# трогать не нужно, он остаётся отдельным старым импортом).
+# появляется позже из нескольких подписанных разделов (сборка папок —
+# отдельная форма «Выполнение», ещё не реализована). id_package
+# (устаревший разовый импорт от 17.08.2026) больше нигде не читается —
+# /id-packages, /export/id-packages.csv и плитка дашборда переведены на
+# id_form_row 04.09.2026, таблицу саму не удалял (см. правило проекта).
 #
 # Атом записи по факту данных Excel — пара (строка-раздел/конструкция,
 # вид работ): статус-матрица в исходнике именно такая. Формально ПТО
@@ -3997,31 +4357,96 @@ def home_v2(request: Request):
 RU_STOPPER_NOTE = "причина остановки, не стадия конвейера"
 
 
+RSK_SIGNERS = ["Карась Э.В.", "Зотов М.Н.", "Карпенко Р.В."]
+
+# Уточнённое ТЗ координатора, 03.09.2026 (докс + прямой список): вкладки
+# без ответственного в исходном xlsx ПТО — их разделы подмешиваются в
+# список «Раздел» независимо от того, кто выбран Ответственным, а не
+# исчезают из формы. met_konstr — координатор явно сказал "без
+# ответственного, временно доступна всем"; opv/n того же класса — есть в
+# БД (23 и 46 разделов), но их вообще нет в списке из 15 категорий
+# координатора (найдено при планировании этапа 1, подтверждено
+# координатором — тот же принцип, что и met_konstr).
+
+# Координатор, 03.09.2026: в папке ИД на Яндекс.Диске (источник истины
+# для разделов) ровно 15 xlsx-категорий — opv/n там нет, это не входит
+# в 15 настоящих категорий (была ошибочная догадка сессии раньше в тот
+# же день, что раз есть в БД — значит легитимные "бесхозные", как
+# Металлоконструкции; это не так, убраны из формы совсем).
+# Металлоконструкции тоже была тут ошибочно — в файле-источнике у неё
+# есть ответственный (Завгородний А.В., все 62 строки), просто я его
+# сначала неверно удалил из id_form_responsible, потом восстановил.
+# Список "бесхозных" сейчас пуст — все 15 категорий имеют владельца.
+UNASSIGNED_TAB_CODES = []
+
+
 @app.get("/id-entry")
 def id_entry_page(request: Request):
-    tabs = query("select id, code, label, has_section_level, has_reference_block, note "
-                 "from id_form_tab order by display_order")
-    # Учётные записи, 29.08.2026: "заполняет форму только ответственный
-    # за вкладку... чужие вкладки человек видеть в форме ввода не
-    # должен". Применяется только к вошедшим НЕ-админам — анонимный
-    # просмотр (сайт публичный) и координатор видят все вкладки; так же
-    # не запираем координатора, если он забыл выдать себе разрешение на
-    # конкретную вкладку.
+    # Форма 1, этап 1 уточнённого ТЗ (03.09.2026): первый шаг — не вкладка,
+    # а Ответственный (список из 7 ФИО = роль "Ответственный за ввод
+    # данных" в id_form_responsible, после сверки с xlsx ПТО в этой же
+    # сессии). Порядок — по display_order, заданному координатором.
+    responsible_rows = query(
+        "select distinct on (full_name) full_name, display_order "
+        "from id_form_responsible where role='Ответственный за ввод данных' "
+        "order by full_name, display_order"
+    )
+    responsible_names = [r["full_name"] for r in sorted(responsible_rows, key=lambda r: r["display_order"])]
+    return render(request, "id_entry.html", "id-entry",
+                  responsible_names=responsible_names, rsk_signers=RSK_SIGNERS)
+
+
+@app.get("/api/id-form/by-responsible")
+def api_id_form_by_responsible(request: Request, name: str):
+    # Заменяет вкладку как точку входа (было: выбрать вкладку → ответственный
+    # подгружался из неё). Теперь наоборот: человек уже известен, вкладки
+    # определяются им — плюс всегда "бесхозные" (UNASSIGNED_TAB_CODES).
+    # Возвращаем сразу бандл по каждой вкладке (rows/work_types/statuses),
+    # чтобы при выборе конкретного раздела не делать второй запрос.
+    tab_rows = query(
+        "select distinct t.id, t.code, t.label from id_form_tab t "
+        "join id_form_responsible r on r.tab_id=t.id "
+        "where r.role='Ответственный за ввод данных' and r.full_name=%s",
+        (name,),
+    )
+    tab_ids = {t["id"]: t for t in tab_rows}
+    unassigned = query(
+        "select id, code, label from id_form_tab where code = any(%s)",
+        (UNASSIGNED_TAB_CODES,),
+    )
+    for t in unassigned:
+        tab_ids[t["id"]] = t
+
+    # Тот же принцип, что раньше ограничивал видимость вкладок на самой
+    # странице (перенесено сюда, т.к. страница больше не перечисляет
+    # вкладки сама — см. id_entry_page): чужие вкладки человек видеть не
+    # должен, кроме координатора/анонимного просмотра/группы без точечных
+    # разрешений.
     user = request.state.user
     if user and not is_admin(user):
         perms = user_permissions(user)
-        # 30.08.2026: группа "zone:id" (вся ветка ИД) не должна попадать
-        # под фильтр ниже — иначе видели бы 0 вкладок (нет отдельных
-        # id_tab:xxx). Фильтруем только тех, у кого ЕСТЬ хотя бы одно
-        # точечное разрешение (будущая точечная модель) — у кого нет ни
-        # zone:id, ни отдельных id_tab:xxx (группа СМР, "только
-        # просмотр"), видят все вкладки, как и анонимный посетитель —
-        # не хуже публичного просмотра, писать всё равно не смогут
-        # (проверка на POST /api/id-entry).
         id_tab_perms = {p for p in perms if p.startswith("id_tab:")}
         if "zone:id" not in perms and id_tab_perms:
-            tabs = [t for t in tabs if f"id_tab:{t['code']}" in perms]
-    return render(request, "id_entry.html", "id-entry", tabs=tabs)
+            tab_ids = {tid: t for tid, t in tab_ids.items() if f"id_tab:{t['code']}" in perms}
+
+    tabs_out = []
+    for tab_id, t in sorted(tab_ids.items(), key=lambda kv: kv[1]["label"]):
+        rows = query(
+            "select id, section_label, construction_label, foundation_label from id_form_row "
+            "where tab_id=%s order by source_row", (tab_id,),
+        )
+        work_types = query(
+            "select id, name from id_form_work_type where tab_id=%s order by display_order", (tab_id,),
+        )
+        statuses = query(
+            "select id, code, label, is_stopper from id_form_status where tab_id=%s order by display_order",
+            (tab_id,),
+        )
+        tabs_out.append({
+            "tab_id": tab_id, "tab_code": t["code"], "tab_label": t["label"],
+            "rows": rows, "work_types": work_types, "statuses": statuses,
+        })
+    return {"tabs": tabs_out}
 
 
 @app.get("/api/id-form/tab-data")
@@ -4074,7 +4499,7 @@ def api_id_form_registry(tab_id: int = 0):
                coalesce(s.label, 'статус не задан') as status_label,
                (s.id is null) as status_missing,
                s.is_stopper, e.status_date, e.planned_rsk_date,
-               e.comment, e.created_at,
+               e.rsk_signer_name, e.comment, e.created_at,
                b.id as block_id, b.change_ref, b.blocked_at
         from latest e
         join id_form_tab t on t.id = e.tab_id
@@ -4099,7 +4524,7 @@ def api_id_entry_create(
     tab_id: int = Form(...), row_id: int = Form(...), work_type_id: str = Form(""),
     responsible_name: str = Form(...), status_id: str = Form(""),
     status_date: str = Form(""), planned_rsk_date: str = Form(""),
-    stop_factor: str = Form(""), comment: str = Form(""),
+    stop_factor: str = Form(""), rsk_signer_name: str = Form(""), comment: str = Form(""),
 ):
     errors = []
 
@@ -4167,6 +4592,15 @@ def api_id_entry_create(
         except ValueError:
             errors.append("Планируемая дата передачи в РСК указана некорректно.")
 
+    # Подписант РСК — координатор, 03.09.2026 (поправка после первой
+    # реализации): РСК — внешние сотрудники, ничего в системе не
+    # подписывают, поле просто отмечает, кто из них подписал документ.
+    # Обычное поле формы, не отдельное действие и не смена статуса —
+    # статус меняется только через «Статус» ниже, как обычно.
+    rsk_signer_val = rsk_signer_name.strip() or None
+    if rsk_signer_val and rsk_signer_val not in RSK_SIGNERS:
+        errors.append("Недопустимый подписант РСК.")
+
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
@@ -4213,10 +4647,10 @@ def api_id_entry_create(
         cur.execute(
             """insert into id_form_entry
                (tab_id, row_id, work_type_id, responsible_name, status_id, status_date,
-                planned_rsk_date, blocker_id, comment, created_by)
-               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+                planned_rsk_date, blocker_id, rsk_signer_name, comment, created_by)
+               values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
             (tab_id, row_id, wt_id_val, resp_val, status_id_val, status_date_val,
-             planned_val, blocker_id_val, comment_val, user_id),
+             planned_val, blocker_id_val, rsk_signer_val, comment_val, user_id),
         )
         entry_id = cur.fetchone()["id"]
 

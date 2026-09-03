@@ -1,10 +1,35 @@
 {% extends "base.html" %}
 {% set P_STATUS_LABELS = {'OPEN': 'Открыто', 'CLOSED': 'Закрыто'} %}
 {% block content %}
-<h1>Реестр предписаний</h1>
+<h1>Предписания РСК</h1>
 <p class="subtitle">Источники: РСК (РосСтройКонтроль), ДПР (Деп. природных ресурсов), ИКС (Заказчик).
 Каждое предписание связано с работой, разделом ИД или ИЗМ, который требуется для устранения.
 <a href="/export/prescriptions.csv" style="margin-left:.75rem">Скачать CSV</a></p>
+
+{% if presc_weekly %}
+<div class="dash-section">
+  <h2>Динамика за последние 7 дней <span style="font-weight:400;font-size:.8rem;color:var(--c-text-3)">(за период с {{ presc_weekly.period_from|fmt_dmy }} по {{ presc_weekly.period_to|fmt_dmy }})</span></h2>
+  <div class="kpi-row kpi-small">
+    <div class="kpi">
+      <div class="kpi-num">{{ presc_weekly.total }}</div>
+      <div class="kpi-label">Всего предписаний</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num ok">{{ presc_weekly.resolved_7d }}</div>
+      <div class="kpi-label">Устранено за неделю</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num warn">{{ presc_weekly.new_7d }}</div>
+      <div class="kpi-label">Новых за неделю</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'danger' if presc_weekly.remaining > 0 else '' }}">{{ presc_weekly.remaining }}</div>
+      <div class="kpi-label">Осталось устранить</div>
+    </div>
+  </div>
+  <p class="kpi-hint">Пересчитывается при каждом заходе на страницу; отдельной рассылки по вторникам в системе нет — смотреть здесь.</p>
+</div>
+{% endif %}
 
 {% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
 {% if errors %}
@@ -13,7 +38,7 @@
 </div>
 {% endif %}
 
-<form class="form-box" method="post" action="/prescriptions" style="max-width:680px;">
+<form class="form-box" method="post" action="/prescriptions" enctype="multipart/form-data" style="max-width:680px;">
   <h3 style="margin-top:0;">Новое предписание</h3>
   <label>Код (auto, если пусто)
     <input type="text" name="code" value="{{ values.get('code', '') }}" placeholder="например, RSK-4183-156.1.1" autocomplete="off">
@@ -69,8 +94,8 @@
   <label>Разблокируемая сумма, ₽
     <input type="number" name="amount_unblocked" min="0" step="0.01" value="{{ values.get('amount_unblocked', '') }}">
   </label>
-  <label>Ссылка на документ (Drive)
-    <input type="url" name="document_url" value="{{ values.get('document_url', '') }}" placeholder="https://drive.google.com/...">
+  <label>Документ предписания (PDF)
+    <input type="file" name="document_pdf" accept="application/pdf,.pdf">
   </label>
   <label>Комментарий
     <textarea name="comment" rows="2">{{ values.get('comment', '') }}</textarea>
@@ -92,6 +117,7 @@
       <th>Срок</th>
       <th>Статус</th>
       <th>₽ разблок.</th>
+      <th>PDF</th>
       {% if can_edit %}<th>Изменить статус</th>{% endif %}
     </tr>
   </thead>
@@ -107,6 +133,7 @@
       <td>{{ p.due_date|fmt_dmy if p.due_date else '—' }}</td>
       <td><span class="badge badge-neutral" title="Код статуса: {{ p.status }}">{{ P_STATUS_LABELS.get(p.status, p.status) }}</span></td>
       <td>{{ '{:,.0f}'.format(p.amount_unblocked)|replace(',', ' ') if p.amount_unblocked else '—' }}</td>
+      <td>{% if p.document_file_path %}<a href="/uploads/prescriptions/{{ p.document_file_path }}" target="_blank">Скачать</a>{% else %}—{% endif %}</td>
       {% if can_edit %}
       <td>
         <form class="inline-edit" method="post" action="/api/prescription/{{ p.id }}/status">

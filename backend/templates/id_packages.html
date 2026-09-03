@@ -1,78 +1,68 @@
 {% extends "base.html" %}
 {% block content %}
-{% set S_LABELS = {'S00': 'Черновик', 'S10': 'Сформирован', 'S20': 'В РСК', 'S40': 'Заблокирован ИЗМ', 'S60': 'Подписан РСК', 'S80': 'В СДО', 'S90': 'Закрыт в КС-2'} %}
-{% set S_BADGE = {'S00': 'badge-neutral', 'S10': 'badge-neutral', 'S20': 'badge-neutral', 'S40': 'badge-warn', 'S60': 'badge-ok', 'S80': 'badge-ok', 'S90': 'badge-ok'} %}
 <h1>Разделы исполнительной документации</h1>
-<p class="subtitle">Всего: {{ total }}. Статусы: Черновик → Сформирован → В РСК →
-Заблокирован ИЗМ → Подписан РСК → В СДО → Закрыт в КС-2.
+<p class="subtitle">Всего: {{ total }}. Единица учёта — раздел (строка вкладки Excel), источник —
+15 категорий ПТО. Статус — по последней записи в форме «Ввод по разделам»; у раздела, который
+там ещё не заполняли, статуса пока нет — это не ошибка, а честное отражение того, что ввод в
+пилоте только начался (записей пока {{ with_entry }} из {{ total }}).
 <a href="/export/id-packages.csv" style="margin-left:.75rem">Скачать CSV</a></p>
 
-{% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
-{% if errors %}
-<div class="flash flash-err"><b>Не сохранено — исправьте:</b>
-  <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ total }}</div>
+    <div class="kpi-label">Всего разделов</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num ok">{{ status_counts.get('Подписано', 0) }}</div>
+    <div class="kpi-label">Подписано</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ no_entry }}</div>
+    <div class="kpi-label">Без записи о статусе</div>
+  </div>
 </div>
-{% endif %}
 
-<div class="kpi-row">
-  <div class="kpi">
-    <div class="kpi-num">{{ stats.S00 or 0 }}</div>
-    <div class="kpi-label">Черновик</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ stats.S10 or 0 }}</div>
-    <div class="kpi-label">Сформирован</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num warn">{{ stats.S40 or 0 }}</div>
-    <div class="kpi-label">Заблокирован ИЗМ</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num ok">{{ stats.S60 or 0 }}</div>
-    <div class="kpi-label">Подписан РСК</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num ok">{{ stats.S90 or 0 }}</div>
-    <div class="kpi-label">Закрыт в КС</div>
-  </div>
+{% if status_counts %}
+<div class="table-wrap" style="margin-bottom:1.5rem;">
+<table>
+  <thead><tr><th>Статус</th><th class="num">Кол-во</th></tr></thead>
+  <tbody>
+  {% for label, n in status_counts.items() %}
+  <tr><td>{{ label }}</td><td class="num">{{ n }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
 </div>
+<p class="kpi-hint">Список статусов — справочник «Статус» формы «Ввод по разделам» (9 значений),
+не старая 7-стадийная модель пакетов (Черновик→…→Закрыт в КС-2) — та относилась к другой
+сущности (папке) и здесь не применяется.</p>
+{% endif %}
 
 <h3>Список разделов</h3>
 <div class="table-wrap">
 <table class="data-table">
   <thead>
     <tr>
-      <th>№</th>
+      <th>Категория</th>
       <th>Раздел</th>
-      <th>Участок</th>
-      <th>Состав</th>
-      <th>Сумма без НДС</th>
+      <th>Ответственный</th>
       <th>Статус</th>
-      <th>Сформирован</th>
-      <th>В РСК</th>
-      <th>Подписан</th>
-      <th>В КС</th>
-      <th>Drive</th>
+      <th>Дата статуса</th>
+      <th>Подписант РСК</th>
     </tr>
   </thead>
   <tbody>
-    {% for p in packages %}
+    {% for r in rows %}
     <tr>
-      <td>{{ p.seq_no or '—' }}</td>
-      <td>{{ p.section_no or '—' }}</td>
-      <td>{{ p.location or '—' }}</td>
-      <td class="wrap">{{ p.composition or '' }}</td>
-      <td>{{ '{:,.0f}'.format(p.amount_no_vat)|replace(',', ' ') if p.amount_no_vat else '—' }}</td>
-      <td><span class="badge {{ S_BADGE.get(p.status_code, 'badge-neutral') }}" title="Код стадии: {{ p.status_code or 'S00' }}">{{ S_LABELS.get(p.status_code, p.status_code or 'Черновик') }}</span></td>
-      <td>{{ p.date_s10_formed|fmt_dmy if p.date_s10_formed else '—' }}</td>
-      <td>{{ p.date_s20_to_rsk|fmt_dmy if p.date_s20_to_rsk else '—' }}</td>
-      <td>{{ p.date_s60_signed|fmt_dmy if p.date_s60_signed else '—' }}</td>
-      <td>{{ p.date_s90_closed_ks|fmt_dmy if p.date_s90_closed_ks else '—' }}</td>
-      <td>{% if p.drive_folder_url %}<a href="{{ p.drive_folder_url }}" target="_blank"><svg class="icon" viewBox="0 0 24 24"><path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg></a>{% else %}—{% endif %}</td>
+      <td>{{ r.tab_label }}</td>
+      <td>{{ r.section_label or '—' }}</td>
+      <td>{{ r.responsible_name or '—' }}</td>
+      <td>{% if r.status_label %}<span class="badge badge-neutral">{{ r.status_label }}</span>{% else %}<span class="empty-note">нет записи</span>{% endif %}</td>
+      <td>{{ r.status_date|fmt_dmy if r.status_date else '—' }}</td>
+      <td>{{ r.rsk_signer_name or '—' }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% endblock %}
-

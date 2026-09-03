@@ -1,11 +1,9 @@
 {% extends "base.html" %}
-{% set CH_LABELS = {'DRAFT': 'Черновик', 'REQUEST_SENT': 'Запрос направлен',
-  'IN_WORK_DESIGNER': 'В работе у проектировщика', 'SOLUTION_RECEIVED': 'Техрешение получено',
-  'IKS_ORDER': 'Приказ ИКС-Х', 'INCLUDED_IN_RD': 'Включено в РД', 'ARCHIVED': 'Архив'} %}
+{% set CH_LABELS = {'IN_WORK_DESIGNER': 'В работе у проектировщика', 'SOLUTION_RECEIVED': 'Техрешение получено'} %}
 {% block content %}
 <h1>Реестр изменений ПД/РД (ИЗМ)</h1>
 <p class="subtitle">{{ total }} {{ 'активное' if total % 10 == 1 and total % 100 != 11 else 'активных' }} ИЗМ.
-Нормативный срок ответа проектировщика (например, В.А. Гулеенов):
+Нормативный срок ответа проектировщика (ДПР):
 14/21/35/49 дней (Уровень 0/1/2/3). Просроченные выделены красным.</p>
 
 {% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
@@ -17,13 +15,11 @@
 
 <form class="form-box" method="post" action="/changes" style="max-width:680px;">
   <h3 style="margin-top:0;">Новое изменение (ИЗМ)</h3>
-  <label>Код (auto, если пусто)
-    <input type="text" name="code" value="{{ values.get('code', '') }}" placeholder="например, ИЗМ-19-КЖ" autocomplete="off">
-  </label>
+  <input type="hidden" name="code" value="{{ values.get('code', '') }}">
   <label>Шифр раздела
     <select name="section_code">
       <option value="">— выбрать —</option>
-      {% for sc in ['ТКР','КЖ','КМ','ПОС','ООС','ТС','ГП','ИЛО','КЖ2'] %}
+      {% for sc in ['ТКР','КЖ1','КМ','ПОС','ТС','ГП','ИЛО','КЖ2','ЭС'] %}
       <option value="{{ sc }}" {{ 'selected' if values.get('section_code')==sc }}>{{ sc }}</option>
       {% endfor %}
     </select>
@@ -39,25 +35,17 @@
   </label>
   <label>Инициатор
     <select name="initiator">
-      <option value="RSK" {{ 'selected' if values.get('initiator')=='RSK' }}>РСК</option>
-      <option value="DPR" {{ 'selected' if values.get('initiator')=='DPR' }}>ДПР</option>
-      <option value="IKS" {{ 'selected' if values.get('initiator')=='IKS' }}>ИКС</option>
-      <option value="SSR" {{ 'selected' if values.get('initiator')=='SSR' }}>ССР (подрядчик)</option>
+      <option value="SSR" selected>ССР (подрядчик)</option>
     </select>
   </label>
   <label>Статус
     <select name="status">
-      <option value="DRAFT" {{ 'selected' if values.get('status')=='DRAFT' }}>Черновик</option>
-      <option value="REQUEST_SENT" {{ 'selected' if values.get('status')=='REQUEST_SENT' }}>Запрос направлен</option>
-      <option value="IN_WORK_DESIGNER" {{ 'selected' if values.get('status')=='IN_WORK_DESIGNER' }}>В работе у проектировщика</option>
+      <option value="IN_WORK_DESIGNER" {{ 'selected' if values.get('status', 'IN_WORK_DESIGNER')=='IN_WORK_DESIGNER' }}>В работе у проектировщика</option>
       <option value="SOLUTION_RECEIVED" {{ 'selected' if values.get('status')=='SOLUTION_RECEIVED' }}>Техрешение получено</option>
-      <option value="IKS_ORDER" {{ 'selected' if values.get('status')=='IKS_ORDER' }}>Приказ ИКС-Х</option>
-      <option value="INCLUDED_IN_RD" {{ 'selected' if values.get('status')=='INCLUDED_IN_RD' }}>Включено в РД</option>
-      <option value="ARCHIVED" {{ 'selected' if values.get('status')=='ARCHIVED' }}>Архив</option>
     </select>
   </label>
-  <label>ГИП проектировщика (ФИО)
-    <input type="text" name="designer_name" value="{{ values.get('designer_name', '') }}" placeholder="например, В.А. Гулеенов">
+  <label>Проектировщик
+    <input type="text" name="designer_name" value="{{ values.get('designer_name', '') }}" placeholder="например, ДПР">
   </label>
   <label>Дата запроса
     <span class="dm-picker" data-dm-picker>
@@ -70,12 +58,8 @@
   <label>SLA, дней (по умолчанию 14)
     <input type="number" name="sla_days" min="1" value="{{ values.get('sla_days', '14') }}">
   </label>
-  <label>Сумма под блокировкой, ₽
-    <input type="number" name="blocked_amount_rub" min="0" step="0.01" value="{{ values.get('blocked_amount_rub', '') }}">
-  </label>
-  <label>Ссылка на запрос (Drive)
-    <input type="url" name="request_file_url" value="{{ values.get('request_file_url', '') }}" placeholder="https://drive.google.com/...">
-  </label>
+  <input type="hidden" name="blocked_amount_rub" value="{{ values.get('blocked_amount_rub', '') }}">
+  <input type="hidden" name="request_file_url" value="{{ values.get('request_file_url', '') }}">
   <label>Комментарий
     <textarea name="comment" rows="2">{{ values.get('comment', '') }}</textarea>
   </label>

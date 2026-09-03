@@ -26,32 +26,26 @@
 </style>
 
 <h1>Ввод по разделам ИД</h1>
-<p class="subtitle">Единица учёта — раздел (строка вкладки Excel), не «папка»: папка формируется позже из
-нескольких подписанных разделов. Каждая отправка — отдельная запись; текущее состояние раздела — по
-последней записи. Один раз в день, до 24:00 текущего дня.</p>
 
 <form class="form-box" id="id-entry-form" style="max-width:760px;">
   <h3 style="margin-top:0;">Новая запись</h3>
   <div class="id-form-grid">
-    <label>Вид сборки (вкладка)
-      <select id="f-tab" required>
+    <label>Ответственный
+      <select id="f-responsible" required>
         <option value="" selected disabled>— выбрать —</option>
-        {% for t in tabs %}
-        <option value="{{ t.id }}">{{ t.label }}{{ '' if t.has_reference_block else ' (справочник статусов/видов работ пуст — заполняется без них)' }}</option>
+        {% for n in responsible_names %}
+        <option value="{{ n }}">{{ n }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Ответственный
-      <select id="f-responsible" required disabled><option value="">— сначала вкладка —</option></select>
-    </label>
-    <label>Раздел / конструкция / участок
-      <select id="f-row" required disabled><option value="">— сначала вкладка —</option></select>
+    <label class="id-field">Раздел
+      <select id="f-row" required disabled><option value="">— сначала ответственный —</option></select>
     </label>
     <label>Вид работ / этап
-      <select id="f-work-type" disabled><option value="">— сначала вкладка —</option></select>
+      <select id="f-work-type" disabled><option value="">— сначала раздел —</option></select>
     </label>
     <label>Статус
-      <select id="f-status" disabled><option value="">— сначала вкладка —</option></select>
+      <select id="f-status" disabled><option value="">— сначала раздел —</option></select>
     </label>
     <label>Дата установки статуса
       <span class="dm-picker" data-dm-picker>
@@ -72,6 +66,14 @@
     <label>Стоп-фактор (если есть)
       <input type="text" id="f-stop-factor" placeholder="например, нет проектного решения по узлу">
     </label>
+    <label>Подписант РСК
+      <select id="f-rsk-signer">
+        <option value="" selected>— не подписано —</option>
+        {% for n in rsk_signers %}
+        <option value="{{ n }}">{{ n }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label style="grid-column: 1 / -1">Комментарий
       <textarea id="f-comment"></textarea>
     </label>
@@ -86,7 +88,7 @@
 <form class="form-box" id="id-block-form" style="max-width:520px;">
   <div class="id-form-grid">
     <label>Раздел (тот же выбор, что в форме выше)
-      <select id="b-row" disabled><option value="">— выберите вкладку выше —</option></select>
+      <select id="b-row" disabled><option value="">— сначала ответственный выше —</option></select>
     </label>
     <label>Вид работ (опционально)
       <select id="b-work-type" disabled><option value="">— весь раздел —</option></select>
@@ -105,8 +107,8 @@
 <h3>Текущее состояние (последние 200 записей) <a href="#" id="registry-refresh" style="font-size:.8rem;font-weight:500">обновить</a></h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Вкладка</th><th>Раздел</th><th>Конструкция</th><th>Вид работ</th><th>Статус</th>
-  <th>Ответственный</th><th>Дата статуса</th><th>Плановая сдача в РСК</th><th>ИЗМ</th></tr></thead>
+  <thead><tr><th>Вкладка</th><th>Раздел</th><th>Вид работ</th><th>Статус</th>
+  <th>Ответственный</th><th>Дата статуса</th><th>Плановая сдача в РСК</th><th>Подписант РСК</th><th>ИЗМ</th></tr></thead>
   <tbody id="registry-body"><tr><td colspan="9" style="text-align:center;color:var(--c-text-3)">Загрузка…</td></tr></tbody>
 </table>
 </div>
@@ -115,7 +117,8 @@
 
 <script>
 (function () {
-  var tabData = null;
+  var respData = null;      // { tabs: [ {tab_id, tab_code, tab_label, rows, work_types, statuses}, ... ] }
+  var rowTabIndex = {};      // row_id -> tab bundle
 
   function toast(msg, ok) {
     var t = document.getElementById('toast');
@@ -160,34 +163,87 @@
     return parts.join(' — ');
   }
 
-  document.getElementById('f-tab').addEventListener('change', function () {
-    var tabId = this.value;
-    if (!tabId) return;
-    fetch('/api/id-form/tab-data?tab_id=' + encodeURIComponent(tabId))
+  // Список разделов может доходить до ~150+ строк на нескольких вкладках
+  // сразу (например, у Болтика В.Н. — 5 своих вкладок + 3 без-ответственного) —
+  // плоский select неюзабелен, группируем по вкладке.
+  function fillRowSelectGrouped(sel, tabs, placeholder) {
+    sel.innerHTML = '<option value="">' + placeholder + '</option>';
+    var any = false;
+    tabs.forEach(function (tab) {
+      if (!tab.rows.length) return;
+      any = true;
+      var grp = document.createElement('optgroup');
+      grp.label = tab.tab_label;
+      tab.rows.forEach(function (r) {
+        var opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = rowLabel(r);
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    });
+    sel.disabled = !any;
+  }
+
+  function loadResponsible(name) {
+    return fetch('/api/id-form/by-responsible?name=' + encodeURIComponent(name))
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        tabData = data;
-        fillSelect(document.getElementById('f-responsible'), data.responsible.map(function (n) { return { name: n }; }), 'name', function (i) { return i.name; }, '— выбрать —');
-        fillSelect(document.getElementById('f-row'), data.rows, 'id', rowLabel, '— выбрать —');
-        fillSelect(document.getElementById('f-work-type'), data.work_types, 'id', function (w) { return w.name; }, '— без вида работ —');
-        fillSelect(document.getElementById('f-status'), data.statuses, 'id', function (s) { return s.label + (s.is_stopper ? ' (причина остановки)' : ''); }, data.statuses.length ? '— выбрать —' : '— справочник пуст, можно оставить пустым —');
-        fillSelect(document.getElementById('b-row'), data.rows, 'id', rowLabel, '— выбрать —');
-        fillSelect(document.getElementById('b-work-type'), data.work_types, 'id', function (w) { return w.name; }, '— весь раздел —');
+        respData = data;
+        rowTabIndex = {};
+        data.tabs.forEach(function (tab) {
+          tab.rows.forEach(function (r) { rowTabIndex[r.id] = tab; });
+        });
+        fillRowSelectGrouped(document.getElementById('f-row'), data.tabs, '— выбрать —');
+        fillRowSelectGrouped(document.getElementById('b-row'), data.tabs, '— выбрать —');
+        // Раздел ещё не выбран — вид работ/статус/кнопка подписи снова закрыты.
+        fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
+        fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
+        fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
       });
+  }
+
+  document.getElementById('f-responsible').addEventListener('change', function () {
+    if (!this.value) return;
+    loadResponsible(this.value);
+  });
+
+  document.getElementById('f-row').addEventListener('change', function () {
+    var tab = rowTabIndex[this.value];
+    if (!tab) {
+      fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
+      fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
+      return;
+    }
+    fillSelect(document.getElementById('f-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— без вида работ —');
+    fillSelect(document.getElementById('f-status'), tab.statuses, 'id', function (s) { return s.label + (s.is_stopper ? ' (причина остановки)' : ''); }, tab.statuses.length ? '— выбрать —' : '— справочник пуст, можно оставить пустым —');
+  });
+
+  document.getElementById('b-row').addEventListener('change', function () {
+    var tab = rowTabIndex[this.value];
+    if (!tab) {
+      fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
+      return;
+    }
+    fillSelect(document.getElementById('b-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— весь раздел —');
   });
 
   document.getElementById('f-submit').addEventListener('click', function () {
     var errEl = document.getElementById('f-errors');
     errEl.textContent = '';
+    var rowId = document.getElementById('f-row').value;
+    var tab = rowTabIndex[rowId];
+    if (!tab) { errEl.textContent = 'Выберите раздел.'; return; }
     var payload = {
-      tab_id: document.getElementById('f-tab').value,
-      row_id: document.getElementById('f-row').value,
+      tab_id: tab.tab_id,
+      row_id: rowId,
       work_type_id: document.getElementById('f-work-type').value,
       responsible_name: document.getElementById('f-responsible').value,
       status_id: document.getElementById('f-status').value,
       status_date: document.getElementById('f-status-date').value,
       planned_rsk_date: document.getElementById('f-planned-rsk-date').value,
       stop_factor: document.getElementById('f-stop-factor').value,
+      rsk_signer_name: document.getElementById('f-rsk-signer').value,
       comment: document.getElementById('f-comment').value,
     };
     postForm('/api/id-entry', payload).then(function (res) {
@@ -226,8 +282,9 @@
   }
 
   function loadRegistry() {
-    var tabId = document.getElementById('f-tab').value || 0;
-    fetch('/api/id-form/registry?tab_id=' + tabId)
+    // Вкладка больше не выбирается отдельным полем — реестр всегда
+    // показывает общий срез по всем 17 вкладкам (было: фильтр по f-tab).
+    fetch('/api/id-form/registry?tab_id=0')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         var body = document.getElementById('registry-body');
@@ -239,13 +296,13 @@
         data.rows.forEach(function (r) {
           html += '<tr' + (r.block_id ? ' class="row-blocked"' : '') + '>';
           html += '<td>' + r.tab_label + '</td>';
-          html += '<td>' + (r.section_label || '—') + '</td>';
-          html += '<td>' + (r.construction_label || '—') + '</td>';
+          html += '<td>' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
           html += '<td>' + (r.work_type_name || '—') + '</td>';
           html += '<td>' + (r.status_missing ? '<span class="status-missing-badge">статус не задан</span>' : r.status_label) + '</td>';
           html += '<td>' + r.responsible_name + '</td>';
           html += '<td>' + TM35_RU_DATE.fmtDMY(r.status_date) + '</td>';
           html += '<td>' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
+          html += '<td>' + (r.rsk_signer_name || '—') + '</td>';
           if (r.block_id) {
             html += '<td><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
               + '<a href="#" data-unblock="' + r.block_id + '">снять</a></td>';

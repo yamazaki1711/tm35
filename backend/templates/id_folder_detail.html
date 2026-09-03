@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="subtitle"><a href="/id-folders">← Все папки</a></p>
+<h1>Папка «{{ folder.name }}»</h1>
+<p class="subtitle">Создана {{ folder.folder_date|fmt_dmy if folder.folder_date else '—' }}.
+{% if folder.sdo_transfer_date %}Передана в СДО {{ folder.sdo_transfer_date|fmt_dmy }}, подписант — {{ folder.sdo_signer_name }}.
+{% else %}В СДО ещё не передана.{% endif %}</p>
+
+{% if request.query_params.get('err') %}
+<div class="flash flash-err">{{ request.query_params.get('err') }}</div>
+{% endif %}
+{% if request.query_params.get('warn') %}
+<div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
+{% endif %}
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ rows_in_folder|length }}</div>
+    <div class="kpi-label">Разделов в папке</div>
+    <div class="kpi-sub">рекомендовано 10–100</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ '{:,.2f}'.format(amount_sum)|replace(',', ' ') }}</div>
+    <div class="kpi-label">Сумма папки, ₽</div>
+  </div>
+</div>
+
+<h3>Состав папки</h3>
+<div class="table-wrap">
+<table class="data-table">
+  <thead><tr><th>Категория</th><th>Раздел</th><th>Сумма, ₽</th><th></th></tr></thead>
+  <tbody>
+    {% for r in rows_in_folder %}
+    <tr>
+      <td>{{ r.tab_label }}</td>
+      <td>{{ r.section_label }}</td>
+      <td>
+        <form method="post" action="/api/id-folder-row/{{ r.folder_row_id }}/amount" style="display:flex;gap:.4rem;align-items:center">
+          <input type="number" name="amount_rub" min="10000" max="500000" step="0.01"
+                 value="{{ r.amount_rub or '' }}" style="width:8rem" placeholder="10000–500000">
+          <button type="submit" class="btn-secondary">Сохр.</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/api/id-folder-row/{{ r.folder_row_id }}/remove">
+          <button type="submit" class="btn-secondary">Убрать</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="empty-note">Разделов в папке ещё нет — добавьте ниже.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h3>Добавить разделы</h3>
+<p class="subtitle">Показаны только разделы со статусом «Подписано», ещё не входящие ни в одну папку.</p>
+<form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/rows" style="max-width:680px;">
+  <label>Разделы (можно несколько, Ctrl/Cmd+клик)
+    <select name="row_ids" multiple size="12" required>
+      {% for tab_label, rows in available_by_tab.items() %}
+      <optgroup label="{{ tab_label }}">
+        {% for r in rows %}
+        <option value="{{ r.id }}">{{ r.section_label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% else %}
+      <option disabled>— нет доступных подписанных разделов —</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit" style="margin-top:1rem">Добавить в папку</button>
+</form>
+
+<h3>Передача в СДО</h3>
+<form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/sdo" style="max-width:520px;">
+  <label>Дата передачи в СДО
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="sdo_transfer_date">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <label>ФИО подписанта реестра передачи
+    <select name="sdo_signer_name" required>
+      <option value="" selected disabled>— выбрать —</option>
+      {% for n in rsk_signers %}
+      <option value="{{ n }}" {{ 'selected' if folder.sdo_signer_name==n }}>{{ n }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <p class="kpi-hint">Дата принимается и задним числом — для папок, собираемых по уже подписанным разделам
+  с начала стройки.</p>
+  <button type="submit">Сохранить передачу в СДО</button>
+</form>
+{% endblock %}
