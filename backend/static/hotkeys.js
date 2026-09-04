@@ -39,7 +39,7 @@
 
   document.addEventListener("keydown", function (e) {
     var key = (e.key || "").toLowerCase();
-    if (key !== "s" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+        if (key !== "enter" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
 
     var active = document.activeElement;
     var form = active && active.form ? active.form : (active && active.closest ? active.closest("form") : null);
