@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}ТМ-35{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css?v=20260830b">
+<link rel="stylesheet" href="/static/style.css?v=20260904b">
 <script>
   /* Решение координатора 29.08.2026: "сегодня" везде на сайте — по
      часовому поясу объекта (Хабаровск), не по часовому поясу браузера
@@ -15,10 +15,11 @@
 </script>
 <script src="/static/ru-date.js?v=20260827a"></script>
 <script src="/static/datepicker.js?v=20260829a"></script>
+<script src="/static/hotkeys.js?v=20260904b"></script>
 </head>
 <body>
 {% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
-{% set id_active = active in ['id-packages', 'changes', 'prescriptions', 'id-entry', 'id-folders'] %}
+{% set id_active = active in ['id-packages', 'changes', 'prescriptions', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry'] %}
 <nav>
 <div class="nav-inner">
   <a href="/dashboard" class="nav-brand"><span class="mark">ТМ</span> ТМ-35</a>
@@ -94,6 +95,10 @@
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
           <span>Ввод по разделам</span>
         </a>
+        <a href="/id-folders/new" role="menuitem" class="{{ 'active' if active=='id-folders-new' }}" {{ 'aria-current="page"' if active=='id-folders-new' }}>
+          <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l2-3h5l2 3M12 11v5M9.5 13.5h5"/></svg>
+          <span>Сформировать папку</span>
+        </a>
 
         <div class="nav-group-label">Смотреть</div>
         <a href="/id-packages" role="menuitem" class="{{ 'active' if active=='id-packages' }}" {{ 'aria-current="page"' if active=='id-packages' }}>
@@ -103,6 +108,10 @@
         <a href="/id-folders" role="menuitem" class="{{ 'active' if active=='id-folders' }}" {{ 'aria-current="page"' if active=='id-folders' }}>
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l2-3h5l2 3"/></svg>
           <span>Выполнение</span>
+        </a>
+        <a href="/id-folders/registry" role="menuitem" class="{{ 'active' if active=='id-folders-registry' }}" {{ 'aria-current="page"' if active=='id-folders-registry' }}>
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          <span>Реестр папок</span>
         </a>
         <a href="/changes" role="menuitem" class="{{ 'active' if active=='changes' }}" {{ 'aria-current="page"' if active=='changes' }}>
           <svg class="icon" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="3" rx="1"/><path d="M9 11h6M9 15h6M9 19h4"/></svg>

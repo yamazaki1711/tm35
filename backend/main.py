@@ -496,7 +496,13 @@ def render(request, template, active, **ctx):
     # route, чтобы точно не забыть на новой странице.
     ctx.setdefault("object_today_iso", object_today().isoformat())
     ctx.setdefault("current_user", getattr(request.state, "user", None))
-    return templates.TemplateResponse(request, template, {"active": active, **ctx})
+    resp = templates.TemplateResponse(request, template, {"active": active, **ctx})
+    # Без этого браузер иногда отдаёт со страницы кэшированную копию после
+    # редиректа с сохранения формы (координатор, 04.09.2026: сумма папки
+    # сохранилась в БД, но карточка на экране показывала старое значение,
+    # пока не обновишь руками) — все страницы всегда генерируются заново.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # ---------------------------------------------------------------------
@@ -3605,13 +3611,13 @@ def id_packages_page(request: Request):
 # distinct-on, что и в ID_ROW_LIST_SQL выше). Один раздел — не больше чем
 # в одной папке: обеспечено UNIQUE(row_id) в id_folder_row на уровне БД,
 # а не только проверкой в коде — прямая вставка дубля упадёт сама.
-# Диапазон 10-100 разделов на папку и сумма 10 000–500 000 ₽ — сумма
-# провалидирована жёстко (реальные деньги), количество разделов оставлено
-# только подсказкой в интерфейсе, не жёсткой блокировкой: исторические
-# папки заносятся задним числом уже сейчас, блокировать по количеству,
-# пока их набирают, значило бы мешать координатору тем же способом,
-# каким блокировка по прошлому опыту проекта уже один раз мешала (см.
-# CLAUDE.md — "прогресс — выполненная работа, не число итераций").
+# Ограничения на число разделов в папке нет вообще (отменено координатором
+# 04.09.2026 — исторические папки заносятся задним числом произвольного
+# размера, подсказка "рекомендовано 10-100" только сбивала с толку).
+# Сумма — одна на папку целиком (не по
+# разделам, решение координатора 03.09.2026), хранится в id_folder.amount_rub;
+# id_folder_row суммы не хранит вовсе — стоимость раздела не нужна.
+# Номер папки всегда автоматический, формат "ТМ-000" по id папки.
 # =======================================================================
 
 ID_FOLDER_CONTRACT_TOTAL = 4078191380.98  # Всего с НДС по контракту — координатор, докс-ТЗ
@@ -3631,6 +3637,21 @@ ID_AVAILABLE_ROWS_SQL = """
       and not exists (select 1 from id_folder_row fr where fr.row_id = r.id)
     order by t.label, r.source_row
 """
+
+
+def query_id_folders(order="desc"):
+    """Список всех папок с числом разделов — общий источник для
+    /id-folders («Выполнение») и /id-folders/registry («Реестр папок»),
+    чтобы не разойтись в двух вариантах одного и того же SQL."""
+    direction = "asc" if order == "asc" else "desc"
+    return query(f"""
+        select f.id, f.name, f.folder_date, f.sdo_transfer_date, f.sdo_signer_name,
+               f.amount_rub as amount_sum, count(fr.id) as row_count
+        from id_folder f
+        left join id_folder_row fr on fr.folder_id = f.id
+        group by f.id
+        order by f.id {direction}
+    """)
 
 
 def compute_id_folder_stats():
@@ -3660,8 +3681,7 @@ def compute_id_folder_stats():
     folders_count = query_one("select count(*) as n from id_folder")["n"]
 
     signed_folders_sum = query_one(
-        "select coalesce(sum(fr.amount_rub), 0) as s from id_folder f "
-        "join id_folder_row fr on fr.folder_id=f.id where f.sdo_transfer_date is not null"
+        "select coalesce(sum(amount_rub), 0) as s from id_folder where sdo_transfer_date is not null"
     )["s"]
     money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum)
 
@@ -3677,14 +3697,7 @@ def compute_id_folder_stats():
 
 @app.get("/id-folders")
 def id_folders_page(request: Request):
-    folders = query("""
-        select f.id, f.name, f.folder_date, f.sdo_transfer_date, f.sdo_signer_name,
-               count(fr.id) as row_count, coalesce(sum(fr.amount_rub), 0) as amount_sum
-        from id_folder f
-        left join id_folder_row fr on fr.folder_id = f.id
-        group by f.id
-        order by f.id desc
-    """)
+    folders = query_id_folders()
     stats = compute_id_folder_stats()
     manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
 
@@ -3692,32 +3705,101 @@ def id_folders_page(request: Request):
                   folders=folders, stats=stats, manual_volumes=manual_volumes)
 
 
+@app.get("/id-folders/registry")
+def id_folders_registry_page(request: Request, status: str = "all", sort: str = "desc"):
+    folders = query_id_folders(order=sort)
+
+    totals = {
+        "folders_count": len(folders),
+        "transferred_count": sum(1 for f in folders if f["sdo_transfer_date"]),
+        "amount_total": sum(float(f["amount_sum"] or 0) for f in folders),
+        "amount_transferred": sum(float(f["amount_sum"] or 0) for f in folders if f["sdo_transfer_date"]),
+    }
+
+    if status == "formed":
+        folders = [f for f in folders if not f["sdo_transfer_date"]]
+    elif status == "transferred":
+        folders = [f for f in folders if f["sdo_transfer_date"]]
+
+    return render(request, "id_folders_registry.html", "id-folders-registry",
+                  folders=folders, totals=totals, status=status, sort=sort)
+
+
+@app.get("/export/id-folders.csv")
+def export_id_folders_csv(status: str = "all"):
+    folders = query_id_folders()
+    if status == "formed":
+        folders = [f for f in folders if not f["sdo_transfer_date"]]
+    elif status == "transferred":
+        folders = [f for f in folders if f["sdo_transfer_date"]]
+    out = [
+        (f["name"], _csv_dmy(f["folder_date"]), f["row_count"], f["amount_sum"] or 0,
+         f["sdo_signer_name"] or "", _csv_dmy(f["sdo_transfer_date"]),
+         "Передана в СДО" if f["sdo_transfer_date"] else "Сформирована")
+        for f in folders
+    ]
+    return _csv_response(
+        "id_folders.csv",
+        ["Номер папки", "Дата формирования", "Разделов", "Стоимость, ₽",
+         "Подписант реестра передачи", "Дата передачи в СДО", "Статус"],
+        out,
+    )
+
+
+@app.get("/id-folders/new")
+def id_folder_new_page(request: Request):
+    available = query(ID_AVAILABLE_ROWS_SQL)
+    available_by_tab = {}
+    for r in available:
+        available_by_tab.setdefault(r["tab_label"], []).append(r)
+    return render(request, "id_folder_new.html", "id-folders-new",
+                  available_by_tab=available_by_tab)
+
+
 @app.post("/api/id-folder")
-def api_id_folder_create(request: Request, name: str = Form(""), folder_date: str = Form(...)):
+def api_id_folder_create(request: Request, folder_date: str = Form(...), row_ids: list[int] = Form(default=[])):
     if not has_permission(request.state.user, "id-folders:submit"):
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
     date_val = _parse_date(folder_date)
     if not date_val:
         return RedirectResponse(
-            url="/id-folders?err=" + urllib.parse.quote("Дата создания папки указана некорректно."),
+            url="/id-folders/new?err=" + urllib.parse.quote("Дата создания папки указана некорректно."),
             status_code=303,
         )
-
-    name_val = name.strip()
-    if not name_val:
-        next_id = query_one("select coalesce(max(id), 0) + 1 as next from id_folder")["next"]
-        name_val = str(next_id)
+    if not row_ids:
+        return RedirectResponse(
+            url="/id-folders/new?err=" + urllib.parse.quote("Выберите хотя бы один раздел."),
+            status_code=303,
+        )
 
     user_id = current_user_id_or_web_form()
 
     def _do(cur):
         cur.execute(
-            "insert into id_folder (name, folder_date, created_by) values (%s, %s, %s) returning id",
-            (name_val, date_val, user_id),
+            "insert into id_folder (name, folder_date, created_by) values ('', %s, %s) returning id",
+            (date_val, user_id),
         )
-        return cur.fetchone()["id"]
-    folder_id = run_in_transaction(_do)
-    return RedirectResponse(url=f"/id-folders/{folder_id}", status_code=303)
+        folder_id = cur.fetchone()["id"]
+        cur.execute(
+            "update id_folder set name=%s where id=%s",
+            (f"ТМ-{folder_id:03d}", folder_id),
+        )
+        errors = []
+        for row_id in row_ids:
+            cur.execute("select id from id_folder_row where row_id=%s", (row_id,))
+            if cur.fetchone():
+                errors.append(f"Раздел #{row_id} уже в другой папке — пропущен.")
+                continue
+            cur.execute(
+                "insert into id_folder_row (folder_id, row_id) values (%s, %s)",
+                (folder_id, row_id),
+            )
+        return folder_id, errors
+    folder_id, errors = run_in_transaction(_do)
+    ok_msg = urllib.parse.quote(f"Папка «ТМ-{folder_id:03d}» сформирована.")
+    return RedirectResponse(
+        url=f"/id-folders/{folder_id}?ok={ok_msg}" + ("&warn=1" if errors else ""), status_code=303
+    )
 
 
 @app.get("/id-folders/{folder_id}")
@@ -3726,18 +3808,17 @@ def id_folder_detail_page(request: Request, folder_id: int):
     if not folder:
         return RedirectResponse(url="/id-folders", status_code=303)
     rows_in_folder = query(
-        "select fr.id as folder_row_id, fr.amount_rub, r.section_label, t.label as tab_label "
+        "select fr.id as folder_row_id, r.section_label, t.label as tab_label "
         "from id_folder_row fr join id_form_row r on r.id=fr.row_id join id_form_tab t on t.id=r.tab_id "
         "where fr.folder_id=%s order by t.label, r.source_row",
         (folder_id,),
     )
-    amount_sum = sum(float(r["amount_rub"]) for r in rows_in_folder if r["amount_rub"]) if rows_in_folder else 0
     available = query(ID_AVAILABLE_ROWS_SQL)
     available_by_tab = {}
     for r in available:
         available_by_tab.setdefault(r["tab_label"], []).append(r)
     return render(request, "id_folder_detail.html", "id-folders",
-                  folder=folder, rows_in_folder=rows_in_folder, amount_sum=amount_sum,
+                  folder=folder, rows_in_folder=rows_in_folder,
                   available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS)
 
 
@@ -3761,7 +3842,10 @@ def api_id_folder_add_rows(request: Request, folder_id: int, row_ids: list[int] 
                 (folder_id, row_id),
             )
     run_in_transaction(_do)
-    return RedirectResponse(url=f"/id-folders/{folder_id}" + ("?warn=1" if errors else ""), status_code=303)
+    ok_msg = urllib.parse.quote("Раздел(ы) добавлены в папку.")
+    return RedirectResponse(
+        url=f"/id-folders/{folder_id}?ok={ok_msg}" + ("&warn=1" if errors else ""), status_code=303
+    )
 
 
 @app.post("/api/id-folder-row/{folder_row_id}/remove")
@@ -3772,30 +3856,32 @@ def api_id_folder_row_remove(request: Request, folder_row_id: int):
     if not row:
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Запись не найдена."), status_code=303)
     run_in_transaction(lambda cur: cur.execute("delete from id_folder_row where id=%s", (folder_row_id,)))
-    return RedirectResponse(url=f"/id-folders/{row['folder_id']}", status_code=303)
+    ok_msg = urllib.parse.quote("Раздел убран из папки.")
+    return RedirectResponse(url=f"/id-folders/{row['folder_id']}?ok={ok_msg}", status_code=303)
 
 
-@app.post("/api/id-folder-row/{folder_row_id}/amount")
-def api_id_folder_row_amount(request: Request, folder_row_id: int, amount_rub: str = Form(...)):
+@app.post("/api/id-folder/{folder_id}/amount")
+def api_id_folder_amount(request: Request, folder_id: int, amount_rub: str = Form(...)):
     if not has_permission(request.state.user, "id-folders:submit"):
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    row = query_one("select folder_id from id_folder_row where id=%s", (folder_row_id,))
-    if not row:
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Запись не найдена."), status_code=303)
-    back_url = f"/id-folders/{row['folder_id']}"
+    folder = query_one("select id from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
     try:
         amt = float(amount_rub.replace(",", "."))
     except ValueError:
         return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сумма указана некорректно."), status_code=303)
-    if not (10000 <= amt <= 500000):
+    if amt <= 0:
         return RedirectResponse(
-            url=back_url + "?err=" + urllib.parse.quote("Сумма за раздел должна быть от 10 000,00 до 500 000,00 ₽."),
+            url=back_url + "?err=" + urllib.parse.quote("Сумма папки должна быть больше нуля."),
             status_code=303,
         )
     run_in_transaction(
-        lambda cur: cur.execute("update id_folder_row set amount_rub=%s where id=%s", (amt, folder_row_id))
+        lambda cur: cur.execute("update id_folder set amount_rub=%s where id=%s", (amt, folder_id))
     )
-    return RedirectResponse(url=back_url, status_code=303)
+    ok_msg = urllib.parse.quote(f"Сумма папки сохранена: {'{:,.2f}'.format(amt).replace(',', ' ')} ₽.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
 @app.post("/api/id-folder/{folder_id}/sdo")
@@ -3803,7 +3889,7 @@ def api_id_folder_sdo(request: Request, folder_id: int,
                        sdo_transfer_date: str = Form(...), sdo_signer_name: str = Form(...)):
     if not has_permission(request.state.user, "id-folders:submit"):
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    folder = query_one("select id from id_folder where id=%s", (folder_id,))
+    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
     if not folder:
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
     back_url = f"/id-folders/{folder_id}"
@@ -3820,7 +3906,11 @@ def api_id_folder_sdo(request: Request, folder_id: int,
         "update id_folder set sdo_transfer_date=%s, sdo_signer_name=%s where id=%s",
         (date_val, sdo_signer_name, folder_id),
     ))
-    return RedirectResponse(url=back_url, status_code=303)
+    # Редирект в реестр («Смотреть»), не назад на карточку папки (решение
+    # координатора 04.09.2026) — так видно и подтверждение, и результат
+    # в общем списке одним действием.
+    ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» передана в СДО {_csv_dmy(date_val)}.")
+    return RedirectResponse(url=f"/id-folders/registry?ok={ok_msg}", status_code=303)
 
 
 @app.post("/api/manual-volume")

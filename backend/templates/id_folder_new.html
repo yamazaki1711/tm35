@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="subtitle"><a href="/id-folders">← Все папки</a></p>
+<h1>Сформировать папку</h1>
+<p class="subtitle">Показаны только разделы со статусом «Подписано», ещё не входящие ни в одну папку.
+Добавляйте их по одному в список ниже, затем нажмите «Сформировать папку» — ей будет присвоен номер.
+Сумму, подписанта реестра и передачу в СДО можно будет указать на странице папки, там же можно
+дальше менять состав и сумму.</p>
+
+{% if request.query_params.get('err') %}
+<div class="flash flash-err">{{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<form class="form-box" method="post" action="/api/id-folder" id="new-folder-form" style="max-width:680px;">
+  <label>Раздел
+    <select id="section-picker">
+      <option value="" selected>— выбрать —</option>
+      {% for tab_label, rows in available_by_tab.items() %}
+      <optgroup label="{{ tab_label }}">
+        {% for r in rows %}
+        <option value="{{ r.id }}" data-tab="{{ tab_label }}" data-label="{{ r.section_label }}">{{ r.section_label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% else %}
+      <option disabled>— нет доступных подписанных разделов —</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="button" id="add-section-btn" class="btn-secondary" style="margin-top:.6rem">Добавить в список</button>
+
+  <h3>Выбранные разделы (<span id="picked-count">0</span>)</h3>
+  <div class="table-wrap">
+  <table class="data-table">
+    <thead><tr><th>Категория</th><th>Раздел</th><th></th></tr></thead>
+    <tbody id="picked-body">
+      <tr id="picked-empty"><td colspan="3" class="empty-note">Список пуст — выберите раздел выше.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <label style="max-width:280px;margin-top:1rem">Дата создания папки
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="folder_date" id="folder-date">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <p class="kpi-hint">По умолчанию — сегодня, можно поставить и задним числом.</p>
+
+  <button type="submit" id="submit-btn" style="margin-top:1rem" disabled>Сформировать папку</button>
+</form>
+
+<script>
+(function () {
+  var picker = document.getElementById('section-picker');
+  var body = document.getElementById('picked-body');
+  var emptyRow = document.getElementById('picked-empty');
+  var countEl = document.getElementById('picked-count');
+  var submitBtn = document.getElementById('submit-btn');
+
+  function updateState() {
+    var n = body.querySelectorAll('tr[data-row-id]').length;
+    countEl.textContent = n;
+    emptyRow.hidden = n > 0;
+    submitBtn.disabled = n === 0;
+  }
+
+  document.getElementById('add-section-btn').addEventListener('click', function () {
+    var opt = picker.selectedOptions[0];
+    if (!opt || !opt.value) return;
+    var rowId = opt.value;
+    if (body.querySelector('tr[data-row-id="' + rowId + '"]')) return;
+    var tr = document.createElement('tr');
+    tr.setAttribute('data-row-id', rowId);
+    var tdTab = document.createElement('td');
+    tdTab.textContent = opt.getAttribute('data-tab');
+    var tdLabel = document.createElement('td');
+    tdLabel.textContent = opt.getAttribute('data-label');
+    var tdRemove = document.createElement('td');
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'btn-secondary'; btn.setAttribute('data-remove', '1');
+    btn.textContent = 'Убрать';
+    var hidden = document.createElement('input');
+    hidden.type = 'hidden'; hidden.name = 'row_ids'; hidden.value = rowId;
+    tdRemove.appendChild(btn);
+    tdRemove.appendChild(hidden);
+    tr.appendChild(tdTab); tr.appendChild(tdLabel); tr.appendChild(tdRemove);
+    body.appendChild(tr);
+    opt.disabled = true;
+    picker.value = '';
+    updateState();
+  });
+
+  body.addEventListener('click', function (e) {
+    if (!e.target.matches('[data-remove]')) return;
+    var tr = e.target.closest('tr[data-row-id]');
+    var rowId = tr.getAttribute('data-row-id');
+    var opt = picker.querySelector('option[value="' + rowId + '"]');
+    if (opt) opt.disabled = false;
+    tr.remove();
+    updateState();
+  });
+
+  var todayIso = window.TM35_OBJECT_TODAY;
+  if (todayIso) {
+    var dateHidden = document.getElementById('folder-date');
+    dateHidden.value = todayIso;
+    dateHidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  updateState();
+})();
+</script>
+{% endblock %}
