@@ -5,6 +5,8 @@ import os
 import re
 import secrets
 import urllib.parse
+
+import psycopg2.errors
 from datetime import date as date_cls, datetime as datetime_cls, timedelta
 from zoneinfo import ZoneInfo
 
@@ -4071,7 +4073,7 @@ def changes_post(
             if today > plan_resp_val:
                 overdue_val = (today - plan_resp_val).days
 
-    if errors:
+    def _render_error():
         rows = query(
             "select code, section_code, topic, status, designer_name, request_date, sla_days, "
             "planned_response_date, actual_response_date, overdue_days, escalation_level, blocked_amount_rub "
@@ -4088,6 +4090,9 @@ def changes_post(
                           "sla_days": sla_days, "blocked_amount_rub": blocked_amount_rub,
                           "request_file_url": request_file_url, "comment": comment,
                       })
+
+    if errors:
+        return _render_error()
 
     # Auto-generate code if empty
     if not code_val and section_val and num_val:
@@ -4108,8 +4113,127 @@ def changes_post(
              req_date_val, sla_val, plan_resp_val, overdue_val, amt_val, url_val, comment_val)
         )
         return cur.fetchone()['id']
-    run_in_transaction(_insert_change)
+    try:
+        run_in_transaction(_insert_change)
+    except psycopg2.errors.UniqueViolation:
+        # Код ИЗМ генерируется из раздела+номера (см. выше) без проверки на
+        # дубликат перед вставкой — раньше падало сырым 500 вместо понятной
+        # ошибки, если такой шифр уже есть (координатор поймал 04.09.2026).
+        errors.append(f"Изменение с шифром «{code_val}» уже существует — проверьте раздел и номер изменения.")
+        return _render_error()
     return RedirectResponse(url="/changes?ok=1", status_code=303)
+
+
+# ====== GET/POST /changes/{id} — карточка ИЗМ (правка, координатор 04.09.2026) ======
+# Шифр (code) неизменяем после создания — это опознавательный номер записи,
+# а не редактируемое поле; раздел/номер изменения тоже read-only по той же
+# причине (их правка означала бы фактически другую запись). Редактируются
+# только содержательные поля: тема, описание, статус, проектировщик, даты,
+# SLA, сумма блокировки, комментарий — тот же набор допущений, что и в
+# /changes POST при создании.
+@app.get("/changes/{change_id}")
+def change_detail_page(request: Request, change_id: int):
+    row = query_one("select * from change where id=%s", (change_id,))
+    if not row:
+        return RedirectResponse(url="/changes", status_code=303)
+    can_edit = has_permission(request.state.user, "changes:submit")
+    return render(request, "change_detail.html", "changes",
+                  c=row, can_edit=can_edit, errors=[])
+
+
+@app.post("/changes/{change_id}")
+def change_detail_post(
+    request: Request,
+    change_id: int,
+    topic: str = Form(""),
+    description: str = Form(""),
+    status: str = Form("IN_WORK_DESIGNER"),
+    designer_name: str = Form(""),
+    request_date: str = Form(""),
+    sla_days: str = Form("14"),
+    blocked_amount_rub: str = Form(""),
+    comment: str = Form(""),
+):
+    row = query_one("select * from change where id=%s", (change_id,))
+    if not row:
+        return RedirectResponse(url="/changes", status_code=303)
+    if not has_permission(request.state.user, "changes:submit"):
+        return RedirectResponse(url=f"/changes/{change_id}", status_code=303)
+
+    errors = []
+    if not topic.strip():
+        errors.append("Тема обязательна.")
+
+    desc_val = description.strip() or None
+    designer_val = designer_name.strip() or None
+    comment_val = comment.strip() or None
+
+    req_date_val = None
+    if request_date.strip():
+        req_date_val = _parse_date(request_date)
+        if not req_date_val:
+            errors.append("Дата запроса указана некорректно (ДД.ММ.ГГГГ).")
+
+    sla_val = 14
+    if sla_days.strip():
+        try:
+            sla_val = int(sla_days)
+        except ValueError:
+            errors.append("SLA должен быть числом.")
+
+    amt_val = None
+    if blocked_amount_rub.strip():
+        try:
+            amt_val = float(blocked_amount_rub.replace(',', '.'))
+        except ValueError:
+            errors.append("Сумма указана некорректно.")
+
+    plan_resp_val = None
+    overdue_val = None
+    if req_date_val:
+        plan_resp_val = req_date_val + _td(days=sla_val)
+        today = _dt.now().date()
+        if not status or status in ('DRAFT', 'REQUEST_SENT', 'IN_WORK_DESIGNER'):
+            if today > plan_resp_val:
+                overdue_val = (today - plan_resp_val).days
+
+    actual_response_val = row["actual_response_date"]
+    if status == "SOLUTION_RECEIVED" and row["status"] != "SOLUTION_RECEIVED":
+        actual_response_val = object_today()
+    elif status != "SOLUTION_RECEIVED":
+        actual_response_val = None
+
+    if errors:
+        merged = dict(row)
+        merged.update({
+            "topic": topic, "description": description, "status": status,
+            "designer_name": designer_name, "request_date": request_date,
+            "sla_days": sla_days, "blocked_amount_rub": blocked_amount_rub, "comment": comment,
+        })
+        return render(request, "change_detail.html", "changes",
+                      c=merged, can_edit=True, errors=errors)
+
+    user_id = current_user_id_or_web_form()
+
+    def _do(cur):
+        cur.execute(
+            "update change set topic=%s, description=%s, status=%s, designer_name=%s, "
+            "request_date=%s, sla_days=%s, planned_response_date=%s, overdue_days=%s, "
+            "blocked_amount_rub=%s, comment=%s, actual_response_date=%s, "
+            "updated_at=now(), updated_by=%s where id=%s",
+            (topic.strip(), desc_val, status, designer_val, req_date_val, sla_val,
+             plan_resp_val, overdue_val, amt_val, comment_val, actual_response_val,
+             user_id, change_id),
+        )
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, old_value, new_value, reason) "
+            "values (%s, 'change', %s, 'edit', %s, %s, 'форма /changes/{id}')",
+            (user_id, change_id,
+             json.dumps({"topic": row["topic"], "status": row["status"]}, default=str),
+             json.dumps({"topic": topic.strip(), "status": status}, default=str)),
+        )
+    run_in_transaction(_do)
+    return RedirectResponse(url=f"/changes/{change_id}?ok=1", status_code=303)
 
 
 # ====== GET /prescriptions — список предписаний ======
