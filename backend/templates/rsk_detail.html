@@ -13,31 +13,15 @@
 <div class="form-box" style="max-width:900px">
   <p><b>Содержание:</b> {{ latest.content }}</p>
   <p><b>Мероприятие по устранению:</b> {{ latest.remedy or '—' }}</p>
+  <p><b>Акт проверки:</b> {{ latest.act_no }} от {{ latest.act_date|fmt_dmy }}</p>
   <p><b>Срок устранения:</b> {{ latest.due_date|fmt_dmy if latest.due_date else '—' }}</p>
   <p><b>Раздел контрольного мероприятия:</b> {{ latest.control_section or '—' }} · <b>№ п/п:</b> {{ latest.item_no or '—' }}</p>
 </div>
 {% else %}
 <p class="empty-note">Нет ни одной позиции ни в одном акте — странно, доложить координатору.</p>
 {% endif %}
-
-<h3>История вхождения в акты</h3>
-<div class="table-wrap">
-<table>
-  <thead><tr><th>Акт</th><th>Дата акта</th><th>Содержание на момент акта</th><th>Срок</th></tr></thead>
-  <tbody>
-    {% for it in items %}
-    <tr>
-      <td>{{ it.act_no }}</td>
-      <td>{{ it.act_date|fmt_dmy }}</td>
-      <td>{{ it.content }}</td>
-      <td>{{ it.due_date|fmt_dmy if it.due_date else '—' }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
 {% if not v.is_active %}
-<p class="subtitle" style="color:var(--c-success)">Снято — отсутствует в акте {{ items[0].act_no if items }} (самом свежем из загруженных).</p>
+<p class="subtitle" style="color:var(--c-success)">Снято — отсутствует в акте {{ latest.act_no if latest }} (самом свежем из загруженных).</p>
 {% endif %}
 
 <h3>Слой 2 — отработка</h3>
