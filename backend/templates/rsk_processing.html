@@ -36,24 +36,19 @@
   <input type="hidden" name="sys_no" value="{{ v.sys_no }}">
 
   <div class="rsk-form-grid">
-    <label>Физика
-      <select name="track_phys">
-        {% for code, label in ru_track.items() %}
-        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_phys==code) or (not processing and code=='unknown') }}>{{ label }}</option>
+    <label>Категория
+      <select name="category">
+        <option value="" {{ 'selected' if not processing or not processing.category }}>— не задано —</option>
+        {% for code, label in ru_category.items() if code != 'unknown' %}
+        <option value="{{ code }}" {{ 'selected' if processing and processing.category==code }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Проект
-      <select name="track_design">
-        {% for code, label in ru_track.items() if code != 'fact' %}
-        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_design==code) or (not processing and code=='unknown') }}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>ИД
-      <select name="track_id_">
-        {% for code, label in ru_track.items() if code != 'fact' %}
-        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_id==code) or (not processing and code=='unknown') }}>{{ label }}</option>
+    <label>Выполнение
+      <select name="status">
+        <option value="" {{ 'selected' if not processing or not processing.status }}>— не задано —</option>
+        {% for code, label in ru_status_value.items() if code != 'unknown' %}
+        <option value="{{ code }}" {{ 'selected' if processing and processing.status==code }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
@@ -118,27 +113,19 @@
       {% endfor %}
     </select>
   </label>
-  <label>Физика
-    <select name="f_track_phys">
+  <label>Категория
+    <select name="f_category">
       <option value="">— все —</option>
-      {% for code, label in ru_track.items() %}
-      <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
+      {% for code, label in ru_category.items() if code != 'unknown' %}
+      <option value="{{ code }}" {{ 'selected' if f_category==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Проект
-    <select name="f_track_design">
+  <label>Выполнение
+    <select name="f_status">
       <option value="">— все —</option>
-      {% for code, label in ru_track.items() if code != 'fact' %}
-      <option value="{{ code }}" {{ 'selected' if f_track_design==code }}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>ИД
-    <select name="f_track_id">
-      <option value="">— все —</option>
-      {% for code, label in ru_track.items() if code != 'fact' %}
-      <option value="{{ code }}" {{ 'selected' if f_track_id==code }}>{{ label }}</option>
+      {% for code, label in ru_status_value.items() if code != 'unknown' %}
+      <option value="{{ code }}" {{ 'selected' if f_status==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
@@ -147,7 +134,7 @@
 
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>№</th><th>Содержание</th><th>Статус</th><th>Физика</th><th>Проект</th><th>ИД</th><th>Ответственный</th></tr></thead>
+  <thead><tr><th>№</th><th>Содержание</th><th>Статус</th><th>Категория</th><th>Ответственный</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr class="{{ 'rsk-row-selected' if v and v.sys_no==r.sys_no }}" style="cursor:pointer"
@@ -155,9 +142,7 @@
       <td class="mono">{{ r.sys_no }}</td>
       <td style="max-width:380px">{{ r.content[:120] }}{{ '…' if r.content and r.content|length > 120 }}</td>
       <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
-      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
-      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
-      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
+      <td>{{ ru_category.get(r.category, r.category) }}</td>
       <td>{{ r.responsible_names }}</td>
     </tr>
     {% endfor %}

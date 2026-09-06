@@ -27,9 +27,8 @@
 <h3>Слой 2 — отработка</h3>
 {% if processing %}
 <div class="form-box" style="max-width:900px">
-  <p><b>Физика:</b> {{ ru_track.get(processing.track_phys, processing.track_phys) }}
-     · <b>Проект:</b> {{ ru_track.get(processing.track_design, processing.track_design) }}
-     · <b>ИД:</b> {{ ru_track.get(processing.track_id, processing.track_id) }}</p>
+  <p><b>Категория:</b> {{ ru_category.get(processing.category, '—') }}
+     · <b>Выполнение:</b> {{ ru_status_value.get(processing.status, '—') }}</p>
   <p><b>Ответственные:</b>
     {% for r in responsibles if r.id in responsible_ids %}{{ r.name }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}
   </p>
