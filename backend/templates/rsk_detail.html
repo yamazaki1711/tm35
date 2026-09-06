@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="subtitle"><a href="/rsk">← Реестр РСК</a></p>
+<h1>Нарушение №{{ v.sys_no }}{% if latest and latest.is_repeat %} <span class="status-missing-badge">повторно</span>{% endif %}</h1>
+<p class="subtitle">
+Статус: <span class="badge">{{ ru_status.get(status_key, status_key) }}</span>
+· Впервые выявлено по акту {{ v.first_act_no or '—' }}{% if v.first_detected_date %} от {{ v.first_detected_date|fmt_dmy }}{% endif %}
+· <a href="/rsk/processing?sys_no={{ v.sys_no }}">Редактировать отработку →</a>
+</p>
+
+<h3>Слой 1 — акт (только чтение)</h3>
+{% if latest %}
+<div class="form-box" style="max-width:900px">
+  <p><b>Содержание:</b> {{ latest.content }}</p>
+  <p><b>Мероприятие по устранению:</b> {{ latest.remedy or '—' }}</p>
+  <p><b>Срок устранения:</b> {{ latest.due_date|fmt_dmy if latest.due_date else '—' }}</p>
+  <p><b>Раздел контрольного мероприятия:</b> {{ latest.control_section or '—' }} · <b>№ п/п:</b> {{ latest.item_no or '—' }}</p>
+</div>
+{% else %}
+<p class="empty-note">Нет ни одной позиции ни в одном акте — странно, доложить координатору.</p>
+{% endif %}
+
+<h3>История вхождения в акты</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Акт</th><th>Дата акта</th><th>Содержание на момент акта</th><th>Срок</th></tr></thead>
+  <tbody>
+    {% for it in items %}
+    <tr>
+      <td>{{ it.act_no }}</td>
+      <td>{{ it.act_date|fmt_dmy }}</td>
+      <td>{{ it.content }}</td>
+      <td>{{ it.due_date|fmt_dmy if it.due_date else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if not v.is_active %}
+<p class="subtitle" style="color:var(--c-success)">Снято — отсутствует в акте {{ items[0].act_no if items }} (самом свежем из загруженных).</p>
+{% endif %}
+
+<h3>Слой 2 — отработка</h3>
+{% if processing %}
+<div class="form-box" style="max-width:900px">
+  <p><b>Физика:</b> {{ ru_track.get(processing.track_phys, processing.track_phys) }}
+     · <b>Проект:</b> {{ ru_track.get(processing.track_design, processing.track_design) }}
+     · <b>ИД:</b> {{ ru_track.get(processing.track_id, processing.track_id) }}</p>
+  <p><b>Ответственные:</b>
+    {% for r in responsibles if r.id in responsible_ids %}{{ r.name }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}
+  </p>
+  <p><b>Условие снятия:</b> {{ processing.close_condition_id and (close_conditions | selectattr('id','equalto',processing.close_condition_id) | map(attribute='label') | first) or '—' }}</p>
+  <p><b>Плановая дата снятия:</b> {{ processing.planned_close_date|fmt_dmy if processing.planned_close_date else '—' }}</p>
+  <p><b>Комментарий:</b> {{ processing.comment or '—' }}</p>
+</div>
+{% else %}
+<p class="empty-note">Отработка ещё не заведена — <a href="/rsk/processing?sys_no={{ v.sys_no }}">начать →</a></p>
+{% endif %}
+
+<h3>Связанные разделы ИД</h3>
+{% if linked_rows %}
+<ul>
+  {% for r in linked_rows %}
+  <li>{{ r.tab_label }} — {{ r.section_label or r.construction_label or ('#' ~ r.id) }}</li>
+  {% endfor %}
+</ul>
+<p class="subtitle">Предписание снимется автоматически после принятия этих разделов (докс координатора) —
+механика ещё не реализована, связь пока только информационная.</p>
+{% else %}
+<p class="empty-note">Не привязано ни к одному разделу ИД.</p>
+{% endif %}
+{% endblock %}

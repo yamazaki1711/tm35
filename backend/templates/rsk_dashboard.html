@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Обзор РСК</h1>
+<p class="subtitle">Предписания Федерального центра строительного контроля по объекту ТМ-35.
+<a href="/rsk">Реестр →</a> · <a href="/rsk/processing">Отработка →</a> · <a href="/rsk/import">Загрузить акт →</a></p>
+
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-num">{{ tiles.total_active or 0 }}</div>
+    <div class="kpi-label">Всего активных</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num ok">{{ tiles.ready_to_close or 0 }}</div>
+    <div class="kpi-label">Готово к снятию</div>
+    <div class="kpi-sub">все треки закрыты</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.blocked_by_id or 0 }}</div>
+    <div class="kpi-label">Заблокировано ожиданием ИД</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.needs_rd or 0 }}</div>
+    <div class="kpi-label">Ждёт корректировки РД</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num danger">{{ tiles.rejected or 0 }}</div>
+    <div class="kpi-label">Отклонено РСК</div>
+  </div>
+</div>
+
+<h3>Разрез по ответственным</h3>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Ответственный</th><th class="num">Активных нарушений</th></tr></thead>
+  <tbody>
+    {% for r in by_responsible %}
+    <tr><td><a href="/rsk?responsible={{ r.id }}">{{ r.name }}</a></td><td class="num">{{ r.n }}</td></tr>
+    {% endfor %}
+    {% if no_responsible %}
+    <tr><td class="empty-note">без ответственного</td><td class="num">{{ no_responsible }}</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

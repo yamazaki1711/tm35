@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Загрузка акта проверки РСК</h1>
+<p class="subtitle">Слой 1 (акт) пишет только эта форма. Слой 2 (отработка) не трогается —
+повторная загрузка не затирает работу ПТО.</p>
+
+{% if errors %}
+<div class="id-form-errors" style="color:var(--c-danger)">{{ errors | join(' ') }}</div>
+{% endif %}
+
+{% if not preview %}
+<form class="form-box" method="post" action="/rsk/import" enctype="multipart/form-data" style="max-width:500px">
+  <label style="display:block;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Файл акта (PDF)
+    <input type="file" name="act_pdf" accept="application/pdf" required style="display:block;margin-top:.4rem">
+  </label>
+  <button type="submit" style="margin-top:1rem">Разобрать и показать предпросмотр</button>
+</form>
+{% else %}
+
+<h3>Предпросмотр — акт {{ preview.act.act_no or '?' }} от {{ preview.act.act_date|fmt_dmy if preview.act.act_date else '?' }}</h3>
+<p class="subtitle">Файл: {{ original_name }}. Ничего ещё не записано в базу.</p>
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ preview.records | length }}</div>
+    <div class="kpi-label">Позиций в акте</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if preview.checks.no_remedy or preview.checks.no_due_date or preview.checks.no_item_no or preview.checks.no_first_act }}">
+      {{ preview.checks.no_remedy + preview.checks.no_due_date + preview.checks.no_item_no + preview.checks.no_first_act }}
+    </div>
+    <div class="kpi-label">Проблем разбора</div>
+    <div class="kpi-sub">без мероприятия/срока/№ п/п/акта выявления</div>
+  </div>
+</div>
+
+{% if diff.prev_act %}
+<p class="subtitle">Сравнение с предыдущим загруженным актом — {{ diff.prev_act.act_no }} от {{ diff.prev_act.act_date|fmt_dmy }}.</p>
+<div class="kpi-row kpi-small">
+  <div class="kpi"><div class="kpi-num ok">{{ diff.new | length }}</div><div class="kpi-label">Новые нарушения</div></div>
+  <div class="kpi"><div class="kpi-num ok">{{ diff.removed | length }}</div><div class="kpi-label">Снятые (исчезли из акта)</div></div>
+  <div class="kpi"><div class="kpi-num warn">{{ diff.changed | length }}</div><div class="kpi-label">Изменили формулировку</div></div>
+  <div class="kpi"><div class="kpi-num">{{ diff.unchanged | length }}</div><div class="kpi-label">Без изменений</div></div>
+</div>
+<div class="table-wrap" style="margin-top:1rem">
+<table>
+  <thead><tr><th>Новые</th><th>Снятые</th><th>Изменили формулировку</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>{{ diff.new | join(', ') if diff.new else '—' }}</td>
+      <td>{{ diff.removed | join(', ') if diff.removed else '—' }}</td>
+      <td>{{ diff.changed | join(', ') if diff.changed else '—' }}</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="subtitle">Предыдущего акта в базе нет — все {{ preview.records | length }} позиций будут заведены как новые.</p>
+{% endif %}
+
+<form method="post" action="/rsk/import/confirm" style="margin-top:1.5rem">
+  <input type="hidden" name="token" value="{{ token }}">
+  <button type="submit" data-hotkey-save>Подтвердить и записать в базу</button>
+  <a href="/rsk/import" class="btn-secondary" style="margin-left:.75rem">Отменить, загрузить другой файл</a>
+</form>
+{% endif %}
+{% endblock %}

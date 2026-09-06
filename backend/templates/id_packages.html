@@ -49,6 +49,7 @@
       <th>Статус</th>
       <th>Дата статуса</th>
       <th>Подписант РСК</th>
+      <th>Закроет предписаний РСК</th>
     </tr>
   </thead>
   <tbody>
@@ -60,6 +61,7 @@
       <td>{% if r.status_label %}<span class="badge badge-neutral">{{ r.status_label }}</span>{% else %}<span class="empty-note">нет записи</span>{% endif %}</td>
       <td>{{ r.status_date|fmt_dmy if r.status_date else '—' }}</td>
       <td>{{ r.rsk_signer_name or '—' }}</td>
+      <td>{% if r.rsk_count %}<a href="/rsk?id_row={{ r.id }}">{{ r.rsk_count }}</a>{% else %}—{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

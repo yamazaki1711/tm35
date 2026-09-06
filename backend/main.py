@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from db import query, query_one, execute, run_in_transaction
+from rsk_parser import parse_act
 from analytics import (
     compute_overdue, compute_project_forecast, compute_resource_deficit, DONE_STATUSES,
     compute_work_weight, compute_weighted_progress, compute_evm, compute_ppc,
@@ -48,6 +49,13 @@ app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
 UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "prescriptions")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 app.mount("/uploads/prescriptions", StaticFiles(directory=UPLOADS_DIR), name="prescription_uploads")
+
+# Загруженные акты РСК — между "предпросмотром" и "подтверждением" формы
+# «Загрузка акта проверки» (см. секцию РСК ниже): файл сохраняется под
+# токеном при предпросмотре, подтверждение читает его повторно и удаляет.
+RSK_UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "rsk_acts")
+os.makedirs(RSK_UPLOADS_DIR, exist_ok=True)
+
 templates = Jinja2Templates(directory="templates")
 
 # =======================================================================
@@ -146,7 +154,7 @@ def has_permission(user, permission):
     # месте, а не отдельная ветка в каждом вызывающем коде. Когда
     # понадобится точечно сузить кого-то из группы — снять "zone:id" и
     # выдать конкретные id_tab:xxx, код трогать не придётся.
-    if "zone:id" in perms and (permission.startswith("id_tab:") or permission in ("changes:submit", "prescriptions:submit", "id-folders:submit")):
+    if "zone:id" in perms and (permission.startswith("id_tab:") or permission in ("changes:submit", "prescriptions:submit", "id-folders:submit", "rsk:submit")):
         return True
     if "zone:smr" in perms and permission == "smr:write":
         return True
@@ -3108,25 +3116,11 @@ def export_blockers_csv():
     )
 
 
-@app.get("/export/prescriptions.csv")
-def export_prescriptions_csv():
-    rows = query(
-        "select code, source, document_number, document_date, category, area, description, "
-        "required_action, due_date, status, amount_unblocked "
-        "from prescription order by status, document_date desc nulls last"
-    )
-    out = [
-        (r["code"], r["source"], r["document_number"], _csv_dmy(r["document_date"]),
-         r["category"], r["area"], r["description"], r["required_action"],
-         _csv_dmy(r["due_date"]), r["status"], r["amount_unblocked"])
-        for r in rows
-    ]
-    return _csv_response(
-        "prescriptions.csv",
-        ["Код", "Источник", "№ документа", "Дата документа", "Категория", "Участок", "Описание",
-         "Требуемое действие", "Срок", "Статус", "Разблокировано, ₽"],
-        out,
-    )
+# /export/prescriptions.csv и вся форма /prescriptions — убраны
+# 06.09.2026 (координатор: с появлением ветки РСК дублирует её
+# функциональность; таблица `prescription` в БД оставлена как есть,
+# была пустая, FK на неё из `blocker`/`work` не трогаю). Смотреть
+# нарушения теперь — /rsk, экспорт — /export/rsk.csv.
 
 
 # ---------------------------------------------------------------------
@@ -3572,7 +3566,8 @@ ID_ROW_LIST_SQL = """
     )
     select r.id, t.label as tab_label, r.section_label,
            resp.full_name as responsible_name,
-           s.label as status_label, le.status_date, le.rsk_signer_name
+           s.label as status_label, le.status_date, le.rsk_signer_name,
+           (select count(*) from rsk_processing_id_row pir where pir.id_form_row_id = r.id) as rsk_count
     from id_form_row r
     join id_form_tab t on t.id = r.tab_id
     left join id_form_responsible resp
@@ -4236,175 +4231,8 @@ def change_detail_post(
     return RedirectResponse(url=f"/changes/{change_id}?ok=1", status_code=303)
 
 
-# ====== GET /prescriptions — список предписаний ======
-@app.get("/prescriptions")
-def prescriptions_page(request: Request):
-    rows = query(
-        "select id, code, source, document_number, document_date, category, area, description, "
-        "required_action, due_date, status, amount_unblocked, document_file_path "
-        "from prescription order by status, document_date desc nulls last limit 300"
-    )
-    total = len(rows) if rows else 0
-    can_edit = has_permission(request.state.user, "prescriptions:submit")
-    # Еженедельная динамика (координатор, докс-заметка 02.09.2026): всего,
-    # устранено/появилось за последние 7 дней, осталось устранить. Считаем
-    # live при каждом заходе на страницу, а не по вторникам разовой
-    # рассылкой — у приложения нет канала push-уведомлений (Telegram
-    # исключён решением координатора, см. CLAUDE.md §5), единственный
-    # реальный канал показа — сама страница.
-    week_ago = object_today() - _td(days=7)
-    open_count = sum(1 for r in rows if r["status"] == "OPEN") if rows else 0
-    resolved_7d = query_one(
-        "select count(*) as n from prescription where actual_close_date >= %s", (week_ago,)
-    )["n"]
-    new_7d = query_one(
-        "select count(*) as n from prescription where created_at::date >= %s", (week_ago,)
-    )["n"]
-    presc_weekly = {"total": total, "resolved_7d": resolved_7d, "new_7d": new_7d, "remaining": open_count,
-                     "period_from": week_ago, "period_to": object_today()}
-    return render(request, "prescriptions.html", "prescriptions",
-                  prescriptions=rows or [], total=total, errors=[], values={}, can_edit=can_edit,
-                  presc_weekly=presc_weekly)
-
-
-@app.post("/api/prescription/{prescription_id}/status")
-def api_prescription_update_status(request: Request, prescription_id: int, status: str = Form(...)):
-    # Учётные записи, 29.08.2026: тот же пробел, что у ИЗМ — только
-    # создание, редактирования не было. Достроено.
-    if not has_permission(request.state.user, "prescriptions:submit"):
-        return JSONResponse({"ok": False, "error": "Нет доступа к форме предписаний."}, status_code=403)
-    row = query_one("select id, status from prescription where id=%s", (prescription_id,))
-    if not row:
-        return JSONResponse({"ok": False, "error": "Запись не найдена."}, status_code=404)
-
-    user_id = current_user_id_or_web_form()
-    close_val = object_today() if status == "CLOSED" else None
-
-    def _do(cur):
-        cur.execute("select status from prescription where id=%s for update", (prescription_id,))
-        old_status = cur.fetchone()["status"]
-        cur.execute(
-            "update prescription set status=%s, actual_close_date=coalesce(%s, actual_close_date), "
-            "updated_at=now(), updated_by=%s where id=%s",
-            (status, close_val, user_id, prescription_id),
-        )
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, old_value, new_value, reason) "
-            "values (%s, 'prescription', %s, 'status_update', %s, %s, 'форма /prescriptions')",
-            (user_id, prescription_id, json.dumps({"status": old_status}), json.dumps({"status": status})),
-        )
-    run_in_transaction(_do)
-    return RedirectResponse(url="/prescriptions?ok=1", status_code=303)
-
-
-# ====== POST /prescriptions — добавить предписание ======
-@app.post("/prescriptions")
-def prescriptions_post(
-    request: Request,
-    code: str = Form(""),
-    source: str = Form("RSK"),
-    document_number: str = Form(""),
-    document_date: str = Form(""),
-    category: str = Form(""),
-    area: str = Form(""),
-    description: str = Form(""),
-    required_action: str = Form("TECH_SOLUTION"),
-    due_date: str = Form(""),
-    amount_unblocked: str = Form(""),
-    comment: str = Form(""),
-    document_pdf: UploadFile | None = File(None),
-):
-    errors = []
-    # Права по веткам, 30.08.2026 — та же находка, что у changes_post:
-    # создание предписания не проверяло права вообще (только смена
-    # статуса, api_prescription_update_status, была защищена).
-    if not has_permission(request.state.user, "prescriptions:submit"):
-        errors.append("Нет доступа к форме предписаний.")
-    if not description.strip():
-        errors.append("Описание обязательно.")
-
-    code_val = code.strip() or None
-    doc_num_val = document_number.strip() or None
-    cat_val = category.strip() or None
-    area_val = area.strip() or None
-    comment_val = comment.strip() or None
-
-    # PDF предписания (координатор, 04.09.2026, п.C1) — вместо текстовой
-    # ссылки на внешний Drive теперь реальный файл, сохраняется на сервере,
-    # ссылка на скачивание — в реестре. Валидация — только расширение/
-    # content-type, антивирусной проверки в приложении нет и не было ни у
-    # одной другой формы этого проекта.
-    pdf_path_val = None
-    if document_pdf is not None and document_pdf.filename:
-        orig_name = document_pdf.filename
-        if not orig_name.lower().endswith(".pdf"):
-            errors.append("Файл предписания должен быть в формате PDF.")
-        else:
-            safe_name = f"{secrets.token_hex(8)}_{re.sub(r'[^A-Za-zА-Яа-я0-9._-]', '_', orig_name)}"
-            pdf_path_val = safe_name
-
-    # document_date
-    doc_date_val = None
-    if document_date.strip():
-        doc_date_val = _parse_date(document_date)
-        if not doc_date_val:
-            errors.append("Дата документа указана некорректно.")
-
-    # due_date
-    due_val = None
-    if due_date.strip():
-        due_val = _parse_date(due_date)
-        if not due_val:
-            errors.append("Срок устранения указан некорректно.")
-
-    # amount_unblocked
-    amt_val = None
-    if amount_unblocked.strip():
-        try:
-            amt_val = float(amount_unblocked.replace(',', '.'))
-        except ValueError:
-            errors.append("Сумма указана некорректно.")
-
-    if errors:
-        rows = query(
-            "select code, source, document_number, document_date, category, area, description, "
-            "required_action, due_date, status, amount_unblocked "
-            "from prescription order by status, document_date desc nulls last"
-        )
-        total = len(rows) if rows else 0
-        return render(request, "prescriptions.html", "prescriptions",
-                      prescriptions=rows or [], total=total,
-                      errors=errors, values={
-                          "code": code, "source": source, "document_number": document_number,
-                          "document_date": document_date, "category": category, "area": area,
-                          "description": description, "required_action": required_action,
-                          "due_date": due_date, "amount_unblocked": amount_unblocked,
-                          "comment": comment,
-                      })
-
-    # Auto-generate code
-    if not code_val:
-        prefix = source
-        next_id = query_one("select coalesce(max(id),0)+1 as next from prescription")
-        code_val = f"{prefix}-{next_id['next']:03d}"
-
-    if pdf_path_val:
-        with open(os.path.join(UPLOADS_DIR, pdf_path_val), "wb") as f:
-            f.write(document_pdf.file.read())
-
-    def _insert_prescription(cur):
-        cur.execute(
-            """insert into prescription
-            (code, source, document_number, document_date, category, area, description,
-             required_action, due_date, status, amount_unblocked, document_file_path, comment)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'OPEN', %s, %s, %s)
-            returning id""",
-            (code_val, source, doc_num_val, doc_date_val, cat_val, area_val, description.strip(),
-             required_action, due_val, amt_val, pdf_path_val, comment_val)
-        )
-        return cur.fetchone()['id']
-    run_in_transaction(_insert_prescription)
-    return RedirectResponse(url="/prescriptions?ok=1", status_code=303)
+# GET/POST /prescriptions, /api/prescription/{id}/status — убраны
+# 06.09.2026 вместе с /export/prescriptions.csv (см. пометку выше).
 
 
 # ====== Обновлённый GET /dashboard (home) с передачей статистики новых разделов ======
@@ -4520,11 +4348,18 @@ def home_v2(request: Request):
         where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
     """) or {"total": 0, "overdue": 0}
 
-    presc_stats_row = query_one("""
-        select 
-            count(*) as total,
-            count(*) filter (where status = 'OPEN') as open
-        from prescription
+    # Заменяет старую плитку /prescriptions (убрана 06.09.2026, см. секцию
+    # РСК ниже) — считает по слою 1+2 контура РСК, не по пустой prescription.
+    rsk_stats_row = query_one("""
+        select
+            count(*) filter (where v.is_active) as total,
+            count(*) filter (where v.is_active and not (
+                coalesce(p.track_phys, 'unknown') in ('done', 'not_required')
+                and coalesce(p.track_design, 'unknown') in ('done', 'not_required')
+                and coalesce(p.track_id, 'unknown') in ('done', 'not_required')
+            )) as open
+        from rsk_violation v
+        left join rsk_processing p on p.violation_id = v.id
     """) or {"total": 0, "open": 0}
 
     crit = get_criticality_data()
@@ -4542,7 +4377,7 @@ def home_v2(request: Request):
         crit=crit, evm=evm,
         id_stats=id_stats_row,
         change_stats=change_stats_row,
-        presc_stats=presc_stats_row,
+        rsk_stats=rsk_stats_row,
         folder_stats=compute_id_folder_stats(),
     )
 
@@ -5046,3 +4881,529 @@ def api_id_block_unset(request: Request, block_id: int):
     if not row:
         return JSONResponse({"ok": False, "errors": ["Блокировка не найдена или уже снята."]}, status_code=404)
     return {"ok": True}
+
+
+# =======================================================================
+# Контур РСК — ветка меню (координатор, 06.09.2026, "Ветка РСК: архитектура
+# раздела"). Архитектура и каркас — точность формулировок и отделка
+# отдельным этапом, здесь сознательно не тратится время на то, чтобы
+# дожать каждую мелочь.
+#
+# Два слоя данных, не смешивать:
+#   слой 1 (акт, неизменяемый) — rsk_act/rsk_act_item/rsk_violation;
+#     пишет только импорт (/rsk/import), больше никто и никогда.
+#   слой 2 (отработка, изменяемый людьми) — rsk_processing + m2m
+#     (rsk_processing_responsible, rsk_processing_id_row); пишет только
+#     форма /rsk/processing. Повторный импорт акта слой 2 не трогает.
+# =======================================================================
+
+RU_RSK_TRACK = {
+    "not_required": "не треб.", "not_done": "не вып.", "done": "вып.",
+    "fact": "факт (нужна корр. РД)", "unknown": "—",
+}
+
+# "Латералим" последнюю по акту позицию каждого нарушения — от акта к
+# акту формулировка может меняться, актуальная = из последнего акта, где
+# нарушение встречается (докс, "текст живёт в позиции акта").
+RSK_LIST_BASE_SQL = """
+    from rsk_violation v
+    join lateral (
+        select i.* from rsk_act_item i where i.violation_id = v.id order by i.act_id desc limit 1
+    ) i on true
+    join rsk_act a on a.id = i.act_id
+    left join rsk_processing p on p.violation_id = v.id
+    left join rsk_close_condition cc on cc.id = p.close_condition_id
+"""
+
+RSK_LIST_SELECT_SQL = f"""
+    select v.id, v.sys_no, v.is_active, v.first_act_no, v.first_detected_date,
+           i.content, i.remedy, i.due_date, i.is_repeat, i.control_section,
+           a.act_no,
+           coalesce(p.track_phys, 'unknown') as track_phys,
+           coalesce(p.track_design, 'unknown') as track_design,
+           coalesce(p.track_id, 'unknown') as track_id,
+           coalesce(p.rejected, false) as rejected,
+           p.id as processing_id, p.planned_close_date, p.comment as processing_comment,
+           cc.label as close_condition_label,
+           coalesce(
+               (select string_agg(r.name, ', ' order by r.name)
+                from rsk_processing_responsible pr join rsk_responsible r on r.id = pr.responsible_id
+                where pr.processing_id = p.id),
+               '—'
+           ) as responsible_names
+    {RSK_LIST_BASE_SQL}
+"""
+
+
+def rsk_pseudo_status(row):
+    """Статус для отображения — вычисляется, не хранится (докс: "статусы
+    из [комментария] не выводить"; здесь то же самое, но из треков)."""
+    if not row["is_active"]:
+        return "closed"
+    if row["rejected"]:
+        return "rejected"
+    if row["track_phys"] in ("done", "not_required") and row["track_design"] in ("done", "not_required") \
+            and row["track_id"] in ("done", "not_required"):
+        return "ready"
+    if row["track_phys"] == "fact":
+        return "needs_rd"
+    return "open"
+
+
+RU_RSK_STATUS = {
+    "closed": "Снято", "rejected": "Отклонено РСК", "ready": "Готово к снятию",
+    "needs_rd": "Ждёт корректировки РД", "open": "В работе",
+}
+RSK_STATUS_BADGE = {
+    "closed": "badge-ok", "rejected": "badge-bad", "ready": "badge-ok",
+    "needs_rd": "badge-warn", "open": "badge-neutral",
+}
+
+
+@app.get("/rsk")
+def rsk_registry_page(request: Request, responsible: str = "", track_phys: str = "",
+                       track_design: str = "", track_id_: str = "", act_no: str = "",
+                       is_repeat: str = "", state: str = "", id_row: str = ""):
+    where = ["1=1"]
+    params = []
+    if id_row.strip():
+        # Обратная связь из /id-packages ("закроет предписаний РСК").
+        where.append(
+            "p.id is not null and exists (select 1 from rsk_processing_id_row pir2 "
+            "where pir2.processing_id = p.id and pir2.id_form_row_id = %s)"
+        )
+        params.append(int(id_row))
+    if responsible.strip():
+        where.append(
+            "p.id is not null and exists (select 1 from rsk_processing_responsible pr3 "
+            "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
+        )
+        params.append(int(responsible))
+    if track_phys.strip():
+        where.append("coalesce(p.track_phys, 'unknown') = %s")
+        params.append(track_phys)
+    if track_design.strip():
+        where.append("coalesce(p.track_design, 'unknown') = %s")
+        params.append(track_design)
+    if track_id_.strip():
+        where.append("coalesce(p.track_id, 'unknown') = %s")
+        params.append(track_id_)
+    if act_no.strip():
+        where.append("a.act_no = %s")
+        params.append(act_no.strip())
+    if is_repeat in ("1", "0"):
+        where.append("i.is_repeat = %s")
+        params.append(is_repeat == "1")
+    if state == "active":
+        where.append("v.is_active")
+    elif state == "closed":
+        where.append("not v.is_active")
+
+    rows = query(RSK_LIST_SELECT_SQL + " where " + " and ".join(where) + " order by v.sys_no desc", tuple(params))
+    for r in rows:
+        r["status_key"] = rsk_pseudo_status(r)
+
+    responsibles = query("select id, name from rsk_responsible order by id")
+    acts = query("select distinct act_no from rsk_act order by act_no desc")
+
+    return render(request, "rsk_registry.html", "rsk-registry",
+                  rows=rows, total=len(rows), responsibles=responsibles, acts=acts,
+                  ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
+                  f_responsible=responsible, f_track_phys=track_phys, f_track_design=track_design,
+                  f_track_id=track_id_, f_act_no=act_no, f_is_repeat=is_repeat, f_state=state)
+
+
+@app.get("/export/rsk.csv")
+def export_rsk_csv():
+    rows = query(RSK_LIST_SELECT_SQL + " order by v.sys_no")
+    out = [
+        (r["sys_no"], RU_RSK_STATUS.get(rsk_pseudo_status(r), ""), r["content"], r["responsible_names"],
+         RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
+         RU_RSK_TRACK.get(r["track_id"], ""), _csv_dmy(r["due_date"]), r["act_no"],
+         "да" if r["is_repeat"] else "нет")
+        for r in rows
+    ]
+    return _csv_response(
+        "rsk_registry.csv",
+        ["№", "Статус", "Содержание", "Ответственные", "Физика", "Проект", "ИД", "Срок устранения",
+         "Акт", "Повторно"],
+        out,
+    )
+
+
+@app.get("/rsk/dashboard")
+def rsk_dashboard_page(request: Request):
+    tiles = query_one(f"""
+        select
+            count(*) filter (where v.is_active) as total_active,
+            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') in ('done','not_required')
+                and coalesce(p.track_design,'unknown') in ('done','not_required')
+                and coalesce(p.track_id,'unknown') in ('done','not_required')) as ready_to_close,
+            count(*) filter (where v.is_active and cc.code = 'id_priniatie') as blocked_by_id,
+            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') = 'fact') as needs_rd,
+            count(*) filter (where v.is_active and coalesce(p.rejected, false)) as rejected
+        {RSK_LIST_BASE_SQL}
+    """) or {}
+
+    by_responsible = query("""
+        select r.id, r.name, count(*) as n
+        from rsk_processing_responsible pr
+        join rsk_responsible r on r.id = pr.responsible_id
+        join rsk_processing p on p.id = pr.processing_id
+        join rsk_violation v on v.id = p.violation_id and v.is_active
+        group by r.id, r.name order by n desc
+    """)
+    no_responsible = query_one(f"""
+        select count(*) as n {RSK_LIST_BASE_SQL} where v.is_active and p.id is null
+    """) or {"n": 0}
+
+    return render(request, "rsk_dashboard.html", "rsk-dashboard",
+                  tiles=tiles, by_responsible=by_responsible, no_responsible=no_responsible["n"])
+
+
+@app.get("/rsk/violation/{sys_no}")
+def rsk_violation_detail(request: Request, sys_no: int):
+    v = query_one("select * from rsk_violation where sys_no=%s", (sys_no,))
+    if not v:
+        return RedirectResponse(url="/rsk", status_code=303)
+    items = query(
+        "select i.*, a.act_no, a.act_date from rsk_act_item i join rsk_act a on a.id=i.act_id "
+        "where i.violation_id=%s order by a.act_date desc, a.id desc",
+        (v["id"],),
+    )
+    latest = items[0] if items else None
+    processing = query_one("select * from rsk_processing where violation_id=%s", (v["id"],))
+    responsible_ids = set()
+    linked_rows = []
+    if processing:
+        responsible_ids = {
+            r["responsible_id"] for r in
+            query("select responsible_id from rsk_processing_responsible where processing_id=%s",
+                  (processing["id"],))
+        }
+        linked_rows = query(
+            "select r.id, r.section_label, r.construction_label, t.label as tab_label "
+            "from rsk_processing_id_row pir "
+            "join id_form_row r on r.id = pir.id_form_row_id join id_form_tab t on t.id = r.tab_id "
+            "where pir.processing_id=%s",
+            (processing["id"],),
+        )
+    close_conditions = query("select id, label from rsk_close_condition order by id")
+    responsibles = query("select id, name from rsk_responsible order by id")
+
+    return render(request, "rsk_detail.html", "rsk-registry",
+                  v=v, items=items, latest=latest, processing=processing,
+                  responsible_ids=responsible_ids, linked_rows=linked_rows,
+                  close_conditions=close_conditions, responsibles=responsibles,
+                  ru_track=RU_RSK_TRACK,
+                  status_key=rsk_pseudo_status({**(latest or {}), "is_active": v["is_active"],
+                                                 "rejected": processing["rejected"] if processing else False,
+                                                 "track_phys": processing["track_phys"] if processing else "unknown",
+                                                 "track_design": processing["track_design"] if processing else "unknown",
+                                                 "track_id": processing["track_id"] if processing else "unknown"}),
+                  ru_status=RU_RSK_STATUS)
+
+
+# ---------------------------------------------------------------------
+# Форма «Отработка предписаний» — слой 2. Читает слой 1 (только для
+# чтения — содержание/мероприятие), пишет только rsk_processing +
+# её m2m. Один нарушение выбирается по sys_no (поле сверху или клик по
+# строке реестра ниже — обычная перезагрузка страницы с ?sys_no=,
+# без JS-подгрузки: инструмент для одного инженера ПТО, не нужен SPA).
+# ---------------------------------------------------------------------
+
+@app.get("/rsk/processing")
+def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str = "",
+                         f_track_phys: str = "", f_track_design: str = "", f_track_id: str = ""):
+    v = None
+    processing = None
+    responsible_ids = set()
+    linked_row_ids = set()
+    if sys_no.strip():
+        try:
+            v = query_one("select * from rsk_violation where sys_no=%s", (int(sys_no),))
+        except ValueError:
+            v = None
+        if v:
+            latest_item = query_one(
+                "select i.* from rsk_act_item i where i.violation_id=%s order by i.act_id desc limit 1",
+                (v["id"],),
+            )
+            v["content"] = latest_item["content"] if latest_item else None
+            v["remedy"] = latest_item["remedy"] if latest_item else None
+            v["due_date"] = latest_item["due_date"] if latest_item else None
+            processing = query_one("select * from rsk_processing where violation_id=%s", (v["id"],))
+            if processing:
+                responsible_ids = {
+                    r["responsible_id"] for r in
+                    query("select responsible_id from rsk_processing_responsible where processing_id=%s",
+                          (processing["id"],))
+                }
+                linked_row_ids = {
+                    r["id_form_row_id"] for r in
+                    query("select id_form_row_id from rsk_processing_id_row where processing_id=%s",
+                          (processing["id"],))
+                }
+
+    where = ["1=1"]
+    params = []
+    if f_responsible.strip():
+        where.append(
+            "p.id is not null and exists (select 1 from rsk_processing_responsible pr3 "
+            "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
+        )
+        params.append(int(f_responsible))
+    if f_track_phys.strip():
+        where.append("coalesce(p.track_phys, 'unknown') = %s")
+        params.append(f_track_phys)
+    if f_track_design.strip():
+        where.append("coalesce(p.track_design, 'unknown') = %s")
+        params.append(f_track_design)
+    if f_track_id.strip():
+        where.append("coalesce(p.track_id, 'unknown') = %s")
+        params.append(f_track_id)
+    where.append("v.is_active")
+    rows = query(RSK_LIST_SELECT_SQL + " where " + " and ".join(where) + " order by v.sys_no desc limit 200",
+                 tuple(params))
+    for r in rows:
+        r["status_key"] = rsk_pseudo_status(r)
+
+    responsibles = query("select id, name from rsk_responsible order by id")
+    close_conditions = query("select id, label from rsk_close_condition order by id")
+    id_tabs = query("select id, label from id_form_tab order by label")
+    id_rows_by_tab = {}
+    for t in id_tabs:
+        id_rows_by_tab[t["label"]] = query(
+            "select id, section_label, construction_label from id_form_row where tab_id=%s order by source_row",
+            (t["id"],),
+        )
+
+    return render(request, "rsk_processing.html", "rsk-processing",
+                  v=v, processing=processing, responsible_ids=responsible_ids, linked_row_ids=linked_row_ids,
+                  rows=rows, responsibles=responsibles, close_conditions=close_conditions,
+                  id_rows_by_tab=id_rows_by_tab, ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS,
+                  status_badge=RSK_STATUS_BADGE,
+                  f_responsible=f_responsible, f_track_phys=f_track_phys,
+                  f_track_design=f_track_design, f_track_id=f_track_id)
+
+
+@app.post("/api/rsk-processing")
+def api_rsk_processing_upsert(
+    request: Request, sys_no: int = Form(...),
+    track_phys: str = Form("unknown"), track_design: str = Form("unknown"), track_id_: str = Form("unknown"),
+    responsible_ids: list[int] = Form(default=[]), close_condition_id: str = Form(""),
+    planned_close_date: str = Form(""), rejected: str = Form(""), comment: str = Form(""),
+    id_row_ids: list[int] = Form(default=[]),
+):
+    if not has_permission(request.state.user, "rsk:submit"):
+        return RedirectResponse(
+            url=f"/rsk/processing?sys_no={sys_no}&err=" + urllib.parse.quote("Нет доступа к отработке предписаний РСК."),
+            status_code=303,
+        )
+    v = query_one("select id from rsk_violation where sys_no=%s", (sys_no,))
+    if not v:
+        return RedirectResponse(url="/rsk/processing?err=" + urllib.parse.quote("Нарушение не найдено."),
+                                 status_code=303)
+
+    cc_val = int(close_condition_id) if close_condition_id.strip() else None
+    planned_val = _parse_date(planned_close_date) if planned_close_date.strip() else None
+    rejected_val = rejected == "1"
+    comment_val = comment.strip() or None
+    user_id = current_user_id_or_web_form()
+
+    def _do(cur):
+        cur.execute(
+            """
+            insert into rsk_processing
+                (violation_id, track_phys, track_design, track_id, close_condition_id,
+                 planned_close_date, rejected, comment, updated_ts)
+            values (%s,%s,%s,%s,%s,%s,%s,%s, now())
+            on conflict (violation_id) do update set
+                track_phys=excluded.track_phys, track_design=excluded.track_design,
+                track_id=excluded.track_id, close_condition_id=excluded.close_condition_id,
+                planned_close_date=excluded.planned_close_date, rejected=excluded.rejected,
+                comment=excluded.comment, updated_ts=now()
+            returning id
+            """,
+            (v["id"], track_phys, track_design, track_id_, cc_val, planned_val, rejected_val, comment_val),
+        )
+        processing_id = cur.fetchone()["id"]
+
+        cur.execute("delete from rsk_processing_responsible where processing_id=%s", (processing_id,))
+        for rid in responsible_ids:
+            cur.execute(
+                "insert into rsk_processing_responsible (processing_id, responsible_id) values (%s,%s) "
+                "on conflict do nothing",
+                (processing_id, rid),
+            )
+
+        cur.execute("delete from rsk_processing_id_row where processing_id=%s", (processing_id,))
+        for rid in id_row_ids:
+            cur.execute(
+                "insert into rsk_processing_id_row (processing_id, id_form_row_id) values (%s,%s) "
+                "on conflict do nothing",
+                (processing_id, rid),
+            )
+
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+            "values (%s, 'rsk_processing', %s, 'rsk_processing_update', %s, 'форма /rsk/processing')",
+            (user_id, processing_id, json.dumps(
+                {"sys_no": sys_no, "track_phys": track_phys, "track_design": track_design,
+                 "track_id": track_id_}, ensure_ascii=False)),
+        )
+        return processing_id
+
+    run_in_transaction(_do)
+    ok_msg = urllib.parse.quote(f"Отработка нарушения №{sys_no} сохранена.")
+    return RedirectResponse(url=f"/rsk/processing?sys_no={sys_no}&ok={ok_msg}", status_code=303)
+
+
+# ---------------------------------------------------------------------
+# Форма «Загрузка акта проверки» — единственный писатель слоя 1. Два
+# шага: /rsk/import (форма + после отправки — предпросмотр с диффом,
+# ничего ещё не записано) → /rsk/import/confirm (запись). Файл между
+# шагами лежит в RSK_UPLOADS_DIR под токеном.
+# ---------------------------------------------------------------------
+
+def _rsk_diff_vs_previous(new_records):
+    new_by_sysno = {r["sys_no"]: r for r in new_records}
+    new_sysnos = set(new_by_sysno)
+
+    prev_act = query_one("select id, act_no, act_date from rsk_act order by act_date desc, id desc limit 1")
+    if not prev_act:
+        return {"prev_act": None, "new": sorted(new_sysnos), "removed": [], "changed": [], "unchanged": []}
+
+    prev_items = query(
+        "select v.sys_no, i.content, i.remedy from rsk_act_item i "
+        "join rsk_violation v on v.id = i.violation_id where i.act_id=%s",
+        (prev_act["id"],),
+    )
+    prev_by_sysno = {r["sys_no"]: r for r in prev_items}
+    prev_sysnos = set(prev_by_sysno)
+
+    new_list = sorted(new_sysnos - prev_sysnos)
+    removed_list = sorted(prev_sysnos - new_sysnos)
+    changed_list = []
+    unchanged_list = []
+    for sn in sorted(new_sysnos & prev_sysnos):
+        old = prev_by_sysno[sn]
+        new = new_by_sysno[sn]
+        if (old["content"] or "") != (new["content"] or "") or (old["remedy"] or "") != (new["remedy"] or ""):
+            changed_list.append(sn)
+        else:
+            unchanged_list.append(sn)
+
+    return {"prev_act": prev_act, "new": new_list, "removed": removed_list,
+            "changed": changed_list, "unchanged": unchanged_list}
+
+
+@app.get("/rsk/import")
+def rsk_import_page(request: Request):
+    return render(request, "rsk_import.html", "rsk-import", preview=None)
+
+
+@app.post("/rsk/import")
+def rsk_import_preview(request: Request, act_pdf: UploadFile = File(...)):
+    if not has_permission(request.state.user, "rsk:submit"):
+        return render(request, "rsk_import.html", "rsk-import", preview=None,
+                      errors=["Нет доступа к загрузке актов РСК."])
+    if not act_pdf.filename or not act_pdf.filename.lower().endswith(".pdf"):
+        return render(request, "rsk_import.html", "rsk-import", preview=None,
+                      errors=["Файл должен быть в формате PDF."])
+
+    token = secrets.token_hex(8)
+    pdf_path = os.path.join(RSK_UPLOADS_DIR, f"{token}.pdf")
+    with open(pdf_path, "wb") as f:
+        f.write(act_pdf.file.read())
+
+    try:
+        parsed = parse_act(pdf_path)
+    except Exception as e:  # noqa: BLE001 — предпросмотр, показать причину и дать переcкачать другой файл
+        os.remove(pdf_path)
+        return render(request, "rsk_import.html", "rsk-import", preview=None,
+                      errors=[f"Не удалось разобрать PDF: {e}"])
+
+    diff = _rsk_diff_vs_previous(parsed["records"])
+    return render(request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
+                  original_name=act_pdf.filename)
+
+
+@app.post("/rsk/import/confirm")
+def rsk_import_confirm(request: Request, token: str = Form(...)):
+    if not has_permission(request.state.user, "rsk:submit"):
+        return RedirectResponse(url="/rsk/import?err=" + urllib.parse.quote("Нет доступа."), status_code=303)
+    pdf_path = os.path.join(RSK_UPLOADS_DIR, f"{token}.pdf")
+    if not os.path.exists(pdf_path):
+        return RedirectResponse(
+            url="/rsk/import?err=" + urllib.parse.quote("Файл предпросмотра не найден — загрузите заново."),
+            status_code=303,
+        )
+    parsed = parse_act(pdf_path)
+    diff = _rsk_diff_vs_previous(parsed["records"])
+
+    def _do(cur):
+        act = parsed["act"]
+        cur.execute(
+            "insert into rsk_act (act_no, act_date, total_declared, pdf_path) values (%s,%s,%s,%s) "
+            "on conflict (act_no) do update set act_date=excluded.act_date, "
+            "total_declared=excluded.total_declared returning id",
+            (act["act_no"], act["act_date"], act["total_declared"], pdf_path),
+        )
+        act_id = cur.fetchone()["id"]
+
+        new_sysnos = set()
+        for rec in parsed["records"]:
+            new_sysnos.add(rec["sys_no"])
+            cur.execute(
+                """
+                insert into rsk_violation (sys_no, first_act_no, first_detected_date, is_active, closed_in_act_id)
+                values (%(sys_no)s, %(first_act_no)s, %(first_detected_date)s, true, null)
+                on conflict (sys_no) do update set
+                    first_detected_date = least(rsk_violation.first_detected_date, excluded.first_detected_date),
+                    is_active = true, closed_in_act_id = null
+                returning id
+                """,
+                rec,
+            )
+            violation_id = cur.fetchone()["id"]
+            cur.execute(
+                """
+                insert into rsk_act_item
+                    (act_id, violation_id, item_no, control_section, content, remedy, due_date, is_repeat)
+                values (%(act_id)s, %(violation_id)s, %(item_no)s, %(control_section)s, %(content)s,
+                        %(remedy)s, %(due_date)s, %(is_repeat)s)
+                on conflict (act_id, violation_id) do update set
+                    item_no=excluded.item_no, control_section=excluded.control_section,
+                    content=excluded.content, remedy=excluded.remedy, due_date=excluded.due_date,
+                    is_repeat=excluded.is_repeat
+                """,
+                {**rec, "act_id": act_id, "violation_id": violation_id},
+            )
+
+        # Диф — снятие: активные нарушения, отсутствующие в новом акте.
+        cur.execute("select id, sys_no from rsk_violation where is_active")
+        for row in cur.fetchall():
+            if row["sys_no"] not in new_sysnos:
+                cur.execute(
+                    "update rsk_violation set is_active=false, closed_in_act_id=%s where id=%s",
+                    (act_id, row["id"]),
+                )
+
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+            "values (%s, 'rsk_act', %s, 'rsk_act_import', %s, 'форма /rsk/import')",
+            (current_user_id_or_web_form(), act_id, json.dumps(
+                {"act_no": act["act_no"], "positions": len(parsed["records"]),
+                 "new": len(diff["new"]), "removed": len(diff["removed"]), "changed": len(diff["changed"])},
+                ensure_ascii=False)),
+        )
+        return act_id
+
+    act_id = run_in_transaction(_do)
+    os.remove(pdf_path)
+    ok_msg = urllib.parse.quote(
+        f"Акт {parsed['act']['act_no']} загружен: {len(parsed['records'])} позиций, "
+        f"{len(diff['new'])} новых, {len(diff['removed'])} снято."
+    )
+    return RedirectResponse(url=f"/rsk?ok={ok_msg}", status_code=303)

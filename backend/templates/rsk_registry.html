@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .rsk-content-cell { max-width: 420px; }
+  .rsk-content-cell .rsk-clamp {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; cursor: pointer;
+  }
+  .rsk-content-cell.expanded .rsk-clamp { -webkit-line-clamp: unset; }
+  tr.rsk-row-closed td { opacity: .55; }
+</style>
+
+<h1>Реестр предписаний РСК</h1>
+<p class="subtitle">Слой 1 (акт) только для чтения — правится через загрузку нового акта. Треки и
+ответственный — слой 2, редактируется в <a href="/rsk/processing">«Отработке предписаний»</a>.
+<a href="/export/rsk.csv" style="margin-left:.75rem">Скачать CSV</a></p>
+
+<form class="filter-bar" method="get">
+  <label>Ответственный
+    <select name="responsible">
+      <option value="">— все —</option>
+      {% for r in responsibles %}
+      <option value="{{ r.id }}" {{ 'selected' if f_responsible==r.id|string }}>{{ r.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Физика
+    <select name="track_phys">
+      <option value="">— все —</option>
+      {% for code, label in ru_track.items() %}
+      <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Проект
+    <select name="track_design">
+      <option value="">— все —</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_design==code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>ИД
+    <select name="track_id_">
+      <option value="">— все —</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_id==code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Акт
+    <select name="act_no">
+      <option value="">— все —</option>
+      {% for a in acts %}
+      <option value="{{ a.act_no }}" {{ 'selected' if f_act_no==a.act_no }}>{{ a.act_no }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Повторность
+    <select name="is_repeat">
+      <option value="">— все —</option>
+      <option value="1" {{ 'selected' if f_is_repeat=='1' }}>Повторные</option>
+      <option value="0" {{ 'selected' if f_is_repeat=='0' }}>Первичные</option>
+    </select>
+  </label>
+  <label>Состояние
+    <select name="state">
+      <option value="active" {{ 'selected' if f_state!='closed' }}>Активные</option>
+      <option value="closed" {{ 'selected' if f_state=='closed' }}>Снятые</option>
+      <option value="">Все</option>
+    </select>
+  </label>
+  <button type="submit">Применить</button>
+</form>
+
+<p class="subtitle">Найдено: {{ total }}</p>
+
+<div class="table-wrap">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>№</th>
+      <th>Суть нарушения</th>
+      <th>Статус</th>
+      <th>Физика</th>
+      <th>Проект</th>
+      <th>ИД</th>
+      <th>Ответственный</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr class="{{ 'rsk-row-closed' if not r.is_active }}">
+      <td class="mono"><a href="/rsk/violation/{{ r.sys_no }}">{{ r.sys_no }}</a>{% if r.is_repeat %} <span class="status-missing-badge" title="Повторно">п</span>{% endif %}</td>
+      <td class="rsk-content-cell" onclick="this.classList.toggle('expanded')">
+        <span class="rsk-clamp">{{ r.content }}</span>
+      </td>
+      <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
+      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
+      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
+      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
+      <td>{{ r.responsible_names }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
