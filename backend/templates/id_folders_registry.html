@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Реестр папок ИД</h1>
+<p class="subtitle">Все папки, сформированные из подписанных разделов — и ещё не переданные в СДО, и уже
+переданные. Состав, сумму и подписанта можно менять на странице папки (клик по номеру).
+<a href="/export/id-folders.csv?status={{ status }}" style="margin-left:.75rem">Скачать CSV</a></p>
+
+{% if request.query_params.get('ok') %}
+<div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>
+{% endif %}
+{% if request.query_params.get('err') %}
+<div class="flash flash-err">{{ request.query_params.get('err') }}</div>
+{% endif %}
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.folders_count }}</div>
+    <div class="kpi-label">Всего папок</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.transferred_count }}</div>
+    <div class="kpi-label">Передано в СДО</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ '{:,.2f}'.format(totals.amount_total)|replace(',', ' ') }}</div>
+    <div class="kpi-label">Стоимость всех папок, ₽</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ '{:,.2f}'.format(totals.amount_transferred)|replace(',', ' ') }}</div>
+    <div class="kpi-label">Стоимость переданных в СДО, ₽</div>
+  </div>
+</div>
+
+<form method="get" action="/id-folders/registry" class="form-box" style="max-width:520px;display:flex;gap:1rem;align-items:flex-end;">
+  <label style="flex:1">Статус
+    <select name="status" onchange="this.form.submit()">
+      <option value="all" {{ 'selected' if status=='all' }}>Все</option>
+      <option value="formed" {{ 'selected' if status=='formed' }}>Сформированные</option>
+      <option value="transferred" {{ 'selected' if status=='transferred' }}>Переданные в СДО</option>
+    </select>
+  </label>
+  <label style="flex:1">Сортировка по номеру
+    <select name="sort" onchange="this.form.submit()">
+      <option value="desc" {{ 'selected' if sort=='desc' }}>Новые сверху</option>
+      <option value="asc" {{ 'selected' if sort=='asc' }}>Старые сверху</option>
+    </select>
+  </label>
+</form>
+
+<div class="table-wrap">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Номер папки</th>
+      <th>Дата формирования</th>
+      <th>Разделов</th>
+      <th>Стоимость, ₽</th>
+      <th>Подписант реестра передачи</th>
+      <th>Дата передачи в СДО</th>
+      <th>Статус</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for f in folders %}
+    <tr>
+      <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
+      <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
+      <td>{{ f.row_count }}</td>
+      <td>{{ '{:,.2f}'.format(f.amount_sum or 0)|replace(',', ' ') }}</td>
+      <td>{{ f.sdo_signer_name or '—' }}</td>
+      <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
+      <td>
+        {% if f.sdo_transfer_date %}
+        <span class="badge badge-ok">Передана в СДО</span>
+        {% else %}
+        <span class="badge badge-neutral">Сформирована</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="empty-note">Папок с таким статусом нет.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

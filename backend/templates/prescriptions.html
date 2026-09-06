@@ -95,7 +95,11 @@
     <input type="number" name="amount_unblocked" min="0" step="0.01" value="{{ values.get('amount_unblocked', '') }}">
   </label>
   <label>Документ предписания (PDF)
-    <input type="file" name="document_pdf" accept="application/pdf,.pdf">
+    <span class="file-input-row">
+      <input type="file" name="document_pdf" accept="application/pdf,.pdf" id="document-pdf-input" class="file-input-visually-hidden">
+      <label for="document-pdf-input" class="file-btn">Выбрать файл</label>
+      <span class="file-name" id="document-pdf-filename">Файл не выбран</span>
+    </span>
   </label>
   <label>Комментарий
     <textarea name="comment" rows="2">{{ values.get('comment', '') }}</textarea>
@@ -150,6 +154,17 @@
   </tbody>
 </table>
 </div>
+
+<script>
+(function () {
+  var input = document.getElementById('document-pdf-input');
+  var nameEl = document.getElementById('document-pdf-filename');
+  if (!input || !nameEl) return;
+  input.addEventListener('change', function () {
+    nameEl.textContent = input.files && input.files.length ? input.files[0].name : 'Файл не выбран';
+  });
+})();
+</script>
 {% endblock %}
 
 

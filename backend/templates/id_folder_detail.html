@@ -6,6 +6,9 @@
 {% if folder.sdo_transfer_date %}Передана в СДО {{ folder.sdo_transfer_date|fmt_dmy }}, подписант — {{ folder.sdo_signer_name }}.
 {% else %}В СДО ещё не передана.{% endif %}</p>
 
+{% if request.query_params.get('ok') %}
+<div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>
+{% endif %}
 {% if request.query_params.get('err') %}
 <div class="flash flash-err">{{ request.query_params.get('err') }}</div>
 {% endif %}
@@ -13,14 +16,21 @@
 <div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
 {% endif %}
 
+<h3>Сумма папки</h3>
+<form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/amount" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
+  <label style="flex:1">Сумма, ₽
+    <input type="number" name="amount_rub" min="0.01" step="0.01" value="{{ folder.amount_rub or '' }}" required>
+  </label>
+  <button type="submit">Сохранить</button>
+</form>
+
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ rows_in_folder|length }}</div>
     <div class="kpi-label">Разделов в папке</div>
-    <div class="kpi-sub">рекомендовано 10–100</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ '{:,.2f}'.format(amount_sum)|replace(',', ' ') }}</div>
+    <div class="kpi-num">{{ '{:,.2f}'.format(folder.amount_rub or 0)|replace(',', ' ') }}</div>
     <div class="kpi-label">Сумма папки, ₽</div>
   </div>
 </div>
@@ -28,19 +38,12 @@
 <h3>Состав папки</h3>
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>Категория</th><th>Раздел</th><th>Сумма, ₽</th><th></th></tr></thead>
+  <thead><tr><th>Категория</th><th>Раздел</th><th></th></tr></thead>
   <tbody>
     {% for r in rows_in_folder %}
     <tr>
       <td>{{ r.tab_label }}</td>
       <td>{{ r.section_label }}</td>
-      <td>
-        <form method="post" action="/api/id-folder-row/{{ r.folder_row_id }}/amount" style="display:flex;gap:.4rem;align-items:center">
-          <input type="number" name="amount_rub" min="10000" max="500000" step="0.01"
-                 value="{{ r.amount_rub or '' }}" style="width:8rem" placeholder="10000–500000">
-          <button type="submit" class="btn-secondary">Сохр.</button>
-        </form>
-      </td>
       <td>
         <form method="post" action="/api/id-folder-row/{{ r.folder_row_id }}/remove">
           <button type="submit" class="btn-secondary">Убрать</button>
@@ -48,7 +51,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="empty-note">Разделов в папке ещё нет — добавьте ниже.</td></tr>
+    <tr><td colspan="3" class="empty-note">Разделов в папке ещё нет — добавьте ниже.</td></tr>
     {% endfor %}
   </tbody>
 </table>

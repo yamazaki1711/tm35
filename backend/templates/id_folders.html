@@ -33,23 +33,7 @@
 <div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
 {% endif %}
 
-<form class="form-box" method="post" action="/api/id-folder" style="max-width:520px;">
-  <h3 style="margin-top:0;">Новая папка</h3>
-  <label>Название (пусто — автономер)
-    <input type="text" name="name" placeholder="например, номер или произвольный текст">
-  </label>
-  <label>Дата создания папки
-    <span class="dm-picker" data-dm-picker>
-      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-      <button type="button" class="dm-btn" tabindex="-1"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-      <input type="hidden" name="folder_date">
-      <div class="dm-cal" hidden></div>
-    </span>
-  </label>
-  <p class="kpi-hint">Дата принимается и задним числом — для папок, которые собираются по уже подписанным
-  разделам с начала стройки.</p>
-  <button type="submit">Создать папку</button>
-</form>
+<p class="subtitle"><a href="/id-folders/new">+ Сформировать новую папку</a></p>
 
 <h3>Список папок</h3>
 <div class="table-wrap">
@@ -70,7 +54,7 @@
       <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
       <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td>{{ f.row_count }}</td>
-      <td>{{ '{:,.2f}'.format(f.amount_sum)|replace(',', ' ') }}</td>
+      <td>{{ '{:,.2f}'.format(f.amount_sum or 0)|replace(',', ' ') }}</td>
       <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
     </tr>

@@ -88,7 +88,7 @@
   <tbody>
     {% for c in changes %}
     <tr class="{{ 'row-overdue' if c.overdue_days and c.overdue_days > 0 else '' }}">
-      <td>{{ c.code or '—' }}</td>
+      <td><a href="/changes/{{ c.id }}">{{ c.code or '—' }}</a></td>
       <td>{{ c.section_code or '—' }}</td>
       <td class="wrap">{{ c.topic or '' }}</td>
       <td><span class="badge badge-neutral" title="Код статуса: {{ c.status }}">{{ CH_LABELS.get(c.status, c.status) }}</span></td>
