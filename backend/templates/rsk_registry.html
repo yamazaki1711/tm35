@@ -8,6 +8,21 @@
   }
   .rsk-content-cell.expanded .rsk-clamp { -webkit-line-clamp: unset; }
   tr.rsk-row-closed td { opacity: .55; }
+
+  /* Подсказка с полным текстом нарушения при наведении на "Суть нарушения".
+     Раскрытая по клику строка подсказку не получает — текст уже виден на
+     странице (см. JS: currentCell пропускает .expanded). */
+  .rsk-tooltip {
+    position: fixed; z-index: 50; pointer-events: none;
+    max-width: min(600px, calc(100vw - 32px)); max-height: 70vh; overflow-y: auto;
+    background: var(--c-text); color: #fff; font-size: .82rem; line-height: 1.5;
+    padding: .65rem .85rem; border-radius: var(--r-sm); box-shadow: var(--shadow-md);
+  }
+  .rsk-tooltip p { margin: 0 0 .5rem; }
+  .rsk-tooltip p:last-child { margin-bottom: 0; }
+  .rsk-tooltip ul { margin: 0; padding-left: 1.1rem; }
+  .rsk-tooltip li { margin-bottom: .3rem; }
+  .rsk-tooltip li:last-child { margin-bottom: 0; }
 </style>
 
 <h1>Реестр предписаний РСК</h1>
@@ -92,7 +107,7 @@
     {% for r in rows %}
     <tr class="{{ 'rsk-row-closed' if not r.is_active }}">
       <td class="mono"><a href="/rsk/violation/{{ r.sys_no }}">{{ r.sys_no }}</a>{% if r.is_repeat %} <span class="status-missing-badge" title="Повторно">п</span>{% endif %}</td>
-      <td class="rsk-content-cell" onclick="this.classList.toggle('expanded')">
+      <td class="rsk-content-cell" onclick="this.classList.toggle('expanded')" data-full="{{ r.content or '' }}">
         <span class="rsk-clamp">{{ r.content }}</span>
       </td>
       <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
@@ -105,4 +120,96 @@
   </tbody>
 </table>
 </div>
+
+<div id="rsk-tooltip" class="rsk-tooltip" hidden></div>
+<script>
+(function() {
+  var tip = document.getElementById('rsk-tooltip');
+  var body = document.querySelector('.data-table tbody');
+  if (!tip || !body) return;
+
+  var SHOW_DELAY = 300;
+  var showTimer = null;
+  var hoverCell = null;
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Данные из PDF — один сплошной текст, переносов строк нет; маркер
+  // списка сохраняется парсером как отдельное " - " (см. rsk_parser.py,
+  // clean_join). Реальные "\n" тоже поддержаны на будущее, если формат
+  // источника изменится.
+  function renderContent(text) {
+    var html = '';
+    text.split(/\n+/).forEach(function(para) {
+      var parts = para.split(/\s-\s/).map(function(p) { return p.trim(); }).filter(Boolean);
+      if (parts.length > 1) {
+        html += '<p>' + escapeHtml(parts[0]) + '</p><ul>';
+        for (var i = 1; i < parts.length; i++) {
+          html += '<li>' + escapeHtml(parts[i]) + '</li>';
+        }
+        html += '</ul>';
+      } else if (para.trim()) {
+        html += '<p>' + escapeHtml(para.trim()) + '</p>';
+      }
+    });
+    return html;
+  }
+
+  function positionTip(cell) {
+    var r = cell.getBoundingClientRect();
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    tip.hidden = false;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = Math.min(r.left, vw - tw - 8);
+    left = Math.max(8, left);
+    var top = r.bottom + 6;
+    if (top + th > vh - 8) top = r.top - th - 6;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+
+  function showTip(cell) {
+    tip.innerHTML = renderContent(cell.getAttribute('data-full') || '');
+    positionTip(cell);
+  }
+
+  function hideTip() {
+    clearTimeout(showTimer);
+    tip.hidden = true;
+    hoverCell = null;
+  }
+
+  body.addEventListener('mouseover', function(e) {
+    var cell = e.target.closest('.rsk-content-cell');
+    if (!cell || cell === hoverCell || cell.classList.contains('expanded')) return;
+    hoverCell = cell;
+    clearTimeout(showTimer);
+    showTimer = setTimeout(function() {
+      if (hoverCell === cell) showTip(cell);
+    }, SHOW_DELAY);
+  });
+
+  body.addEventListener('mouseout', function(e) {
+    var cell = e.target.closest('.rsk-content-cell');
+    if (!cell || cell !== hoverCell) return;
+    if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+    hideTip();
+  });
+
+  body.addEventListener('click', function(e) {
+    if (e.target.closest('.rsk-content-cell')) hideTip();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideTip();
+  });
+
+  window.addEventListener('scroll', hideTip, true);
+})();
+</script>
 {% endblock %}
