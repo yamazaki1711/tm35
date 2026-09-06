@@ -393,6 +393,46 @@ h3 {
   outline-offset: 2px;
 }
 
+/* ── Таймлайн-«светофор» (/status, "Отклонение по неделям") — заменил
+   линейный SVG-график 06.09.2026: координатор попросил не график, а
+   визуализацию процесса. Цвет точки = статус по тем же порогам, что и
+   .deviation-badge выше (одни и те же классы ok/risk/danger). ── */
+.status-timeline { display: flex; flex-direction: column; gap: 1.75rem; }
+.st-row-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: .4rem 1rem; margin-bottom: .85rem;
+}
+.st-row-label { font-weight: 700; font-size: .92rem; color: var(--c-text-2); }
+.st-track { display: flex; align-items: flex-start; gap: .5rem; }
+.st-points { display: flex; align-items: flex-start; flex: 1 1 auto; position: relative; min-width: 0; }
+.st-points::before {
+  content: ""; position: absolute; left: 9px; right: 9px; top: 9px; height: 2px;
+  background: var(--c-border-strong);
+}
+.st-point {
+  display: flex; flex-direction: column; align-items: center; gap: .4rem;
+  flex: 1 1 0; min-width: 0; position: relative;
+}
+.st-dot {
+  width: 20px; height: 20px; padding: 0; border-radius: 50%;
+  border: 3px solid var(--c-surface); box-shadow: 0 0 0 1.5px var(--c-border-strong);
+  cursor: pointer; font: inherit;
+}
+.st-dot.st-ok { background: var(--c-success); }
+.st-dot.st-risk { background: var(--c-warning); }
+.st-dot.st-danger { background: var(--c-danger); }
+.st-dot:focus, .st-dot:focus-visible { outline: 3px solid var(--c-primary-light); outline-offset: 2px; }
+.st-dot:hover { box-shadow: 0 0 0 1.5px var(--c-border-strong), 0 0 0 5px var(--c-primary-bg); }
+.st-point-date { font-size: .8rem; color: var(--c-text-3); white-space: nowrap; }
+.st-connector {
+  flex: 0 0 2.75rem; align-self: flex-start; margin-top: 9px;
+  height: 0; border-top: 2px dashed var(--c-border-strong);
+}
+.st-target { display: flex; flex-direction: column; align-items: center; gap: .4rem; flex: 0 0 auto; }
+.st-target-flag { width: 20px; height: 20px; color: var(--c-danger); }
+.st-target-date { font-size: .8rem; font-weight: 700; color: var(--c-danger); white-space: nowrap; }
+.st-legend { margin-top: 0; }
+
 /* ── Быстрый доступ ── */
 .quick-nav {
   display: grid;
