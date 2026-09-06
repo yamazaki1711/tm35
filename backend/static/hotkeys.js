@@ -16,14 +16,21 @@
    очередь, до type=submit.
 
    Видимость (offsetParent !== null) — защита от срабатывания на кнопке
-   внутри скрытого/ещё не открытого модального окна. */
+   внутри скрытого/ещё не открытого модального окна.
+
+   Формы внутри <nav> (сейчас единственная — «Выйти») исключены явно:
+   без этого исключения на любой странице без своей POST-формы (/rsk,
+   /dashboard, /id-packages…) форма выхода становится «единственной на
+   странице» и Ctrl+Enter вне поля ввода тихо разлогинивает; подсказка
+   «Ctrl+Enter» при этом ещё и висела в шапке рядом с «Выйти» на каждой
+   странице сайта — обе беды нашёл координатор 06.09.2026. */
 (function () {
   function isVisible(el) {
     return !!(el && el.offsetParent !== null && !el.disabled);
   }
 
   function isSaveForm(form) {
-    return form && form.tagName === "FORM" && (form.method || "get").toLowerCase() === "post";
+    return form && form.tagName === "FORM" && (form.method || "get").toLowerCase() === "post" && !form.closest("nav");
   }
 
   function findButton(form) {
