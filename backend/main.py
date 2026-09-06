@@ -4348,19 +4348,10 @@ def home_v2(request: Request):
         where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
     """) or {"total": 0, "overdue": 0}
 
-    # Заменяет старую плитку /prescriptions (убрана 06.09.2026, см. секцию
-    # РСК ниже) — считает по слою 1+2 контура РСК, не по пустой prescription.
-    rsk_stats_row = query_one("""
-        select
-            count(*) filter (where v.is_active) as total,
-            count(*) filter (where v.is_active and not (
-                coalesce(p.track_phys, 'unknown') in ('done', 'not_required')
-                and coalesce(p.track_design, 'unknown') in ('done', 'not_required')
-                and coalesce(p.track_id, 'unknown') in ('done', 'not_required')
-            )) as open
-        from rsk_violation v
-        left join rsk_processing p on p.violation_id = v.id
-    """) or {"total": 0, "open": 0}
+    # Свой блок "Обзор РСК" (координатор, 06.09.2026) — РСК теперь
+    # равноправный раздел меню рядом с СМР/ИД, не подраздел ИД. Те же
+    # цифры, что на /rsk/dashboard (компактная функция, не дублируем SQL).
+    rsk_dash = compute_rsk_dashboard_stats()
 
     crit = get_criticality_data()
     evm = get_evm_data()
@@ -4377,7 +4368,7 @@ def home_v2(request: Request):
         crit=crit, evm=evm,
         id_stats=id_stats_row,
         change_stats=change_stats_row,
-        rsk_stats=rsk_stats_row,
+        rsk_dash=rsk_dash,
         folder_stats=compute_id_folder_stats(),
     )
 
@@ -5031,8 +5022,11 @@ def export_rsk_csv():
     )
 
 
-@app.get("/rsk/dashboard")
-def rsk_dashboard_page(request: Request):
+# Общие цифры РСК — источник для /rsk/dashboard и для блока "Обзор РСК"
+# на главном дашборде (координатор, 06.09.2026: РСК теперь равноправный
+# раздел меню рядом с СМР/ИД, одной плитки внутри блока ИД недостаточно).
+# Вынесено в функцию, чтобы не дублировать SQL между двумя местами.
+def compute_rsk_dashboard_stats():
     tiles = query_one(f"""
         select
             count(*) filter (where v.is_active) as total_active,
@@ -5057,8 +5051,15 @@ def rsk_dashboard_page(request: Request):
         select count(*) as n {RSK_LIST_BASE_SQL} where v.is_active and p.id is null
     """) or {"n": 0}
 
+    return {"tiles": tiles, "by_responsible": by_responsible, "no_responsible": no_responsible["n"]}
+
+
+@app.get("/rsk/dashboard")
+def rsk_dashboard_page(request: Request):
+    stats = compute_rsk_dashboard_stats()
     return render(request, "rsk_dashboard.html", "rsk-dashboard",
-                  tiles=tiles, by_responsible=by_responsible, no_responsible=no_responsible["n"])
+                  tiles=stats["tiles"], by_responsible=stats["by_responsible"],
+                  no_responsible=stats["no_responsible"])
 
 
 @app.get("/rsk/violation/{sys_no}")
