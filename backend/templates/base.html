@@ -20,6 +20,7 @@
 <body>
 {% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
 {% set id_active = active in ['id-packages', 'changes', 'prescriptions', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry'] %}
+{% set rsk_active = active in ['rsk'] %}
 <nav>
 <div class="nav-inner">
   <a href="/dashboard" class="nav-brand"><span class="mark">ТМ</span> ТМ-35</a>
@@ -123,6 +124,11 @@
         </a>
       </div>
     </div>
+
+    <a href="/rsk" class="{{ 'active' if rsk_active }}" {{ 'aria-current="page"' if rsk_active }}>
+      <svg class="icon" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+      <span class="nav-label">РСК</span>
+    </a>
   </div>
 
   <div class="nav-spacer"></div>

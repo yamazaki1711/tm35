@@ -5046,3 +5046,65 @@ def api_id_block_unset(request: Request, block_id: int):
     if not row:
         return JSONResponse({"ok": False, "errors": ["Блокировка не найдена или уже снята."]}, status_code=404)
     return {"ok": True}
+
+
+# =======================================================================
+# Контур РСК — этап 1 (докс координатора, 06.09.2026): только просмотр,
+# ввод/правка не делается тут же — UI проектируется отдельно после того,
+# как координатор посмотрит на отчёт сверки импорта (см.
+# docs/RSK_KONTUR_IMPORT_2026-09-06.md). Раздел меню запрошен отдельно
+# (координатор, "рядом с СМР и ИД") — эта страница закрывает именно его,
+# не весь будущий функционал контура.
+# =======================================================================
+
+RU_RSK_STATE = {
+    "open": "Открыто", "submitted": "Направлено", "rejected": "Отклонено РСК",
+    "partially_closed": "Частично снято", "closed": "Снято",
+}
+RU_RSK_STATE_BADGE = {
+    "open": "badge-neutral", "submitted": "badge-neutral", "rejected": "badge-bad",
+    "partially_closed": "badge-warn", "closed": "badge-ok",
+}
+
+RSK_LIST_SQL = """
+    select v.id, v.sys_no, v.content, v.section_raw, v.violation_type, v.state,
+           v.due_date, v.due_date_moved, v.closed_date, v.author, v.is_repeat, v.source,
+           cc.label as close_condition_label,
+           coalesce(
+               (select string_agg(r.name, ', ' order by r.name)
+                from rsk_violation_responsible vr join rsk_responsible r on r.id = vr.responsible_id
+                where vr.violation_id = v.id),
+               '—'
+           ) as responsible_names
+    from rsk_violation v
+    left join rsk_close_condition cc on cc.id = v.close_condition_id
+    order by v.sys_no desc
+"""
+
+
+@app.get("/rsk")
+def rsk_page(request: Request):
+    rows = query(RSK_LIST_SQL)
+    total = len(rows)
+    counts = {}
+    for r in rows:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+    return render(request, "rsk.html", "rsk", rows=rows, total=total, counts=counts,
+                  ru_state=RU_RSK_STATE, ru_state_badge=RU_RSK_STATE_BADGE)
+
+
+@app.get("/export/rsk.csv")
+def export_rsk_csv():
+    rows = query(RSK_LIST_SQL)
+    out = [
+        (r["sys_no"], RU_RSK_STATE.get(r["state"], r["state"]), r["section_raw"] or "",
+         r["content"], r["responsible_names"], _csv_dmy(r["due_date"]), _csv_dmy(r["closed_date"]),
+         r["close_condition_label"] or "", "да" if r["is_repeat"] else "нет")
+        for r in rows
+    ]
+    return _csv_response(
+        "rsk_violations.csv",
+        ["№", "Статус", "Участок", "Содержание", "Ответственные", "Срок устранения", "Дата снятия",
+         "Условие снятия", "Повторно"],
+        out,
+    )
