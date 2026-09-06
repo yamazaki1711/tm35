@@ -10,11 +10,25 @@
 
 {% if not preview %}
 <form class="form-box" method="post" action="/rsk/import" enctype="multipart/form-data" style="max-width:500px">
-  <label style="display:block;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Файл акта (PDF)
-    <input type="file" name="act_pdf" accept="application/pdf" required style="display:block;margin-top:.4rem">
+  <label>Файл акта (PDF)
+    <span class="file-input-row">
+      <input type="file" name="act_pdf" accept="application/pdf,.pdf" required id="act-pdf-input" class="file-input-visually-hidden">
+      <label for="act-pdf-input" class="file-btn">Выбрать файл</label>
+      <span class="file-name" id="act-pdf-filename">Файл не выбран</span>
+    </span>
   </label>
   <button type="submit" style="margin-top:1rem">Разобрать и показать предпросмотр</button>
 </form>
+<script>
+(function () {
+  var input = document.getElementById('act-pdf-input');
+  var nameEl = document.getElementById('act-pdf-filename');
+  if (!input || !nameEl) return;
+  input.addEventListener('change', function () {
+    nameEl.textContent = input.files && input.files.length ? input.files[0].name : 'Файл не выбран';
+  });
+})();
+</script>
 {% else %}
 
 <h3>Предпросмотр — акт {{ preview.act.act_no or '?' }} от {{ preview.act.act_date|fmt_dmy if preview.act.act_date else '?' }}</h3>
