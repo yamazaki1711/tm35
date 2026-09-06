@@ -9,7 +9,12 @@
   }
   .id-form-grid textarea { min-height: 3.2rem; resize: vertical; }
   .id-form-errors { color: var(--c-danger); font-size: .85rem; margin-top: .8rem; min-height: 1em; }
+  .field-hint { font-weight: 400; font-size: .78rem; color: var(--c-text-3); }
   tr.row-blocked td { background: var(--c-warning-bg); }
+  tr.registry-row { cursor: pointer; }
+  tr.registry-row:hover td { background: var(--c-surface-alt); }
+  tr.registry-row.row-blocked:hover td { background: var(--c-warning-bg); filter: brightness(0.97); }
+  tr.registry-row:focus, tr.registry-row:focus-visible { outline: 2px solid var(--c-primary-light); outline-offset: -2px; }
   .block-badge { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem; border-radius: 100px;
     background: var(--c-warning-bg); color: var(--c-warning); font-size: .72rem; font-weight: 700; }
   /* Подготовка пилота, 30.08.2026 — семь вкладок без справочника статусов
@@ -64,7 +69,13 @@
       </span>
     </label>
     <label>Стоп-фактор (если есть)
-      <input type="text" id="f-stop-factor" placeholder="например, нет проектного решения по узлу">
+      <select id="f-stop-factor">
+        <option value="" selected>— нет стоп-фактора —</option>
+        {% for sf in stop_factors %}
+        <option value="{{ sf }}">{{ sf }}</option>
+        {% endfor %}
+      </select>
+      <span class="field-hint">Выбор стоп-фактора ставит блокировку раздела — см. бейдж «заблокировано» в реестре ниже.</span>
     </label>
     <label>Подписант РСК
       <select id="f-rsk-signer">
@@ -82,33 +93,12 @@
   <button type="button" id="f-submit" data-hotkey-save style="margin-top:1rem">Сохранить запись</button>
 </form>
 
-<h3>Блокировка ИЗМ</h3>
-<p class="subtitle">Признак, не статус — при блокировке текущий статус раздела сохраняется, после снятия
-работа продолжается с того же места.</p>
-<form class="form-box" id="id-block-form" method="post" style="max-width:520px;">
-  <div class="id-form-grid">
-    <label>Раздел (тот же выбор, что в форме выше)
-      <select id="b-row" disabled><option value="">— сначала ответственный выше —</option></select>
-    </label>
-    <label>Вид работ (опционально)
-      <select id="b-work-type" disabled><option value="">— весь раздел —</option></select>
-    </label>
-    <label>Номер/название ИЗМ
-      <input type="text" id="b-change-ref" placeholder="например, ИЗМ-19-КЖ">
-    </label>
-    <label>Комментарий
-      <input type="text" id="b-comment">
-    </label>
-  </div>
-  <div class="id-form-errors" id="b-errors"></div>
-  <button type="button" id="b-submit" data-hotkey-save style="margin-top:1rem" class="btn-secondary">Поставить блокировку</button>
-</form>
-
 <h3>Текущее состояние (последние 200 записей) <a href="#" id="registry-refresh" style="font-size:.8rem;font-weight:500">обновить</a></h3>
+<p class="subtitle">Нажмите на строку, чтобы открыть её в форме выше и дозаполнить или исправить.</p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Вкладка</th><th>Раздел</th><th>Вид работ</th><th>Статус</th>
-  <th>Ответственный</th><th>Дата статуса</th><th>Плановая сдача в РСК</th><th>Подписант РСК</th><th>ИЗМ</th></tr></thead>
+  <th>Ответственный</th><th>Дата статуса</th><th>Плановая сдача в РСК</th><th>Подписант РСК</th><th>Блокировка</th></tr></thead>
   <tbody id="registry-body"><tr><td colspan="9" style="text-align:center;color:var(--c-text-3)">Загрузка…</td></tr></tbody>
 </table>
 </div>
@@ -195,11 +185,9 @@
           tab.rows.forEach(function (r) { rowTabIndex[r.id] = tab; });
         });
         fillRowSelectGrouped(document.getElementById('f-row'), data.tabs, '— выбрать —');
-        fillRowSelectGrouped(document.getElementById('b-row'), data.tabs, '— выбрать —');
         // Раздел ещё не выбран — вид работ/статус/кнопка подписи снова закрыты.
         fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
         fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
-        fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
       });
   }
 
@@ -217,16 +205,51 @@
     }
     fillSelect(document.getElementById('f-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— без вида работ —');
     fillSelect(document.getElementById('f-status'), tab.statuses, 'id', function (s) { return s.label + (s.is_stopper ? ' (причина остановки)' : ''); }, tab.statuses.length ? '— выбрать —' : '— справочник пуст, можно оставить пустым —');
+    // Вид работ у этой вкладки может не быть вовсе (work_types пуст) —
+    // тогда подгрузку прошлой записи делаем сразу по разделу, не ждём
+    // отдельного выбора вида работ, которого не будет.
+    if (!tab.work_types.length) maybeLookupEntry();
   });
 
-  document.getElementById('b-row').addEventListener('change', function () {
-    var tab = rowTabIndex[this.value];
-    if (!tab) {
-      fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
-      return;
-    }
-    fillSelect(document.getElementById('b-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— весь раздел —');
-  });
+  document.getElementById('f-work-type').addEventListener('change', maybeLookupEntry);
+
+  // Автоподстановка ранее введённых данных (координатор, докс "Вопросы к
+  // базе по ТМ-35", п.1, 06.09.2026): при выборе уже заполнявшегося
+  // раздела+вида работ форма раньше всегда оставалась пустой. Пустая
+  // строка/undefined на конце payload'а — работа "без вида работ" (тот же
+  // смысл, что %s::bigint is null на бэкенде).
+  function maybeLookupEntry() {
+    var rowId = document.getElementById('f-row').value;
+    if (!rowId) return;
+    var wtSel = document.getElementById('f-work-type');
+    var wtId = wtSel.disabled ? '' : wtSel.value;
+    fetch('/api/id-form/entry?row_id=' + encodeURIComponent(rowId) + '&work_type_id=' + encodeURIComponent(wtId))
+      .then(function (r) { return r.json(); })
+      .then(function (data) { fillFormFromEntry(data.entry); });
+  }
+
+  // Виджет даты (datepicker.js) синхронизирует свой видимый текст с
+  // hidden-инпутом только один раз, при собственной инициализации на
+  // DOMContentLoaded — программная установка .value позже (как здесь)
+  // его не трогает. Мини-версия isoToDmy оттуда же, не меняем сам
+  // datepicker.js ради одного внешнего вызова.
+  function setDatePickerValue(hiddenId, iso) {
+    var hidden = document.getElementById(hiddenId);
+    hidden.value = iso || '';
+    var textEl = hidden.closest('.dm-picker').querySelector('.dm-text');
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || '');
+    textEl.value = m ? (m[3] + '.' + m[2] + '.' + m[1]) : '';
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function fillFormFromEntry(entry) {
+    document.getElementById('f-status').value = entry && entry.status_id ? String(entry.status_id) : '';
+    setDatePickerValue('f-status-date', entry ? entry.status_date : null);
+    setDatePickerValue('f-planned-rsk-date', entry ? entry.planned_rsk_date : null);
+    document.getElementById('f-stop-factor').value = entry && entry.stop_factor ? entry.stop_factor : '';
+    document.getElementById('f-rsk-signer').value = entry && entry.rsk_signer_name ? entry.rsk_signer_name : '';
+    document.getElementById('f-comment').value = entry && entry.comment ? entry.comment : '';
+  }
 
   document.getElementById('f-submit').addEventListener('click', function () {
     var errEl = document.getElementById('f-errors');
@@ -258,26 +281,33 @@
     }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
   });
 
-  document.getElementById('b-submit').addEventListener('click', function () {
-    var errEl = document.getElementById('b-errors');
-    errEl.textContent = '';
-    var rowId = document.getElementById('b-row').value;
-    if (!rowId) { errEl.textContent = 'Выберите раздел.'; return; }
-    postForm('/api/id-block', {
-      row_id: rowId,
-      work_type_id: document.getElementById('b-work-type').value,
-      change_ref: document.getElementById('b-change-ref').value,
-      comment: document.getElementById('b-comment').value,
-    }).then(function (res) {
-      if (res.body.ok) { toast('Блокировка поставлена'); loadRegistry(); }
-      else { errEl.textContent = formatErrors(res); }
-    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
-  });
-
   function unblock(blockId) {
     postForm('/api/id-block/' + blockId + '/unblock', {}).then(function (res) {
       if (res.body.ok) { toast('Блокировка снята'); loadRegistry(); }
       else { toast('Не снято: ' + formatErrors(res), false); }
+    });
+  }
+
+  var registryRows = [];   // последний загруженный срез — для клика по строке
+
+  // Открыть запись реестра в форме выше (координатор, докс "Вопросы к
+  // базе по ТМ-35", п.2, 06.09.2026: "сделать активной запись, чтобы при
+  // нажатии... открывалось окно с ранее введёнными данными"). Ответственный
+  // у кликнутой строки может отличаться от того, что сейчас выбран в форме —
+  // переключаем и его тоже, дожидаясь полной перезагрузки списка разделов
+  // этого человека, прежде чем выбирать конкретный раздел.
+  function openRegistryRow(r) {
+    document.getElementById('f-responsible').value = r.responsible_name;
+    loadResponsible(r.responsible_name).then(function () {
+      var rowSel = document.getElementById('f-row');
+      rowSel.value = String(r.row_id);
+      rowSel.dispatchEvent(new Event('change', { bubbles: true }));
+      if (r.work_type_id) {
+        var wtSel = document.getElementById('f-work-type');
+        wtSel.value = String(r.work_type_id);
+      }
+      maybeLookupEntry();
+      document.getElementById('id-entry-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }
 
@@ -287,14 +317,15 @@
     fetch('/api/id-form/registry?tab_id=0')
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        registryRows = data.rows;
         var body = document.getElementById('registry-body');
         if (!data.rows.length) {
           body.innerHTML = '<tr><td colspan="9" class="empty-note" style="border:none">Записей ещё нет.</td></tr>';
           return;
         }
         var html = '';
-        data.rows.forEach(function (r) {
-          html += '<tr' + (r.block_id ? ' class="row-blocked"' : '') + '>';
+        data.rows.forEach(function (r, i) {
+          html += '<tr class="registry-row' + (r.block_id ? ' row-blocked' : '') + '" data-row-index="' + i + '" tabindex="0">';
           html += '<td>' + r.tab_label + '</td>';
           html += '<td>' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
           html += '<td>' + (r.work_type_name || '—') + '</td>';
@@ -312,8 +343,13 @@
           html += '</tr>';
         });
         body.innerHTML = html;
+        body.querySelectorAll('.registry-row').forEach(function (tr) {
+          var open = function () { openRegistryRow(registryRows[+tr.getAttribute('data-row-index')]); };
+          tr.addEventListener('click', open);
+          tr.addEventListener('keydown', function (e) { if (e.key === 'Enter') open(); });
+        });
         body.querySelectorAll('[data-unblock]').forEach(function (a) {
-          a.addEventListener('click', function (e) { e.preventDefault(); unblock(this.getAttribute('data-unblock')); });
+          a.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); unblock(this.getAttribute('data-unblock')); });
         });
       });
   }

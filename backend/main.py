@@ -4573,6 +4573,11 @@ RU_STOPPER_NOTE = "причина остановки, не стадия конв
 
 RSK_SIGNERS = ["Карась Э.В.", "Зотов М.Н.", "Карпенко Р.В."]
 
+# Стоп-фактор — раньше произвольный текст, координатор попросил закрытый
+# список (докс "Вопросы к базе по ТМ-35", п.3, 06.09.2026): только
+# обстоятельства, не зависящие от ответственного лица целиком.
+ID_STOP_FACTORS = ["нет паспортов", "нет лаборатории", "нет проектного решения", "работы физически не выполнены"]
+
 # Уточнённое ТЗ координатора, 03.09.2026 (докс + прямой список): вкладки
 # без ответственного в исходном xlsx ПТО — их разделы подмешиваются в
 # список «Раздел» независимо от того, кто выбран Ответственным, а не
@@ -4607,7 +4612,7 @@ def id_entry_page(request: Request):
     )
     responsible_names = [r["full_name"] for r in sorted(responsible_rows, key=lambda r: r["display_order"])]
     return render(request, "id_entry.html", "id-entry",
-                  responsible_names=responsible_names, rsk_signers=RSK_SIGNERS)
+                  responsible_names=responsible_names, rsk_signers=RSK_SIGNERS, stop_factors=ID_STOP_FACTORS)
 
 
 @app.get("/api/id-form/by-responsible")
@@ -4708,18 +4713,21 @@ def api_id_form_registry(tab_id: int = 0):
             from id_form_entry
             order by row_id, work_type_id, created_at desc
         )
-        select e.id, e.tab_id, t.label as tab_label, r.section_label, r.construction_label,
-               wt.name as work_type_name, e.responsible_name, s.code as status_code,
+        select e.id, e.tab_id, t.label as tab_label, e.row_id, e.work_type_id,
+               r.section_label, r.construction_label,
+               wt.name as work_type_name, e.responsible_name, e.status_id, s.code as status_code,
                coalesce(s.label, 'статус не задан') as status_label,
                (s.id is null) as status_missing,
                s.is_stopper, e.status_date, e.planned_rsk_date,
                e.rsk_signer_name, e.comment, e.created_at,
+               bl.description as stop_factor,
                b.id as block_id, b.change_ref, b.blocked_at
         from latest e
         join id_form_tab t on t.id = e.tab_id
         join id_form_row r on r.id = e.row_id
         left join id_form_work_type wt on wt.id = e.work_type_id
         left join id_form_status s on s.id = e.status_id
+        left join blocker bl on bl.id = e.blocker_id
         left join id_form_block b on b.row_id = e.row_id
             and (b.work_type_id = e.work_type_id or (b.work_type_id is null and e.work_type_id is null))
             and b.unblocked_at is null
@@ -4730,6 +4738,35 @@ def api_id_form_registry(tab_id: int = 0):
         params,
     )
     return {"rows": rows}
+
+
+# Точечный поиск последней записи по конкретному (раздел, вид работ) —
+# для автоподстановки в форму 1, когда выбирается уже заполнявшийся атом
+# (координатор, докс "Вопросы к базе по ТМ-35", п.1-2, 06.09.2026: раньше
+# форма всегда открывалась пустой, даже если по этому же разделу+виду
+# работ уже что-то вводили). Тот же набор полей, что и в реестре выше, но
+# без лимита в 200 записей и с фильтром по конкретной паре, а не общий срез.
+@app.get("/api/id-form/entry")
+def api_id_form_entry_lookup(row_id: int, work_type_id: str = ""):
+    wt_val = int(work_type_id) if work_type_id.strip() else None
+    row = query_one(
+        """
+        select e.id, e.status_id, s.code as status_code, e.status_date, e.planned_rsk_date,
+               e.rsk_signer_name, e.comment, bl.description as stop_factor,
+               b.id as block_id, b.change_ref
+        from id_form_entry e
+        left join id_form_status s on s.id = e.status_id
+        left join blocker bl on bl.id = e.blocker_id
+        left join id_form_block b on b.row_id = e.row_id
+            and (b.work_type_id = e.work_type_id or (b.work_type_id is null and e.work_type_id is null))
+            and b.unblocked_at is null
+        where e.row_id = %s and (e.work_type_id = %s or (e.work_type_id is null and %s::bigint is null))
+        order by e.created_at desc
+        limit 1
+        """,
+        (row_id, wt_val, wt_val),
+    )
+    return {"entry": row}
 
 
 @app.post("/api/id-entry")
@@ -4815,11 +4852,14 @@ def api_id_entry_create(
     if rsk_signer_val and rsk_signer_val not in RSK_SIGNERS:
         errors.append("Недопустимый подписант РСК.")
 
+    stop_val = stop_factor.strip() or None
+    if stop_val and stop_val not in ID_STOP_FACTORS:
+        errors.append("Недопустимый стоп-фактор — выберите из списка.")
+
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
     user_id = current_user_id_or_web_form()
-    stop_val = stop_factor.strip() or None
     comment_val = comment.strip() or None
 
     def _do(cur):
@@ -4840,6 +4880,46 @@ def api_id_entry_create(
                 (stop_val,),
             )
             blocker_id_val = cur.fetchone()["id"]
+
+            # Автоблокировка при выборе стоп-фактора (координатор, докс
+            # "Вопросы к базе по ТМ-35", п.4, 06.09.2026: "если стоп-фактор
+            # будет активным... и будет производиться блокировка, то не
+            # вижу необходимости в отдельном окне «Блокировка ИЗМ»") —
+            # отдельная форма/окно на странице убраны, id_form_block (тот
+            # же механизм, что раньше ставился только через неё — бейдж
+            # «заблокировано» и ссылка «снять» в реестре, и счётчик
+            # «заблокировано» на дашборде) выставляется отсюда напрямую.
+            # change_ref — не номер ИЗМ (тут его чаще всего нет), а сам
+            # текст причины: понятнее в бейдже реестра, чем пустое
+            # "заблокировано" без пояснения.
+            # Не дублируем: если по этому же (row_id, work_type_id) уже
+            # есть активная блокировка — не плодим вторую, только
+            # обновляем причину/комментарий у существующей.
+            cur.execute(
+                "select id from id_form_block where row_id=%s "
+                "and (work_type_id=%s or (work_type_id is null and %s::bigint is null)) "
+                "and unblocked_at is null",
+                (row_id, wt_id_val, wt_id_val),
+            )
+            existing_block = cur.fetchone()
+            if existing_block:
+                cur.execute(
+                    "update id_form_block set change_ref=%s, comment=%s where id=%s",
+                    (stop_val, comment_val, existing_block["id"]),
+                )
+            else:
+                cur.execute(
+                    "insert into id_form_block (row_id, work_type_id, change_ref, blocked_at, comment, created_by) "
+                    "values (%s,%s,%s, current_date, %s, %s) returning id",
+                    (row_id, wt_id_val, stop_val, comment_val, user_id),
+                )
+                new_block_id = cur.fetchone()["id"]
+                cur.execute(
+                    "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+                    "values (%s, 'id_form_block', %s, 'id_block_set', %s, 'форма /id-entry — автоблокировка по стоп-фактору')",
+                    (user_id, new_block_id, json.dumps(
+                        {"row_id": row_id, "work_type_id": wt_id_val, "change_ref": stop_val}, ensure_ascii=False)),
+                )
 
         # прежнее значение статуса для этого же атома (row_id, work_type_id) — для audit_log.old_value.
         # LEFT JOIN, не JOIN — 30.08.2026: прежняя запись сама могла быть
