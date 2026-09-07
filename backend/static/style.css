@@ -369,6 +369,7 @@ h3 {
 }
 .chart-tooltip.visible { opacity: 1; }
 .chart-tooltip b { font-weight: 700; }
+.chart-tooltip-note { color: #c7cbd1; font-size: .72rem; }
 
 /* Легенды графиков /status (S-кривая, гистограмма, тренд) — класс
    использовался в status.js с самого начала, но НИГДЕ не был описан в
@@ -385,6 +386,15 @@ h3 {
 .chart-legend i {
   display: inline-block; width: .8rem; height: .8rem;
   border-radius: 3px; flex: none;
+}
+/* Форма маркера — по типу серии на графике, не одинаковый квадрат для
+   всего (координатор, 07.09.2026): линия для линий, точка для точек,
+   пунктир рисуется border'ом, не заливкой — background не даёт штрихов. */
+.chart-legend i.legend-line { width: 1rem; height: 3px; border-radius: 2px; }
+.chart-legend i.legend-dot { width: .6rem; height: .6rem; border-radius: 50%; }
+.chart-legend i.legend-dashed {
+  width: 1rem; height: 0; background: none;
+  border-top: 2px dashed currentColor;
 }
 
 .trend-point { cursor: pointer; }

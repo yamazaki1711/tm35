@@ -103,11 +103,7 @@
 </style>
 
 <h1>График производства работ</h1>
-<p class="subtitle">Интерактивная сетка по дням — <span id="gantt-total">…</span> работ, окно дат ниже (не весь диапазон разом).
-Цвет ячейки: <span style="color:var(--accent)">план без факта</span> ·
-<span style="color:var(--ok)">факт ≥ плана</span> · <span style="color:var(--bad)">факт &lt; плана</span> ·
-<span style="color:#a855f7">факт без плана</span>. Строка приглушена — работа завершена. Шифр красным — просрочена
-относительно планового срока. Клик по названию группы — свернуть/развернуть.</p>
+<p class="subtitle">Строка приглушена — работа завершена. Шифр красным — просрочена относительно планового срока. Клик по названию группы — свернуть/развернуть.</p>
 
 <div id="metrics-panel">
   <div class="tile metric-flash" id="m-weighted"><div class="value">…</div><div class="label">Взвешенный прогресс</div></div>
@@ -134,6 +130,13 @@
   <input type="text" id="inp-location" placeholder="участок (например УТ13)">
   <button id="btn-apply">Применить</button>
   <span id="gantt-status"></span>
+</div>
+
+<div class="gantt-legend">
+  <span><span class="legend-swatch" style="background:var(--accent)"></span>план без факта</span>
+  <span><span class="legend-swatch" style="background:var(--ok)"></span>факт ≥ плана</span>
+  <span><span class="legend-swatch" style="background:var(--bad)"></span>факт &lt; плана</span>
+  <span><span class="legend-swatch" style="background:#a855f7"></span>факт без плана</span>
 </div>
 
 <div id="gantt-scroll" {{ 'style="pointer-events:none"' if not can_write }}><div style="padding:1rem;color:var(--muted)">Загрузка…</div></div>

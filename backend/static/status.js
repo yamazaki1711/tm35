@@ -140,10 +140,10 @@
     var legend = document.createElement("div");
     legend.className = "chart-legend";
     legend.innerHTML =
-      '<span><i style="background:' + COLOR_PLAN + '"></i>плановые трудозатраты нарастающим итогом, чел.-дней</span>' +
-      '<span><i style="background:' + COLOR_FACT + '"></i>фактические трудозатраты нарастающим итогом, чел.-дней</span>' +
-      '<span><i style="background:#a855f7"></i>фактически выполнено, чел.-дней</span>' +
-      '<span><i style="background:' + COLOR_FORECAST + '"></i>прогноз при текущем темпе</span>';
+      '<span><i class="legend-line" style="background:' + COLOR_PLAN + '"></i>плановые трудозатраты нарастающим итогом, чел.-дней</span>' +
+      '<span><i class="legend-line" style="background:' + COLOR_FACT + '"></i>фактические трудозатраты нарастающим итогом, чел.-дней</span>' +
+      '<span><i class="legend-dot" style="background:#a855f7"></i>фактически выполнено, чел.-дней</span>' +
+      '<span><i class="legend-dashed" style="border-top-color:' + COLOR_FORECAST + '"></i>прогноз при текущем темпе</span>';
     container.appendChild(legend);
   }
 
@@ -291,7 +291,8 @@
         var showTip = function () {
           tooltip.innerHTML = "<b>" + seriesName + "</b><br>неделя замера: " + fmtDM(toDate(p.week)) +
             "<br>прогноз: " + window.TM35_RU_DATE.fmtDMY(p.forecast_date) +
-            "<br>отклонение: " + dvTxt + " (" + STATUS_LABEL[st] + ")";
+            "<br>отклонение: " + dvTxt + " (" + STATUS_LABEL[st] + ")" +
+            "<br><span class=\"chart-tooltip-note\">на начало недели, задним числом не пересчитывается</span>";
           var rect = dot.getBoundingClientRect();
           tooltip.style.left = (rect.left + rect.width / 2) + "px";
           tooltip.style.top = (rect.top - 10) + "px";
