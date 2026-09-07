@@ -58,7 +58,6 @@
       <div class="kpi-sub">план — {{ crit.baseline_date|dmy if crit.baseline_date else '—' }}</div>
     </div>
   </div>
-  <p class="kpi-hint">Выполнение — данные на {{ evm.last_actual_date|dmy }} · {{ evm.unknown_pct_count }} работ без % выполнения · отставание — 1× значит идём по графику, больше 1× — во столько раз медленнее</p>
   {% endif %}
 
   {# ── Люди ── #}

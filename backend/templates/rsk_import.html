@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Загрузка акта проверки РСК</h1>
-<p class="subtitle">Слой 1 (акт) пишет только эта форма. Слой 2 (отработка) не трогается —
-повторная загрузка не затирает работу ПТО.</p>
 
 {% if errors %}
 <div class="id-form-errors" style="color:var(--c-danger)">{{ errors | join(' ') }}</div>

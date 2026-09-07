@@ -1,9 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Реестр папок ИД</h1>
-<p class="subtitle">Все папки, сформированные из подписанных разделов — и ещё не переданные в СДО, и уже
-переданные. Состав, сумму и подписанта можно менять на странице папки (клик по номеру).
-<a href="/export/id-folders.csv?status={{ status }}" style="margin-left:.75rem">Скачать CSV</a></p>
+<p class="subtitle"><a href="/export/id-folders.csv?status={{ status }}">Скачать CSV</a></p>
 
 {% if request.query_params.get('ok') %}
 <div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>

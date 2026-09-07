@@ -3,8 +3,6 @@
 {% set DQ_LABELS = {'ok': 'ок', 'needs_review': 'проверить'} %}
 {% set DQ_BADGE = {'ok': 'badge-ok', 'needs_review': 'badge-warn'} %}
 <h1>Реестр работ</h1>
-<p class="subtitle">Все {{ rows|length }} работ из графика производства работ, с фильтром по листу-источнику,
-статусу, исполнителю и наименованию.</p>
 
 <form class="filter-bar" method="get" action="/works">
   <label>Источник (лист графика)

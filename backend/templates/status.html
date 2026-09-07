@@ -1,11 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Успеваем?</h1>
-<p class="subtitle">
-Главный экран для заказчика и руководства — тот же принцип, по которому судят о проекте отраслевые
-S-кривые: план и факт трудозатрат нарастающим итогом, темп по факту, во что он выльется по срокам.
-{% if evm.available %}Данные на {{ evm.last_actual_date|dmy }}.{% endif %}
-</p>
+{% if evm.available %}<p class="subtitle">Данные на {{ evm.last_actual_date|dmy }}.</p>{% endif %}
 
 <div class="kpi-row">
   <div class="kpi">

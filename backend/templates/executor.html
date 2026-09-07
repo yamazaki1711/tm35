@@ -1,9 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Обоснование Исполнителя</h1>
-<p class="subtitle">Свод по фактически отработанным дням — сколько всего человек выведено, среднее
-за день, и сколько работ ведётся своими силами против субподряда. Для писем/отчётов заказчику о
-фактически задействованном ресурсе.</p>
 
 <div class="kpi-row kpi-small">
   <div class="kpi"><div class="kpi-num">{{ agg.days_with_data or 0 }}</div><div class="kpi-label">Дней с фактом</div></div>

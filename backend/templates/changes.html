@@ -2,9 +2,7 @@
 {% set CH_LABELS = {'IN_WORK_DESIGNER': 'В работе у проектировщика', 'SOLUTION_RECEIVED': 'Техрешение получено'} %}
 {% block content %}
 <h1>Реестр изменений ПД/РД (ИЗМ)</h1>
-<p class="subtitle">{{ total }} {{ 'активное' if total % 10 == 1 and total % 100 != 11 else 'активных' }} ИЗМ.
-Нормативный срок ответа проектировщика (ДПР):
-14/21/35/49 дней (Уровень 0/1/2/3). Просроченные выделены красным.</p>
+<p class="subtitle">Просроченные выделены красным.</p>
 
 {% if ok %}<div class="flash flash-ok">Сохранено.</div>{% endif %}
 {% if errors %}

@@ -79,7 +79,6 @@
   {% else %}<div class="empty-note">Нет записей факта за эту дату.</div>{% endif %}
 
   <h2>Не выполнено полностью ({{ not_done|length }})</h2>
-  <p class="subtitle">Причина — по закрытому справочнику, если она указана, иначе по тексту комментария.</p>
   {% if not_done %}
   <div class="table-wrap"><table>
   <thead><tr><th>Шифр</th><th>Наименование</th><th>План</th><th>Факт</th><th>Причина</th></tr></thead>
