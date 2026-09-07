@@ -23,6 +23,11 @@
   .status-missing-badge { display: inline-flex; align-items: center; padding: .15rem .5rem; border-radius: 100px;
     background: var(--c-surface-alt); border: 1px dashed var(--c-border-strong); color: var(--c-text-3);
     font-size: .72rem; font-weight: 600; }
+  /* button{display:inline-flex} в style.css перебивает стандартное
+     скрытие [hidden] (тот же случай, что раньше решался точечно для
+     .nav-dropdown-menu) — без этого правила "Показать ещё" был бы виден
+     даже когда показывать больше нечего. */
+  #registry-more[hidden] { display: none; }
   #toast {
     position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-success); color: #fff;
     padding: .6rem 1rem; border-radius: var(--r-sm); font-size: .88rem; font-weight: 600;
@@ -93,8 +98,55 @@
   <button type="button" id="f-submit" data-hotkey-save style="margin-top:1rem">Сохранить запись</button>
 </form>
 
-<h3>Текущее состояние (последние 200 записей) <a href="#" id="registry-refresh" style="font-size:.8rem;font-weight:500">обновить</a></h3>
+<h3>Блокировка ИЗМ</h3>
+<p class="subtitle">Признак, не статус — при блокировке текущий статус раздела сохраняется, после снятия
+работа продолжается с того же места. Отдельно от стоп-фактора выше: стоп-фактор ставит блокировку
+автоматически при сохранении записи (см. подсказку под полем), эта форма — для случая, когда
+привязка к конкретному ИЗМ нужна отдельно, без изменения статуса раздела.</p>
+<form class="form-box" id="id-block-form" method="post" style="max-width:520px;">
+  <div class="id-form-grid">
+    <label>Раздел (тот же выбор, что в форме выше)
+      <select id="b-row" disabled><option value="">— сначала ответственный выше —</option></select>
+    </label>
+    <label>Вид работ (опционально)
+      <select id="b-work-type" disabled><option value="">— весь раздел —</option></select>
+    </label>
+    <label>Номер/название ИЗМ
+      <input type="text" id="b-change-ref" placeholder="например, ИЗМ-19-КЖ">
+    </label>
+    <label>Комментарий
+      <input type="text" id="b-comment">
+    </label>
+  </div>
+  <div class="id-form-errors" id="b-errors"></div>
+  <button type="button" id="b-submit" data-hotkey-save style="margin-top:1rem" class="btn-secondary">Поставить блокировку</button>
+</form>
+
+<h3>Текущее состояние <a href="#" id="registry-refresh" style="font-size:.8rem;font-weight:500">обновить</a></h3>
 <p class="subtitle">Нажмите на строку, чтобы открыть её в форме выше и дозаполнить или исправить.</p>
+<form class="filter-bar" id="registry-filters" data-current-user="{{ current_user.full_name if current_user else '' }}">
+  <label>Ответственный
+    <select id="rf-responsible">
+      <option value="">— все —</option>
+      {% for n in responsible_names %}
+      <option value="{{ n }}">{{ n }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Вид работ
+    <select id="rf-work-type">
+      <option value="">— все —</option>
+      {% for wt in work_type_names %}
+      <option value="{{ wt }}">{{ wt }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Раздел
+    <input type="text" id="rf-section" placeholder="поиск по названию">
+  </label>
+  <button type="submit">Применить</button>
+</form>
+<p class="subtitle" id="registry-count"></p>
 <div class="table-wrap">
 <table>
   <thead><tr><th>Вкладка</th><th>Раздел</th><th>Вид работ</th><th>Статус</th>
@@ -102,6 +154,7 @@
   <tbody id="registry-body"><tr><td colspan="9" style="text-align:center;color:var(--c-text-3)">Загрузка…</td></tr></tbody>
 </table>
 </div>
+<button type="button" id="registry-more" style="margin-top:.75rem" hidden>Показать ещё</button>
 
 <div id="toast"></div>
 
@@ -185,9 +238,11 @@
           tab.rows.forEach(function (r) { rowTabIndex[r.id] = tab; });
         });
         fillRowSelectGrouped(document.getElementById('f-row'), data.tabs, '— выбрать —');
+        fillRowSelectGrouped(document.getElementById('b-row'), data.tabs, '— выбрать —');
         // Раздел ещё не выбран — вид работ/статус/кнопка подписи снова закрыты.
         fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
         fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
+        fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
       });
   }
 
@@ -212,6 +267,15 @@
   });
 
   document.getElementById('f-work-type').addEventListener('change', maybeLookupEntry);
+
+  document.getElementById('b-row').addEventListener('change', function () {
+    var tab = rowTabIndex[this.value];
+    if (!tab) {
+      fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
+      return;
+    }
+    fillSelect(document.getElementById('b-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— весь раздел —');
+  });
 
   // Автоподстановка ранее введённых данных (координатор, докс "Вопросы к
   // базе по ТМ-35", п.1, 06.09.2026): при выборе уже заполнявшегося
@@ -281,6 +345,22 @@
     }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
   });
 
+  document.getElementById('b-submit').addEventListener('click', function () {
+    var errEl = document.getElementById('b-errors');
+    errEl.textContent = '';
+    var rowId = document.getElementById('b-row').value;
+    if (!rowId) { errEl.textContent = 'Выберите раздел.'; return; }
+    postForm('/api/id-block', {
+      row_id: rowId,
+      work_type_id: document.getElementById('b-work-type').value,
+      change_ref: document.getElementById('b-change-ref').value,
+      comment: document.getElementById('b-comment').value,
+    }).then(function (res) {
+      if (res.body.ok) { toast('Блокировка поставлена'); loadRegistry(); }
+      else { errEl.textContent = formatErrors(res); }
+    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+  });
+
   function unblock(blockId) {
     postForm('/api/id-block/' + blockId + '/unblock', {}).then(function (res) {
       if (res.body.ok) { toast('Блокировка снята'); loadRegistry(); }
@@ -311,50 +391,100 @@
     });
   }
 
-  function loadRegistry() {
-    // Вкладка больше не выбирается отдельным полем — реестр всегда
-    // показывает общий срез по всем 17 вкладкам (было: фильтр по f-tab).
-    fetch('/api/id-form/registry?tab_id=0')
+  var REGISTRY_PAGE_SIZE = 50;
+  var registryOffset = 0;
+  var registryTotal = 0;
+
+  function registryRowHtml(r, i) {
+    var html = '<tr class="registry-row' + (r.block_id ? ' row-blocked' : '') + '" data-row-index="' + i + '" tabindex="0">';
+    html += '<td>' + r.tab_label + '</td>';
+    html += '<td>' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
+    html += '<td>' + (r.work_type_name || '—') + '</td>';
+    html += '<td>' + (r.status_missing ? '<span class="status-missing-badge">статус не задан</span>' : r.status_label) + '</td>';
+    html += '<td>' + r.responsible_name + '</td>';
+    html += '<td>' + TM35_RU_DATE.fmtDMY(r.status_date) + '</td>';
+    html += '<td>' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
+    html += '<td>' + (r.rsk_signer_name || '—') + '</td>';
+    if (r.block_id) {
+      html += '<td><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
+        + '<a href="#" data-unblock="' + r.block_id + '">снять</a></td>';
+    } else {
+      html += '<td>—</td>';
+    }
+    html += '</tr>';
+    return html;
+  }
+
+  // data-wired — «Показать ещё» дозаписывает строки в тот же body, не
+  // перерисовывая уже показанные; без этой отметки повторный вызов
+  // навешивал бы на старые строки второй одинаковый обработчик клика.
+  function wireRegistryRowEvents(body) {
+    body.querySelectorAll('.registry-row:not([data-wired])').forEach(function (tr) {
+      tr.setAttribute('data-wired', '1');
+      var open = function () { openRegistryRow(registryRows[+tr.getAttribute('data-row-index')]); };
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', function (e) { if (e.key === 'Enter') open(); });
+    });
+    body.querySelectorAll('[data-unblock]:not([data-wired])').forEach(function (a) {
+      a.setAttribute('data-wired', '1');
+      a.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); unblock(this.getAttribute('data-unblock')); });
+    });
+  }
+
+  function currentRegistryFilters() {
+    return {
+      responsible_name: document.getElementById('rf-responsible').value,
+      work_type_name: document.getElementById('rf-work-type').value,
+      section_query: document.getElementById('rf-section').value.trim(),
+    };
+  }
+
+  // Замечание Болтика В.Н., 07.09.2026, п.5: снят жёсткий лимит 200,
+  // список читается страницами (append=true — «Показать ещё», без
+  // append — новый запрос с начала после смены фильтра). Фильтр по
+  // умолчанию — на самого пользователя (см. вызов loadRegistry ниже):
+  // именно свои записи он проверяет после выходных, а не общий поток.
+  function loadRegistry(append) {
+    var offset = append ? registryOffset : 0;
+    var f = currentRegistryFilters();
+    var qs = new URLSearchParams({
+      tab_id: '0', offset: String(offset), limit: String(REGISTRY_PAGE_SIZE),
+      responsible_name: f.responsible_name, work_type_name: f.work_type_name, section_query: f.section_query,
+    });
+    fetch('/api/id-form/registry?' + qs.toString())
       .then(function (r) { return r.json(); })
       .then(function (data) {
-        registryRows = data.rows;
+        registryTotal = data.total;
+        registryOffset = data.offset + data.rows.length;
+        registryRows = append ? registryRows.concat(data.rows) : data.rows;
         var body = document.getElementById('registry-body');
-        if (!data.rows.length) {
+        var countEl = document.getElementById('registry-count');
+        var moreBtn = document.getElementById('registry-more');
+        if (!registryRows.length) {
           body.innerHTML = '<tr><td colspan="9" class="empty-note" style="border:none">Записей ещё нет.</td></tr>';
+          countEl.textContent = 'Найдено: 0';
+          moreBtn.hidden = true;
           return;
         }
-        var html = '';
-        data.rows.forEach(function (r, i) {
-          html += '<tr class="registry-row' + (r.block_id ? ' row-blocked' : '') + '" data-row-index="' + i + '" tabindex="0">';
-          html += '<td>' + r.tab_label + '</td>';
-          html += '<td>' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
-          html += '<td>' + (r.work_type_name || '—') + '</td>';
-          html += '<td>' + (r.status_missing ? '<span class="status-missing-badge">статус не задан</span>' : r.status_label) + '</td>';
-          html += '<td>' + r.responsible_name + '</td>';
-          html += '<td>' + TM35_RU_DATE.fmtDMY(r.status_date) + '</td>';
-          html += '<td>' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
-          html += '<td>' + (r.rsk_signer_name || '—') + '</td>';
-          if (r.block_id) {
-            html += '<td><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
-              + '<a href="#" data-unblock="' + r.block_id + '">снять</a></td>';
-          } else {
-            html += '<td>—</td>';
-          }
-          html += '</tr>';
-        });
-        body.innerHTML = html;
-        body.querySelectorAll('.registry-row').forEach(function (tr) {
-          var open = function () { openRegistryRow(registryRows[+tr.getAttribute('data-row-index')]); };
-          tr.addEventListener('click', open);
-          tr.addEventListener('keydown', function (e) { if (e.key === 'Enter') open(); });
-        });
-        body.querySelectorAll('[data-unblock]').forEach(function (a) {
-          a.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); unblock(this.getAttribute('data-unblock')); });
-        });
+        if (append) {
+          var startIndex = registryRows.length - data.rows.length;
+          var html = '';
+          data.rows.forEach(function (r, i) { html += registryRowHtml(r, startIndex + i); });
+          body.insertAdjacentHTML('beforeend', html);
+        } else {
+          var html2 = '';
+          data.rows.forEach(function (r, i) { html2 += registryRowHtml(r, i); });
+          body.innerHTML = html2;
+        }
+        wireRegistryRowEvents(body);
+        countEl.textContent = 'Показано ' + registryRows.length + ' из ' + registryTotal;
+        moreBtn.hidden = registryOffset >= registryTotal;
       });
   }
 
-  document.getElementById('registry-refresh').addEventListener('click', function (e) { e.preventDefault(); loadRegistry(); });
+  document.getElementById('registry-refresh').addEventListener('click', function (e) { e.preventDefault(); loadRegistry(false); });
+  document.getElementById('registry-filters').addEventListener('submit', function (e) { e.preventDefault(); loadRegistry(false); });
+  document.getElementById('registry-more').addEventListener('click', function () { loadRegistry(true); });
 
   // Дата статуса по умолчанию — сегодня.
   var today = new Date();
@@ -362,7 +492,17 @@
   document.getElementById('f-status-date').value = iso;
   document.getElementById('f-status-date').dispatchEvent(new Event('change', { bubbles: true }));
 
-  loadRegistry();
+  // По умолчанию реестр показывает записи текущего пользователя, если его
+  // ФИО есть среди «Ответственных за ввод данных» — именно свои записи он
+  // и проверяет после выходных (п.5 замечаний). Иначе (координатор,
+  // анонимный просмотр) — общий срез без фильтра, как раньше.
+  var CURRENT_USER_NAME = document.getElementById('registry-filters').dataset.currentUser || '';
+  var rfResponsible = document.getElementById('rf-responsible');
+  if (CURRENT_USER_NAME && Array.prototype.some.call(rfResponsible.options, function (o) { return o.value === CURRENT_USER_NAME; })) {
+    rfResponsible.value = CURRENT_USER_NAME;
+  }
+
+  loadRegistry(false);
 })();
 </script>
 {% endblock %}

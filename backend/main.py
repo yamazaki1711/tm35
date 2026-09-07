@@ -4401,8 +4401,15 @@ RSK_SIGNERS = ["Карась Э.В.", "Зотов М.Н.", "Карпенко Р.
 
 # Стоп-фактор — раньше произвольный текст, координатор попросил закрытый
 # список (докс "Вопросы к базе по ТМ-35", п.3, 06.09.2026): только
-# обстоятельства, не зависящие от ответственного лица целиком.
-ID_STOP_FACTORS = ["нет паспортов", "нет лаборатории", "нет проектного решения", "работы физически не выполнены"]
+# обстоятельства, не зависящие от ответственного лица целиком. Замечание
+# Болтика В.Н. 07.09.2026 — справочник должен пополняться без правки кода,
+# поэтому значения переехали из константы в таблицу id_stop_factor
+# (миграция 026); функция читает её каждый раз, не кэширует — таблица
+# из нескольких строк, лишний запрос дешевле риска показать устаревший
+# список после правки координатором через БД напрямую.
+def get_stop_factors():
+    rows = query("select description from id_stop_factor where active order by display_order, id")
+    return [r["description"] for r in rows]
 
 # Уточнённое ТЗ координатора, 03.09.2026 (докс + прямой список): вкладки
 # без ответственного в исходном xlsx ПТО — их разделы подмешиваются в
@@ -4437,8 +4444,14 @@ def id_entry_page(request: Request):
         "order by full_name, display_order"
     )
     responsible_names = [r["full_name"] for r in sorted(responsible_rows, key=lambda r: r["display_order"])]
+    # Список видов работ для фильтра реестра (замечание Болтика В.Н.,
+    # 07.09.2026, п.5) — общий по всем вкладкам, названия иногда
+    # совпадают между вкладками (например, "Земляные работы"), это
+    # ожидаемо: фильтр по имени, не по конкретной вкладке.
+    work_type_names = [r["name"] for r in query("select distinct name from id_form_work_type order by name")]
     return render(request, "id_entry.html", "id-entry",
-                  responsible_names=responsible_names, rsk_signers=RSK_SIGNERS, stop_factors=ID_STOP_FACTORS)
+                  responsible_names=responsible_names, rsk_signers=RSK_SIGNERS,
+                  stop_factors=get_stop_factors(), work_type_names=work_type_names)
 
 
 @app.get("/api/id-form/by-responsible")
@@ -4529,11 +4542,37 @@ def api_id_form_tab_data(tab_id: int):
 
 
 @app.get("/api/id-form/registry")
-def api_id_form_registry(tab_id: int = 0):
-    where = "where e.tab_id=%s" if tab_id else ""
-    params = (tab_id,) if tab_id else ()
-    rows = query(
-        f"""
+def api_id_form_registry(
+    tab_id: int = 0, responsible_name: str = "", work_type_name: str = "",
+    section_query: str = "", offset: int = 0, limit: int = 50,
+):
+    # Замечание Болтика В.Н., 07.09.2026, п.5: с жёстким лимитом 200
+    # человек после выходного не мог понять, весь ли объём перед глазами —
+    # к моменту, когда он начинал ввод, уже накапливалось 200 чужих
+    # записей. Заменено на фильтры (ответственный/вид работ/раздел) +
+    # постраничную выдачу с общим числом найденного — сервер отдаёт
+    # ровно один экран (limit, по умолчанию 50), а не всё разом.
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    conditions = []
+    params = []
+    if tab_id:
+        conditions.append("e.tab_id=%s")
+        params.append(tab_id)
+    if responsible_name:
+        conditions.append("e.responsible_name=%s")
+        params.append(responsible_name)
+    if work_type_name:
+        conditions.append("wt.name=%s")
+        params.append(work_type_name)
+    if section_query:
+        conditions.append("(r.section_label ilike %s or r.construction_label ilike %s)")
+        like = f"%{section_query}%"
+        params.extend([like, like])
+    where = ("where " + " and ".join(conditions)) if conditions else ""
+
+    base_sql = f"""
         with latest as (
             select distinct on (row_id, work_type_id) *
             from id_form_entry
@@ -4558,12 +4597,13 @@ def api_id_form_registry(tab_id: int = 0):
             and (b.work_type_id = e.work_type_id or (b.work_type_id is null and e.work_type_id is null))
             and b.unblocked_at is null
         {where}
-        order by e.created_at desc
-        limit 200
-        """,
-        params,
+    """
+    total = query_one(f"select count(*) as n from ({base_sql}) sub", tuple(params))["n"]
+    rows = query(
+        base_sql + " order by e.created_at desc limit %s offset %s",
+        tuple(params) + (limit, offset),
     )
-    return {"rows": rows}
+    return {"rows": rows, "total": total, "offset": offset, "limit": limit}
 
 
 # Точечный поиск последней записи по конкретному (раздел, вид работ) —
@@ -4679,7 +4719,7 @@ def api_id_entry_create(
         errors.append("Недопустимый подписант РСК.")
 
     stop_val = stop_factor.strip() or None
-    if stop_val and stop_val not in ID_STOP_FACTORS:
+    if stop_val and stop_val not in get_stop_factors():
         errors.append("Недопустимый стоп-фактор — выберите из списка.")
 
     if errors:
