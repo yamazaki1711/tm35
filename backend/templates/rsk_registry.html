@@ -26,9 +26,8 @@
 </style>
 
 <h1>Реестр предписаний РСК</h1>
-<p class="subtitle">Слой 1 (акт) только для чтения — правится через загрузку нового акта. Категория,
-выполнение и ответственный — слой 2; категорию можно менять прямо здесь, остальное — в
-<a href="/rsk/processing">«Отработке предписаний»</a>.
+<p class="subtitle">Слой 1 (акт) только для чтения — правится через загрузку нового акта. Треки и
+ответственный — слой 2, редактируется в <a href="/rsk/processing">«Отработке предписаний»</a>.
 <a href="/export/rsk.csv" style="margin-left:.75rem">Скачать CSV</a></p>
 
 <form class="filter-bar" method="get">
@@ -40,19 +39,27 @@
       {% endfor %}
     </select>
   </label>
-  <label>Категория
-    <select name="category">
+  <label>Физика
+    <select name="track_phys">
       <option value="">— все —</option>
-      {% for code, label in ru_category.items() if code != 'unknown' %}
-      <option value="{{ code }}" {{ 'selected' if f_category==code }}>{{ label }}</option>
+      {% for code, label in ru_track.items() %}
+      <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Выполнение
-    <select name="status">
+  <label>Проект
+    <select name="track_design">
       <option value="">— все —</option>
-      {% for code, label in ru_status_value.items() if code != 'unknown' %}
-      <option value="{{ code }}" {{ 'selected' if f_status==code }}>{{ label }}</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_design==code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>ИД
+    <select name="track_id_">
+      <option value="">— все —</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_id==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
@@ -90,7 +97,9 @@
       <th>№</th>
       <th>Суть нарушения</th>
       <th>Статус</th>
-      <th>Категория</th>
+      <th>Физика</th>
+      <th>Проект</th>
+      <th>ИД</th>
       <th class="nowrap">Проверка</th>
       <th class="nowrap">Срок</th>
       <th class="nowrap">Устранено</th>
@@ -105,22 +114,9 @@
         <span class="rsk-clamp">{{ r.content }}</span>
       </td>
       <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
-      <td>
-        {% if can_edit_rsk %}
-        <form class="inline-edit" method="post" action="/api/rsk-processing/category">
-          <input type="hidden" name="sys_no" value="{{ r.sys_no }}">
-          <input type="hidden" name="return_qs" value="{{ return_qs }}">
-          <select name="category" onchange="this.form.submit()">
-            <option value="" {{ 'selected' if r.category=='unknown' }}>—</option>
-            {% for code, label in ru_category.items() if code != 'unknown' %}
-            <option value="{{ code }}" {{ 'selected' if r.category==code }}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </form>
-        {% else %}
-        {{ ru_category.get(r.category, r.category) }}
-        {% endif %}
-      </td>
+      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
+      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
+      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
       <td class="nowrap">{{ r.act_date|fmt_dmy if r.act_date else '—' }}</td>
       <td class="nowrap">{{ r.due_date|fmt_dmy if r.due_date else '—' }}</td>
       <td class="nowrap">{{ r.closed_act_date|fmt_dmy if r.closed_act_date else '—' }}</td>

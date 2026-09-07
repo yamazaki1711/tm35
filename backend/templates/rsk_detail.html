@@ -27,8 +27,9 @@
 <h3>Слой 2 — отработка</h3>
 {% if processing %}
 <div class="form-box" style="max-width:900px">
-  <p><b>Категория:</b> {{ ru_category.get(processing.category, '—') }}
-     · <b>Выполнение:</b> {{ ru_status_value.get(processing.status, '—') }}</p>
+  <p><b>Физика:</b> {{ ru_track.get(processing.track_phys, processing.track_phys) }}
+     · <b>Проект:</b> {{ ru_track.get(processing.track_design, processing.track_design) }}
+     · <b>ИД:</b> {{ ru_track.get(processing.track_id, processing.track_id) }}</p>
   <p><b>Ответственные:</b>
     {% for r in responsibles if r.id in responsible_ids %}{{ r.name }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}
   </p>
@@ -38,18 +39,5 @@
 </div>
 {% else %}
 <p class="empty-note">Отработка ещё не заведена — <a href="/rsk/processing?sys_no={{ v.sys_no }}">начать →</a></p>
-{% endif %}
-
-<h3>Связанные разделы ИД</h3>
-{% if linked_rows %}
-<ul>
-  {% for r in linked_rows %}
-  <li>{{ r.tab_label }} — {{ r.section_label or r.construction_label or ('#' ~ r.id) }}</li>
-  {% endfor %}
-</ul>
-<p class="subtitle">Предписание снимется автоматически после принятия этих разделов (докс координатора) —
-механика ещё не реализована, связь пока только информационная.</p>
-{% else %}
-<p class="empty-note">Не привязано ни к одному разделу ИД.</p>
 {% endif %}
 {% endblock %}

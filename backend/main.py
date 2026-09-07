@@ -3566,8 +3566,7 @@ ID_ROW_LIST_SQL = """
     )
     select r.id, t.label as tab_label, r.section_label,
            resp.full_name as responsible_name,
-           s.label as status_label, le.status_date, le.rsk_signer_name,
-           (select count(*) from rsk_processing_id_row pir where pir.id_form_row_id = r.id) as rsk_count
+           s.label as status_label, le.status_date, le.rsk_signer_name
     from id_form_row r
     join id_form_tab t on t.id = r.tab_id
     left join id_form_responsible resp
@@ -4924,19 +4923,20 @@ def api_id_block_unset(request: Request, block_id: int):
 #   слой 1 (акт, неизменяемый) — rsk_act/rsk_act_item/rsk_violation;
 #     пишет только импорт (/rsk/import), больше никто и никогда.
 #   слой 2 (отработка, изменяемый людьми) — rsk_processing + m2m
-#     (rsk_processing_responsible, rsk_processing_id_row); пишет только
-#     форма /rsk/processing. Повторный импорт акта слой 2 не трогает.
-# =======================================================================
-
-# Было три независимых трека (Физика/Проект/ИД) с общим набором значений
-# каждый. Координатор 07.09.2026: у нарушения одна категория, не три
-# параллельных статуса — "не треб." для двух из трёх больше не нужно,
-# категория просто не выбрана, если к ней нарушение не относится.
-RU_RSK_CATEGORY = {"phys": "Физика", "design": "Проект", "id": "ИД", "unknown": "—"}
-# "факт" осмысленно только для категории "phys" (работы выполнены с
-# отступлением от проекта, нужна корректировка РД) — проверяется и
-# check-constraint'ом в БД (миграция 025), не только в форме.
-RU_RSK_STATUS_VALUE = {"not_done": "не вып.", "done": "вып.", "fact": "факт (нужна корр. РД)", "unknown": "—"}
+#     (rsk_processing_responsible); пишет только форма /rsk/processing.
+#     Повторный импорт акта слой 2 не трогает.
+#
+# Три независимых трека — Физика/Проект/ИД, каждый со своим набором
+# значений, не единая категория+статус (откат 07.09.2026: замена на
+# категорию+статус, миграция 025, была самодеятельностью — координатор
+# не согласовывал схлопывание, см. KNOWN_ISSUES). "Факт" осмысленно
+# только у track_phys (работы выполнены с отступлением от проекта,
+# нужна корректировка РД — задача для ДПР, не синоним "выполнено") —
+# поэтому у track_design/track_id в справочнике его нет вовсе.
+RU_RSK_TRACK = {
+    "not_required": "не треб.", "not_done": "не вып.", "done": "вып.",
+    "fact": "факт (нужна корр. РД)", "unknown": "—",
+}
 
 # "Латералим" последнюю по акту позицию каждого нарушения — от акта к
 # акту формулировка может меняться, актуальная = из последнего акта, где
@@ -4957,8 +4957,9 @@ RSK_LIST_SELECT_SQL = f"""
            i.content, i.remedy, i.due_date, i.is_repeat, i.control_section,
            a.act_no, a.act_date,
            ca.act_date as closed_act_date,
-           coalesce(p.category, 'unknown') as category,
-           coalesce(p.status, 'unknown') as status,
+           coalesce(p.track_phys, 'unknown') as track_phys,
+           coalesce(p.track_design, 'unknown') as track_design,
+           coalesce(p.track_id, 'unknown') as track_id,
            coalesce(p.rejected, false) as rejected,
            p.id as processing_id, p.planned_close_date, p.comment as processing_comment,
            cc.label as close_condition_label,
@@ -4974,14 +4975,15 @@ RSK_LIST_SELECT_SQL = f"""
 
 def rsk_pseudo_status(row):
     """Статус для отображения — вычисляется, не хранится (докс: "статусы
-    из [комментария] не выводить"; здесь то же самое, но из категории+статуса)."""
+    из [комментария] не выводить"; здесь то же самое, но из треков)."""
     if not row["is_active"]:
         return "closed"
     if row["rejected"]:
         return "rejected"
-    if row["status"] == "done":
+    if row["track_phys"] in ("done", "not_required") and row["track_design"] in ("done", "not_required") \
+            and row["track_id"] in ("done", "not_required"):
         return "ready"
-    if row["status"] == "fact":
+    if row["track_phys"] == "fact":
         return "needs_rd"
     return "open"
 
@@ -4997,30 +4999,26 @@ RSK_STATUS_BADGE = {
 
 
 @app.get("/rsk")
-def rsk_registry_page(request: Request, responsible: str = "", category: str = "",
-                       status: str = "", act_no: str = "",
-                       is_repeat: str = "", state: str = "", id_row: str = ""):
+def rsk_registry_page(request: Request, responsible: str = "", track_phys: str = "",
+                       track_design: str = "", track_id_: str = "", act_no: str = "",
+                       is_repeat: str = "", state: str = ""):
     where = ["1=1"]
     params = []
-    if id_row.strip():
-        # Обратная связь из /id-packages ("закроет предписаний РСК").
-        where.append(
-            "p.id is not null and exists (select 1 from rsk_processing_id_row pir2 "
-            "where pir2.processing_id = p.id and pir2.id_form_row_id = %s)"
-        )
-        params.append(int(id_row))
     if responsible.strip():
         where.append(
             "p.id is not null and exists (select 1 from rsk_processing_responsible pr3 "
             "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
         )
         params.append(int(responsible))
-    if category.strip():
-        where.append("coalesce(p.category, 'unknown') = %s")
-        params.append(category)
-    if status.strip():
-        where.append("coalesce(p.status, 'unknown') = %s")
-        params.append(status)
+    if track_phys.strip():
+        where.append("coalesce(p.track_phys, 'unknown') = %s")
+        params.append(track_phys)
+    if track_design.strip():
+        where.append("coalesce(p.track_design, 'unknown') = %s")
+        params.append(track_design)
+    if track_id_.strip():
+        where.append("coalesce(p.track_id, 'unknown') = %s")
+        params.append(track_id_)
     if act_no.strip():
         where.append("a.act_no = %s")
         params.append(act_no.strip())
@@ -5038,15 +5036,12 @@ def rsk_registry_page(request: Request, responsible: str = "", category: str = "
 
     responsibles = query("select id, name from rsk_responsible order by id")
     acts = query("select distinct act_no from rsk_act order by act_no desc")
-    can_edit_rsk = has_permission(request.state.user, "rsk:submit")
 
     return render(request, "rsk_registry.html", "rsk-registry",
                   rows=rows, total=len(rows), responsibles=responsibles, acts=acts,
-                  ru_category=RU_RSK_CATEGORY, ru_status_value=RU_RSK_STATUS_VALUE,
-                  ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE, can_edit_rsk=can_edit_rsk,
-                  f_responsible=responsible, f_category=category, f_status=status,
-                  f_act_no=act_no, f_is_repeat=is_repeat, f_state=state,
-                  return_qs=str(request.url.query))
+                  ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
+                  f_responsible=responsible, f_track_phys=track_phys, f_track_design=track_design,
+                  f_track_id=track_id_, f_act_no=act_no, f_is_repeat=is_repeat, f_state=state)
 
 
 @app.get("/export/rsk.csv")
@@ -5054,14 +5049,15 @@ def export_rsk_csv():
     rows = query(RSK_LIST_SELECT_SQL + " order by v.sys_no")
     out = [
         (r["sys_no"], RU_RSK_STATUS.get(rsk_pseudo_status(r), ""), r["content"], r["responsible_names"],
-         RU_RSK_CATEGORY.get(r["category"], ""), RU_RSK_STATUS_VALUE.get(r["status"], ""),
+         RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
+         RU_RSK_TRACK.get(r["track_id"], ""),
          r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]), _csv_dmy(r["closed_act_date"]),
          "да" if r["is_repeat"] else "нет")
         for r in rows
     ]
     return _csv_response(
         "rsk_registry.csv",
-        ["№", "Статус", "Содержание", "Ответственные", "Категория", "Выполнение",
+        ["№", "Статус", "Содержание", "Ответственные", "Физика", "Проект", "ИД",
          "Акт", "Проверка", "Срок", "Устранено", "Повторно"],
         out,
     )
@@ -5075,9 +5071,11 @@ def compute_rsk_dashboard_stats():
     tiles = query_one(f"""
         select
             count(*) filter (where v.is_active) as total_active,
-            count(*) filter (where v.is_active and p.status = 'done') as ready_to_close,
+            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') in ('done','not_required')
+                and coalesce(p.track_design,'unknown') in ('done','not_required')
+                and coalesce(p.track_id,'unknown') in ('done','not_required')) as ready_to_close,
             count(*) filter (where v.is_active and cc.code = 'id_priniatie') as blocked_by_id,
-            count(*) filter (where v.is_active and p.status = 'fact') as needs_rd,
+            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') = 'fact') as needs_rd,
             count(*) filter (where v.is_active and coalesce(p.rejected, false)) as rejected
         {RSK_LIST_BASE_SQL}
     """) or {}
@@ -5118,31 +5116,25 @@ def rsk_violation_detail(request: Request, sys_no: int):
     latest = items[0] if items else None
     processing = query_one("select * from rsk_processing where violation_id=%s", (v["id"],))
     responsible_ids = set()
-    linked_rows = []
     if processing:
         responsible_ids = {
             r["responsible_id"] for r in
             query("select responsible_id from rsk_processing_responsible where processing_id=%s",
                   (processing["id"],))
         }
-        linked_rows = query(
-            "select r.id, r.section_label, r.construction_label, t.label as tab_label "
-            "from rsk_processing_id_row pir "
-            "join id_form_row r on r.id = pir.id_form_row_id join id_form_tab t on t.id = r.tab_id "
-            "where pir.processing_id=%s",
-            (processing["id"],),
-        )
     close_conditions = query("select id, label from rsk_close_condition order by id")
     responsibles = query("select id, name from rsk_responsible order by id")
 
     return render(request, "rsk_detail.html", "rsk-registry",
                   v=v, items=items, latest=latest, processing=processing,
-                  responsible_ids=responsible_ids, linked_rows=linked_rows,
+                  responsible_ids=responsible_ids,
                   close_conditions=close_conditions, responsibles=responsibles,
-                  ru_category=RU_RSK_CATEGORY, ru_status_value=RU_RSK_STATUS_VALUE,
+                  ru_track=RU_RSK_TRACK,
                   status_key=rsk_pseudo_status({**(latest or {}), "is_active": v["is_active"],
                                                  "rejected": processing["rejected"] if processing else False,
-                                                 "status": processing["status"] if processing else "unknown"}),
+                                                 "track_phys": processing["track_phys"] if processing else "unknown",
+                                                 "track_design": processing["track_design"] if processing else "unknown",
+                                                 "track_id": processing["track_id"] if processing else "unknown"}),
                   ru_status=RU_RSK_STATUS)
 
 
@@ -5156,11 +5148,10 @@ def rsk_violation_detail(request: Request, sys_no: int):
 
 @app.get("/rsk/processing")
 def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str = "",
-                         f_category: str = "", f_status: str = ""):
+                         f_track_phys: str = "", f_track_design: str = "", f_track_id: str = ""):
     v = None
     processing = None
     responsible_ids = set()
-    linked_row_ids = set()
     if sys_no.strip():
         try:
             v = query_one("select * from rsk_violation where sys_no=%s", (int(sys_no),))
@@ -5181,11 +5172,6 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
                     query("select responsible_id from rsk_processing_responsible where processing_id=%s",
                           (processing["id"],))
                 }
-                linked_row_ids = {
-                    r["id_form_row_id"] for r in
-                    query("select id_form_row_id from rsk_processing_id_row where processing_id=%s",
-                          (processing["id"],))
-                }
 
     where = ["1=1"]
     params = []
@@ -5195,12 +5181,15 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
             "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
         )
         params.append(int(f_responsible))
-    if f_category.strip():
-        where.append("coalesce(p.category, 'unknown') = %s")
-        params.append(f_category)
-    if f_status.strip():
-        where.append("coalesce(p.status, 'unknown') = %s")
-        params.append(f_status)
+    if f_track_phys.strip():
+        where.append("coalesce(p.track_phys, 'unknown') = %s")
+        params.append(f_track_phys)
+    if f_track_design.strip():
+        where.append("coalesce(p.track_design, 'unknown') = %s")
+        params.append(f_track_design)
+    if f_track_id.strip():
+        where.append("coalesce(p.track_id, 'unknown') = %s")
+        params.append(f_track_id)
     where.append("v.is_active")
     rows = query(RSK_LIST_SELECT_SQL + " where " + " and ".join(where) + " order by v.sys_no desc limit 200",
                  tuple(params))
@@ -5209,29 +5198,21 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
 
     responsibles = query("select id, name from rsk_responsible order by id")
     close_conditions = query("select id, label from rsk_close_condition order by id")
-    id_tabs = query("select id, label from id_form_tab order by label")
-    id_rows_by_tab = {}
-    for t in id_tabs:
-        id_rows_by_tab[t["label"]] = query(
-            "select id, section_label, construction_label from id_form_row where tab_id=%s order by source_row",
-            (t["id"],),
-        )
 
     return render(request, "rsk_processing.html", "rsk-processing",
-                  v=v, processing=processing, responsible_ids=responsible_ids, linked_row_ids=linked_row_ids,
+                  v=v, processing=processing, responsible_ids=responsible_ids,
                   rows=rows, responsibles=responsibles, close_conditions=close_conditions,
-                  id_rows_by_tab=id_rows_by_tab, ru_category=RU_RSK_CATEGORY, ru_status_value=RU_RSK_STATUS_VALUE,
-                  ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
-                  f_responsible=f_responsible, f_category=f_category, f_status=f_status)
+                  ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
+                  f_responsible=f_responsible, f_track_phys=f_track_phys,
+                  f_track_design=f_track_design, f_track_id=f_track_id)
 
 
 @app.post("/api/rsk-processing")
 def api_rsk_processing_upsert(
     request: Request, sys_no: int = Form(...),
-    category: str = Form(""), status: str = Form(""),
+    track_phys: str = Form("unknown"), track_design: str = Form("unknown"), track_id_: str = Form("unknown"),
     responsible_ids: list[int] = Form(default=[]), close_condition_id: str = Form(""),
     planned_close_date: str = Form(""), rejected: str = Form(""), comment: str = Form(""),
-    id_row_ids: list[int] = Form(default=[]),
 ):
     if not has_permission(request.state.user, "rsk:submit"):
         return RedirectResponse(
@@ -5243,17 +5224,6 @@ def api_rsk_processing_upsert(
         return RedirectResponse(url="/rsk/processing?err=" + urllib.parse.quote("Нарушение не найдено."),
                                  status_code=303)
 
-    cat_val = category if category in ("phys", "design", "id") else None
-    status_val = status if status in ("not_done", "done", "fact") else None
-    # "факт" осмысленно только для категории "phys" — та же проверка, что
-    # в БД (check-constraint, миграция 025), но с понятной ошибкой вместо
-    # сырого psycopg2-исключения.
-    if status_val == "fact" and cat_val != "phys":
-        return RedirectResponse(
-            url=f"/rsk/processing?sys_no={sys_no}&err=" +
-                urllib.parse.quote("«Факт (нужна корр. РД)» возможен только для категории «Физика»."),
-            status_code=303,
-        )
     cc_val = int(close_condition_id) if close_condition_id.strip() else None
     planned_val = _parse_date(planned_close_date) if planned_close_date.strip() else None
     rejected_val = rejected == "1"
@@ -5264,17 +5234,17 @@ def api_rsk_processing_upsert(
         cur.execute(
             """
             insert into rsk_processing
-                (violation_id, category, status, close_condition_id,
+                (violation_id, track_phys, track_design, track_id, close_condition_id,
                  planned_close_date, rejected, comment, updated_ts)
-            values (%s,%s,%s,%s,%s,%s,%s, now())
+            values (%s,%s,%s,%s,%s,%s,%s,%s, now())
             on conflict (violation_id) do update set
-                category=excluded.category, status=excluded.status,
-                close_condition_id=excluded.close_condition_id,
+                track_phys=excluded.track_phys, track_design=excluded.track_design,
+                track_id=excluded.track_id, close_condition_id=excluded.close_condition_id,
                 planned_close_date=excluded.planned_close_date, rejected=excluded.rejected,
                 comment=excluded.comment, updated_ts=now()
             returning id
             """,
-            (v["id"], cat_val, status_val, cc_val, planned_val, rejected_val, comment_val),
+            (v["id"], track_phys, track_design, track_id_, cc_val, planned_val, rejected_val, comment_val),
         )
         processing_id = cur.fetchone()["id"]
 
@@ -5286,73 +5256,18 @@ def api_rsk_processing_upsert(
                 (processing_id, rid),
             )
 
-        cur.execute("delete from rsk_processing_id_row where processing_id=%s", (processing_id,))
-        for rid in id_row_ids:
-            cur.execute(
-                "insert into rsk_processing_id_row (processing_id, id_form_row_id) values (%s,%s) "
-                "on conflict do nothing",
-                (processing_id, rid),
-            )
-
         cur.execute(
             "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
             "values (%s, 'rsk_processing', %s, 'rsk_processing_update', %s, 'форма /rsk/processing')",
             (user_id, processing_id, json.dumps(
-                {"sys_no": sys_no, "category": cat_val, "status": status_val}, ensure_ascii=False)),
+                {"sys_no": sys_no, "track_phys": track_phys, "track_design": track_design,
+                 "track_id": track_id_}, ensure_ascii=False)),
         )
         return processing_id
 
     run_in_transaction(_do)
     ok_msg = urllib.parse.quote(f"Отработка нарушения №{sys_no} сохранена.")
     return RedirectResponse(url=f"/rsk/processing?sys_no={sys_no}&ok={ok_msg}", status_code=303)
-
-
-# Инлайн-редактирование категории прямо в реестре /rsk (координатор,
-# 07.09.2026) — не открывая полную форму «Отработка предписаний». Меняет
-# только category; если категория уходит от "phys", а статус был "факт" —
-# статус сбрасывается сам (иначе рабочий check-constraint базы не даст
-# сохранить несовместимую пару, и вместо понятного результата инженер
-# увидел бы сырую ошибку).
-@app.post("/api/rsk-processing/category")
-def api_rsk_category_inline(request: Request, sys_no: int = Form(...), category: str = Form(""),
-                             return_qs: str = Form("")):
-    redirect_base = "/rsk" + (f"?{return_qs}" if return_qs else "")
-    if not has_permission(request.state.user, "rsk:submit"):
-        sep = "&" if return_qs else "?"
-        return RedirectResponse(
-            url=f"{redirect_base}{sep}err=" + urllib.parse.quote("Нет доступа к отработке предписаний РСК."),
-            status_code=303,
-        )
-    v = query_one("select id from rsk_violation where sys_no=%s", (sys_no,))
-    if not v:
-        return RedirectResponse(url="/rsk?err=" + urllib.parse.quote("Нарушение не найдено."), status_code=303)
-    cat_val = category if category in ("phys", "design", "id") else None
-    user_id = current_user_id_or_web_form()
-
-    def _do(cur):
-        cur.execute(
-            """
-            insert into rsk_processing (violation_id, category, updated_ts)
-            values (%s, %s, now())
-            on conflict (violation_id) do update set
-                category = excluded.category,
-                status = case when rsk_processing.status = 'fact' and excluded.category is distinct from 'phys'
-                              then null else rsk_processing.status end,
-                updated_ts = now()
-            returning id
-            """,
-            (v["id"], cat_val),
-        )
-        processing_id = cur.fetchone()["id"]
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
-            "values (%s, 'rsk_processing', %s, 'rsk_category_inline', %s, 'реестр /rsk, инлайн')",
-            (user_id, processing_id, json.dumps({"sys_no": sys_no, "category": cat_val}, ensure_ascii=False)),
-        )
-        return processing_id
-
-    run_in_transaction(_do)
-    return RedirectResponse(url=redirect_base, status_code=303)
 
 
 # ---------------------------------------------------------------------

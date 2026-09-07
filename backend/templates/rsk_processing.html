@@ -9,9 +9,6 @@
   }
   .rsk-checkbox-row { display: flex; flex-wrap: wrap; gap: .8rem; }
   .rsk-checkbox-row label { flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; }
-  .rsk-id-rows { max-height: 220px; overflow-y: auto; border: 1px solid var(--c-border-strong);
-    border-radius: var(--r-sm); padding: .6rem .8rem; background: var(--c-surface); }
-  .rsk-id-rows optgroup { font-weight: 700; }
   tr.rsk-row-selected td { background: var(--c-primary-bg); }
 </style>
 
@@ -36,19 +33,24 @@
   <input type="hidden" name="sys_no" value="{{ v.sys_no }}">
 
   <div class="rsk-form-grid">
-    <label>Категория
-      <select name="category">
-        <option value="" {{ 'selected' if not processing or not processing.category }}>— не задано —</option>
-        {% for code, label in ru_category.items() if code != 'unknown' %}
-        <option value="{{ code }}" {{ 'selected' if processing and processing.category==code }}>{{ label }}</option>
+    <label>Физика
+      <select name="track_phys">
+        {% for code, label in ru_track.items() %}
+        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_phys==code) or (not processing and code=='unknown') }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
-    <label>Выполнение
-      <select name="status">
-        <option value="" {{ 'selected' if not processing or not processing.status }}>— не задано —</option>
-        {% for code, label in ru_status_value.items() if code != 'unknown' %}
-        <option value="{{ code }}" {{ 'selected' if processing and processing.status==code }}>{{ label }}</option>
+    <label>Проект
+      <select name="track_design">
+        {% for code, label in ru_track.items() if code != 'fact' %}
+        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_design==code) or (not processing and code=='unknown') }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>ИД
+      <select name="track_id_">
+        {% for code, label in ru_track.items() if code != 'fact' %}
+        <option value="{{ code }}" {{ 'selected' if (processing and processing.track_id==code) or (not processing and code=='unknown') }}>{{ label }}</option>
         {% endfor %}
       </select>
     </label>
@@ -82,18 +84,6 @@
     </div>
   </label>
 
-  <label style="display:block;margin-top:1rem;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Разделы ИД, которые закроют это предписание
-    <select name="id_row_ids" multiple class="rsk-id-rows" style="width:100%;margin-top:.4rem">
-      {% for tab_label, tab_rows in id_rows_by_tab.items() %}
-      <optgroup label="{{ tab_label }}">
-        {% for r in tab_rows %}
-        <option value="{{ r.id }}" {{ 'selected' if r.id in linked_row_ids }}>{{ r.section_label or r.construction_label or ('#' ~ r.id) }}</option>
-        {% endfor %}
-      </optgroup>
-      {% endfor %}
-    </select>
-  </label>
-
   <label style="display:block;margin-top:1rem;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Комментарий
     <textarea name="comment" style="width:100%;min-height:3.2rem;margin-top:.4rem">{{ processing.comment or '' }}</textarea>
   </label>
@@ -113,19 +103,27 @@
       {% endfor %}
     </select>
   </label>
-  <label>Категория
-    <select name="f_category">
+  <label>Физика
+    <select name="f_track_phys">
       <option value="">— все —</option>
-      {% for code, label in ru_category.items() if code != 'unknown' %}
-      <option value="{{ code }}" {{ 'selected' if f_category==code }}>{{ label }}</option>
+      {% for code, label in ru_track.items() %}
+      <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Выполнение
-    <select name="f_status">
+  <label>Проект
+    <select name="f_track_design">
       <option value="">— все —</option>
-      {% for code, label in ru_status_value.items() if code != 'unknown' %}
-      <option value="{{ code }}" {{ 'selected' if f_status==code }}>{{ label }}</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_design==code }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>ИД
+    <select name="f_track_id">
+      <option value="">— все —</option>
+      {% for code, label in ru_track.items() if code != 'fact' %}
+      <option value="{{ code }}" {{ 'selected' if f_track_id==code }}>{{ label }}</option>
       {% endfor %}
     </select>
   </label>
@@ -134,7 +132,7 @@
 
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>№</th><th>Содержание</th><th>Статус</th><th>Категория</th><th>Ответственный</th></tr></thead>
+  <thead><tr><th>№</th><th>Содержание</th><th>Статус</th><th>Физика</th><th>Проект</th><th>ИД</th><th>Ответственный</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr class="{{ 'rsk-row-selected' if v and v.sys_no==r.sys_no }}" style="cursor:pointer"
@@ -142,7 +140,9 @@
       <td class="mono">{{ r.sys_no }}</td>
       <td style="max-width:380px">{{ r.content[:120] }}{{ '…' if r.content and r.content|length > 120 }}</td>
       <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
-      <td>{{ ru_category.get(r.category, r.category) }}</td>
+      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
+      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
+      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
       <td>{{ r.responsible_names }}</td>
     </tr>
     {% endfor %}
