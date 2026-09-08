@@ -24,6 +24,21 @@
   <button type="submit">Сохранить</button>
 </form>
 
+<h3>Дата создания папки</h3>
+<form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/date" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
+  <label style="flex:1">Дата создания
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" name="folder_date" value="{{ folder.folder_date.isoformat() if folder.folder_date else '' }}">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <button type="submit">Сохранить</button>
+</form>
+<p class="kpi-hint">Меняет дату во всех местах, где она показывается — в подписи выше, в списке
+папок, в реестре и в выгрузке CSV. Ни в один расчёт дата не входит.</p>
+
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ rows_in_folder|length }}</div>

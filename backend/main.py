@@ -3999,7 +3999,39 @@ def api_id_folder_amount(request: Request, folder_id: int, amount_rub: str = For
     run_in_transaction(
         lambda cur: cur.execute("update id_folder set amount_rub=%s where id=%s", (amt, folder_id))
     )
-    ok_msg = urllib.parse.quote(f"Сумма папки сохранена: {'{:,.2f}'.format(amt).replace(',', ' ')} ₽.")
+    # Была точка вместо запятой в этом флеш-сообщении — тот же паттерн,
+    # что уже правился в шаблонах (координатор, 08.09.2026), просто не
+    # в Jinja-фильтре, а в Python-строке; заодно поймал по пути.
+    ok_msg = urllib.parse.quote(f"Сумма папки сохранена: {_ru_money(amt)} ₽.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
+
+
+@app.post("/api/id-folder/{folder_id}/date")
+def api_id_folder_date(request: Request, folder_id: int, folder_date: str = Form(...)):
+    # Доступно и после передачи в СДО (координатор, 08.09.2026) — дата
+    # создания папки не участвует ни в одном расчёте (проверено: только
+    # отображение в /id-folders, /id-folders/registry, /export/
+    # id-folders.csv и подписи на этой странице — все читают живьём из
+    # id_folder.folder_date на каждый запрос, ничего не кэширует и не
+    # пересчитывает от неё производных значений), поэтому запрет на
+    # правку после передачи был бы искусственным ограничением, не
+    # диктуемым логикой.
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    date_val = _parse_date(folder_date)
+    if not date_val:
+        return RedirectResponse(
+            url=back_url + "?err=" + urllib.parse.quote("Дата создания указана некорректно."),
+            status_code=303,
+        )
+    run_in_transaction(
+        lambda cur: cur.execute("update id_folder set folder_date=%s where id=%s", (date_val, folder_id))
+    )
+    ok_msg = urllib.parse.quote(f"Дата создания папки сохранена: {_dmy(date_val)}.")
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
