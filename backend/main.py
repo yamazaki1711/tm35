@@ -630,6 +630,29 @@ def _work_status_expr(alias="w"):
     )
 
 
+CHANGE_RESOLVED_STATUSES = ('SOLUTION_RECEIVED', 'IKS_ORDER', 'INCLUDED_IN_RD', 'ARCHIVED')
+
+
+def _change_overdue_expr(alias=""):
+    """Единственное определение просрочки ИЗМ — вычисляется от
+    CURRENT_DATE на каждый запрос, не читает столбец change.overdue_days:
+    тот пересчитывался только в момент правки записи или смены статуса
+    (main.py, api_change_update_status/changes_post), между событиями не
+    менялся — тот же диагноз, что был у work.status (координатор,
+    08.09.2026, аудит целостности). NULL — если ответ уже получен, ИЗМ
+    в терминальном статусе, или срок ответа ещё не наступил; иначе —
+    число дней просрочки."""
+    p = f"{alias}." if alias else ""
+    resolved = ",".join(f"'{s}'" for s in CHANGE_RESOLVED_STATUSES)
+    return (
+        f"(case when {p}actual_response_date is not null "
+        f"or {p}status in ({resolved}) "
+        f"or {p}planned_response_date is null "
+        f"or {p}planned_response_date >= current_date "
+        f"then null else (current_date - {p}planned_response_date) end)"
+    )
+
+
 def get_remaining_effort():
     """
     Остаток трудоёмкости (чел-дни) ТОЛЬКО по работам с реальной
@@ -4026,12 +4049,13 @@ def api_manual_volume_delete(request: Request, volume_id: int):
 @app.get("/changes")
 def changes_page(request: Request):
     rows = query(
-        "select id, code, section_code, topic, status, designer_name, request_date, sla_days, "
-        "planned_response_date, actual_response_date, overdue_days, escalation_level, blocked_amount_rub "
+        f"select id, code, section_code, topic, status, designer_name, request_date, sla_days, "
+        f"planned_response_date, actual_response_date, {_change_overdue_expr()} as overdue_days, "
+        f"escalation_level, blocked_amount_rub "
         "from change order by blocked_amount_rub desc nulls last, request_date nulls last"
     )
     total = len(rows) if rows else 0
-    overdue = sum(1 for r in rows if r['overdue_days'] and r['overdue_days'] > 0) if rows else 0
+    overdue = sum(1 for r in rows if r['overdue_days']) if rows else 0
     can_edit = has_permission(request.state.user, "changes:submit")
     return render(request, "changes.html", "changes",
                   changes=rows or [], total=total, overdue=overdue, errors=[], values={}, can_edit=can_edit)
@@ -4156,12 +4180,13 @@ def changes_post(
 
     def _render_error():
         rows = query(
-            "select code, section_code, topic, status, designer_name, request_date, sla_days, "
-            "planned_response_date, actual_response_date, overdue_days, escalation_level, blocked_amount_rub "
+            f"select code, section_code, topic, status, designer_name, request_date, sla_days, "
+            f"planned_response_date, actual_response_date, {_change_overdue_expr()} as overdue_days, "
+            f"escalation_level, blocked_amount_rub "
             "from change order by blocked_amount_rub desc nulls last"
         )
         total = len(rows) if rows else 0
-        overdue = sum(1 for r in rows if r['overdue_days'] and r['overdue_days'] > 0) if rows else 0
+        overdue = sum(1 for r in rows if r['overdue_days']) if rows else 0
         return render(request, "changes.html", "changes",
                       changes=rows or [], total=total, overdue=overdue,
                       errors=errors, values={
@@ -4429,10 +4454,10 @@ def home_v2(request: Request):
         where t.code not in ('opv', 'n')
     """) or {"total": 0, "signed": 0, "blocked": 0}
 
-    change_stats_row = query_one("""
-        select 
+    change_stats_row = query_one(f"""
+        select
             count(*) as total,
-            count(*) filter (where overdue_days is not null and overdue_days > 0) as overdue
+            count(*) filter (where {_change_overdue_expr()} is not null) as overdue
         from change
         where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
     """) or {"total": 0, "overdue": 0}
