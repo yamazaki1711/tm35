@@ -288,9 +288,13 @@ main {
 
 /* ── Заголовки ── */
 h1 {
-  font-size: 1.8rem;
+  /* Было 1.8rem — по чек-листу редизайна 09.09.2026 "заголовкам не хватает
+     веса": подняли размер и трекинг, чтобы h1 держал страницу, а не терялся
+     на фоне плотных плиток ниже. Единственный размер, от ширины окна не
+     зависит (правило проекта). */
+  font-size: 2.05rem;
   font-weight: 800;
-  letter-spacing: -.03em;
+  letter-spacing: -.035em;
   color: var(--c-text);
   margin-bottom: .35rem;
 }
@@ -335,6 +339,107 @@ h3 {
 /* ── Дашборд: заголовок ── */
 .dash-header { margin-bottom: 1.75rem; }
 
+/* ── Дашборд: панели контуров (09.09.2026, второй проход редизайна) ──
+   Три раздела "Обзор СМР/ИД/РСК" раньше были одинаковыми плоскими
+   блоками, различимыми только текстом заголовка — координатор
+   справедливо указал, что после первой правки (шрифт+лого) страница
+   выглядит "так же". Здесь — не косметика поверх плиток, а структура:
+   каждый контур получает свою карточку-панель с цветной планкой сверху
+   и иконкой у заголовка, цвет — уже существующие семантические токены
+   (не новые), переиспользованы как опознавательные, не декоративные:
+   СМР — --c-primary (как и весь остальной сайт), ИД — --c-success
+   (раздел про закрытие/подписание), РСК — --c-warning (надзор,
+   внимание). Класс narrower — только для home.html, обычный
+   .dash-section (calculator.html) не затронут, потому что не несёт
+   этого класса. */
+.contour-panel {
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-border);
+  border-top: 4px solid var(--section-accent, var(--c-primary));
+  border-radius: var(--r-lg);
+  padding: 1.75rem 1.75rem 2rem;
+  box-shadow: var(--shadow-sm);
+}
+.contour-panel--smr { --section-accent: var(--c-primary); --section-accent-bg: var(--c-primary-bg); }
+.contour-panel--id  { --section-accent: var(--c-success); --section-accent-bg: var(--c-success-bg); }
+.contour-panel--rsk { --section-accent: var(--c-warning); --section-accent-bg: var(--c-warning-bg); }
+.contour-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: .75rem 1rem; margin-bottom: 1.25rem;
+}
+.contour-panel-head-main { display: flex; align-items: center; gap: .75rem; }
+.contour-panel-icon {
+  width: 2.5rem; height: 2.5rem; border-radius: var(--r-md); flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--section-accent-bg, var(--c-primary-bg));
+  color: var(--section-accent, var(--c-primary));
+}
+.contour-panel-icon svg.icon { width: 1.3rem; height: 1.3rem; }
+.contour-panel h2 { margin: 0; font-size: 1.15rem; }
+/* Быстрый доступ внутри панели — иконки в цвет контура, а не всегда
+   синие: тот же компонент .qn-item, что и везде на сайте, но здесь
+   переиспользует цвет своей панели через --section-accent. Вне
+   .contour-panel ничего не меняется — упадёт обратно на var(--c-primary). */
+.contour-panel .qn-icon {
+  background: var(--section-accent-bg, var(--c-primary-bg));
+  color: var(--section-accent, var(--c-primary));
+}
+.contour-panel .qn-item:hover {
+  border-color: var(--section-accent, var(--c-primary-light));
+  color: var(--section-accent, var(--c-primary));
+}
+.contour-panel .qn-item:hover .qn-icon {
+  background: var(--section-accent, var(--c-primary));
+  color: #fff;
+}
+
+/* ── Дашборд: "кольцо" итогового процента (09.09.2026) — раньше
+   "Выполнено работ" была четвёртой из четырёх одинаковых плиток подряд
+   (самый частый шаблонный вид по чек-листу редизайна: "три-четыре
+   одинаковые карточки в ряд"). Главный показатель контура вынесен
+   отдельно, асимметрично, с реальным акцентом — остальные три
+   показателя того же блока рядом, компактным списком, а не такими же
+   плитками. Кольцо — чистый CSS conic-gradient, без библиотек и JS;
+   размер фиксированный (не зависит от ширины окна, правило проекта). */
+.hero-progress {
+  display: flex; align-items: center; gap: 1.75rem; flex-wrap: wrap;
+  background: var(--c-surface); border: 1px solid var(--c-border);
+  border-radius: var(--r-lg); padding: 1.5rem 1.75rem;
+  box-shadow: var(--shadow-sm); margin-top: 1.25rem;
+}
+.hero-ring {
+  --ring-pct: 0;
+  --ring-color: var(--c-primary);
+  width: 7.5rem; height: 7.5rem; border-radius: 50%; flex: none;
+  background: conic-gradient(var(--ring-color) calc(var(--ring-pct) * 1%), var(--c-border-strong) 0);
+  display: flex; align-items: center; justify-content: center;
+}
+.hero-ring-hole {
+  width: 5.7rem; height: 5.7rem; border-radius: 50%; background: var(--c-surface);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 0 .3rem;
+}
+.hero-ring-num {
+  font-size: 1.55rem; font-weight: 800; letter-spacing: -.02em;
+  color: var(--c-text); line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.hero-ring-label { font-size: .875rem; color: var(--c-text-3); margin-top: .15rem; line-height: 1.2; }
+.hero-stats { display: flex; flex-direction: column; gap: .65rem; flex: 1 1 240px; min-width: 240px; }
+.hero-stat {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+  padding-bottom: .55rem; border-bottom: 1px solid var(--c-border);
+}
+.hero-stat:last-child { border-bottom: none; padding-bottom: 0; }
+.hero-stat-label { font-size: .875rem; color: var(--c-text-2); font-weight: 500; }
+.hero-stat-value {
+  font-size: 1.05rem; font-weight: 700; color: var(--c-text);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.hero-stat-value.ok { color: var(--c-success); }
+.hero-stat-value.warn { color: var(--c-warning); }
+.hero-stat-value.danger { color: var(--c-danger); }
+.hero-stat-sub { font-size: .875rem; color: var(--c-text-3); font-weight: 500; white-space: normal; margin-left: .4rem; }
+
 /* ── Дашборд: KPI ряд ── */
 .kpi-row {
   display: grid;
@@ -343,6 +448,12 @@ h3 {
   margin-bottom: 1.75rem;
 }
 .kpi {
+  /* min-width:0 — без этого грид-колонка не может сжаться уже минимальной
+     ширины содержимого (умолчание grid-item — min-width:auto = min-content),
+     и длинное неразрывное значение (сумма в рублях) раздувает всю строку
+     плиток шире экрана вместо того, чтобы просто не поместиться в СВОЮ
+     плитку. Найдено 09.09.2026 при проверке адаптивности телефона/планшета. */
+  min-width: 0;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -802,6 +913,19 @@ code {
   th, td { padding: .45rem; font-size: .82rem; }
   .form-box { padding: 1rem; }
   .report-doc { padding: 1.25rem; }
+
+  /* Панели контуров и "кольцо" прогресса (09.09.2026) — тот же принцип,
+     что и у остального сайта в этом блоке: не другая типографика, а
+     свои фиксированные отступы/размеры под узкий экран, чтобы иконка
+     заголовка и кольцо не съедали половину ширины телефона/планшета
+     в портретной ориентации. */
+  .contour-panel { padding: 1.25rem 1.1rem 1.5rem; }
+  .contour-panel-icon { width: 2.1rem; height: 2.1rem; }
+  .contour-panel-icon svg.icon { width: 1.1rem; height: 1.1rem; }
+  .contour-panel h2 { font-size: 1.05rem; }
+  .hero-progress { padding: 1.25rem 1rem; gap: 1.25rem; justify-content: center; }
+  .hero-ring { margin: 0 auto; }
+  .hero-stats { min-width: 0; width: 100%; }
 }
 
 /* Подписи и шеврон убираем только на реально узких телефонах (найдено
@@ -815,6 +939,14 @@ code {
 @media (max-width: 460px) {
   nav a .nav-label, .nav-dropdown-trigger .nav-label { display: none; }
   .nav-dropdown-trigger .chevron { display: none; }
+
+  /* Плитки KPI — на такой ширине даже 2 колонки (768px правило выше)
+     оставляют ~140px на плитку, куда не влезает длинная неразрывная сумма
+     в рублях ("4 034 906 188,25" и т.п., правило проекта — атомарное
+     значение не переносится). Один столбец на самых узких телефонах —
+     плитка получает всю ширину экрана, значению есть куда поместиться.
+     Найдено 09.09.2026 на "Остаток в деньгах" (блок "Выполнение", ИД). */
+  .kpi-row { grid-template-columns: 1fr; }
 }
 
 /* Подготовка пилота, 30.08.2026 — /losses (шаблон был только локально,
