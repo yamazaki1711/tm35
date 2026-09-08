@@ -3666,12 +3666,23 @@ def api_existing_entry(work_id: int, date: str):
     }
 
 
-ID_ROW_LIST_SQL = """
-    with latest as (
+# Единственное определение "последней записи id_form_entry по разделу" —
+# раньше было переписано заново отдельно в ID_ROW_LIST_SQL, в
+# id_stats_row (main.py, home_v2) и в compute_id_folder_stats()
+# (последняя — вообще другой техникой, EXISTS+max(created_at)) — три
+# независимых SQL-реализации одного и того же вопроса "какой сейчас
+# статус у раздела" (координатор, 08.09.2026, аудит целостности; на
+# момент проверки все три совпадали — 163, но это не гарантия на
+# будущее без общего текста).
+LATEST_ID_FORM_ENTRY_CTE = """
+    with latest_id_entry as (
         select distinct on (row_id) row_id, status_id, status_date, rsk_signer_name
         from id_form_entry
         order by row_id, created_at desc
     )
+"""
+
+ID_ROW_LIST_SQL = LATEST_ID_FORM_ENTRY_CTE + """
     select r.id, t.label as tab_label, r.section_label,
            resp.full_name as responsible_name,
            s.label as status_label, le.status_date, le.rsk_signer_name
@@ -3679,7 +3690,7 @@ ID_ROW_LIST_SQL = """
     join id_form_tab t on t.id = r.tab_id
     left join id_form_responsible resp
         on resp.tab_id = t.id and resp.role = 'Ответственный за ввод данных'
-    left join latest le on le.row_id = r.id
+    left join latest_id_entry le on le.row_id = r.id
     left join id_form_status s on s.id = le.status_id
     where t.code not in ('opv', 'n')
     order by t.label, r.source_row
@@ -3766,12 +3777,11 @@ def compute_id_folder_stats():
         "where t.code not in ('opv','n')"
     )["n"]
     signed_total = query_one(
+        LATEST_ID_FORM_ENTRY_CTE +
         "select count(*) as n from id_form_row r join id_form_tab t on t.id=r.tab_id "
-        "where t.code not in ('opv','n') and exists ("
-        "  select 1 from id_form_entry e join id_form_status s on s.id=e.status_id "
-        "  where e.row_id=r.id and s.code='Подписано' "
-        "  and e.created_at = (select max(created_at) from id_form_entry e2 where e2.row_id=r.id)"
-        ")"
+        "join latest_id_entry le on le.row_id=r.id "
+        "join id_form_status s on s.id=le.status_id "
+        "where t.code not in ('opv','n') and s.code='Подписано'"
     )["n"]
     # "Остаток неподписанных разделов" (координатор, докс D5) — буквально
     # разделы, которые ещё не в статусе «Подписано», а не «подписанные,
@@ -3819,7 +3829,10 @@ def id_folders_registry_page(request: Request, status: str = "all", sort: str = 
         "folders_count": len(folders),
         "transferred_count": sum(1 for f in folders if f["sdo_transfer_date"]),
         "amount_total": sum(float(f["amount_sum"] or 0) for f in folders),
-        "amount_transferred": sum(float(f["amount_sum"] or 0) for f in folders if f["sdo_transfer_date"]),
+        # Та же сумма, что signed_folders_sum в compute_id_folder_stats()
+        # (координатор, 08.09.2026) — раньше считалась второй раз, в
+        # Python, по тому же условию sdo_transfer_date is not null.
+        "amount_transferred": float(compute_id_folder_stats()["signed_folders_sum"]),
     }
 
     if status == "formed":
@@ -4430,12 +4443,7 @@ def home_v2(request: Request):
     # "Подписано" — по последней записи id_form_entry этого раздела, статус
     # с кодом id_form_status.code='Подписано'; "заблокировано" — активная
     # (unblocked_at is null) блокировка ИЗМ через id_form_block.
-    id_stats_row = query_one("""
-        with latest as (
-            select distinct on (row_id) row_id, status_id
-            from id_form_entry
-            order by row_id, created_at desc
-        )
+    id_stats_row = query_one(LATEST_ID_FORM_ENTRY_CTE + """
         select
             count(*) as total,
             count(*) filter (
@@ -4449,7 +4457,7 @@ def home_v2(request: Request):
             ) as blocked
         from id_form_row r
         join id_form_tab t on t.id = r.tab_id
-        left join latest le on le.row_id = r.id
+        left join latest_id_entry le on le.row_id = r.id
         left join id_form_status s on s.id = le.status_id
         where t.code not in ('opv', 'n')
     """) or {"total": 0, "signed": 0, "blocked": 0}
@@ -4469,10 +4477,20 @@ def home_v2(request: Request):
 
     crit = get_criticality_data()
     evm = get_evm_data()
+    # "Отставание от графика" — раньше считалось инлайн в Jinja
+    # (home.html), показатель без функции-владельца (координатор,
+    # 08.09.2026, аудит целостности). Формула не изменилась, только
+    # переехала в Python рядом с остальными расчётами этой страницы.
+    schedule_lag_ratio = (
+        crit["elapsed_pct"] / evm["weighted_pct"]
+        if crit.get("elapsed_pct") is not None and evm.get("weighted_pct")
+        else None
+    )
 
     return render(
         request, "home.html", "dashboard",
         works_total=works_total, by_status=by_status,
+        schedule_lag_ratio=schedule_lag_ratio,
         needs_review=needs_review, unresolved=unresolved,
         avg_pct=avg_pct, last_actual_date=last_actual_date,
         today_totals=today_totals, top_comments=top_comments,

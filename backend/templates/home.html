@@ -47,8 +47,7 @@
       <div class="kpi-sub">{% if crit.elapsed_days is not none %}{{ crit.elapsed_days }} из {{ crit.total_days }} дн.{% else %}нет планового срока{% endif %}</div>
     </div>
     <div class="kpi">
-      {% set ratio = (crit.elapsed_pct / evm.weighted_pct) if (crit.elapsed_pct is not none and evm.weighted_pct) else None %}
-      <div class="kpi-num {% if ratio and ratio > 1.5 %}danger{% elif ratio and ratio > 1.1 %}warn{% elif ratio and ratio <= 1.0 %}ok{% endif %}">{{ '×%.1f'|format(ratio) if ratio is not none else '—' }}</div>
+      <div class="kpi-num {% if schedule_lag_ratio and schedule_lag_ratio > 1.5 %}danger{% elif schedule_lag_ratio and schedule_lag_ratio > 1.1 %}warn{% elif schedule_lag_ratio and schedule_lag_ratio <= 1.0 %}ok{% endif %}">{{ '×%.1f'|format(schedule_lag_ratio) if schedule_lag_ratio is not none else '—' }}</div>
       <div class="kpi-label">Отставание от графика</div>
       <div class="kpi-sub">сделано {{ evm.weighted_pct }}% при {{ crit.elapsed_pct if crit.elapsed_pct is not none else '—' }}% срока</div>
     </div>
