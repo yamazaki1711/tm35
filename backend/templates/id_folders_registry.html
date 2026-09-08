@@ -64,7 +64,7 @@
       <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
       <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td>{{ f.row_count }}</td>
-      <td>{{ f.amount_sum or 0|ru_money }}</td>
+      <td>{{ (f.amount_sum or 0)|ru_money }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
       <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td>
