@@ -1183,13 +1183,13 @@ def get_lookahead_works(today, horizon_days=14):
     """
     end = today + timedelta(days=horizon_days)
     rows = query(
-        """
+        f"""
         select w.id, w.code, w.name, w.location, w.executor_type, w.subcontractor_id, bs.plan_start
         from work w
         join baseline_schedule bs on bs.work_id = w.id
         where bs.plan_start between %s and %s
           and bs.confidence in ('high', 'medium')
-          and w.status = 'not_started'
+          and {_work_status_expr()} = 'not_started'
         order by bs.plan_start, w.code
         """,
         (today, end),
@@ -1215,8 +1215,8 @@ def get_critical_rule_works(today, directive_deadline, trudoemkost_by_work, last
     одной работы вместо всего проекта).
     """
     works = query(
-        """
-        select w.id, w.code, w.name, w.fact_pct, w.status, bs.plan_finish
+        f"""
+        select w.id, w.code, w.name, w.fact_pct, {_work_status_expr()} as status, bs.plan_finish
         from work w
         join baseline_schedule bs on bs.work_id = w.id
         where bs.plan_finish is not null and bs.confidence in ('high', 'medium')
@@ -1567,12 +1567,17 @@ def critical(request: Request):
 
 @app.get("/works")
 def works(request: Request, source: str = "", status: str = "", executor_type: str = "", q: str = ""):
-    sql = "select code, source, location, name, unit, status, executor_type, fact_pct, fact_pct_raw, data_quality_flag from work where true"
+    # Статус — вычисляется из fact_pct (_work_status_expr), не читает
+    # столбец work.status (координатор, 08.09.2026, аудит целостности:
+    # /works и /dashboard одновременно показывали разные распределения
+    # по одному и тому же критерию).
+    status_expr = _work_status_expr(None)
+    sql = f"select code, source, location, name, unit, {status_expr} as status, executor_type, fact_pct, fact_pct_raw, data_quality_flag from work where true"
     params = []
     if source:
         sql += " and source=%s"; params.append(source)
     if status:
-        sql += " and status=%s"; params.append(status)
+        sql += f" and {status_expr}=%s"; params.append(status)
     if executor_type:
         sql += " and executor_type=%s"; params.append(executor_type)
     if q:
@@ -1581,7 +1586,7 @@ def works(request: Request, source: str = "", status: str = "", executor_type: s
     rows = query(sql, params)
 
     sources = query("select distinct source from work order by source")
-    statuses = query("select distinct status from work order by status")
+    statuses = query(f"select distinct {status_expr} as status from work order by 1")
 
     return render(
         request, "works.html", "data",
@@ -2512,7 +2517,9 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
     where_extra = ""
     params = []
     if active_only:
-        where_extra += " and w.status not in %s"
+        # Статус — вычисляется из fact_pct, не читает столбец w.status
+        # (координатор, 08.09.2026, аудит целостности).
+        where_extra += f" and {_work_status_expr()} not in %s"
         params.append(tuple(DONE_STATUSES))
     if location.strip():
         where_extra += " and w.location ilike %s"
@@ -2539,7 +2546,7 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
 
     works = query(
         f"""
-        select w.id, w.code, w.name, w.unit, w.volume, w.fact_pct, w.status,
+        select w.id, w.code, w.name, w.unit, w.volume, w.fact_pct, {_work_status_expr()} as status,
                w.source, w.location, w.executor_type, sc.name as subcontractor_name,
                cs.current_start, cs.current_finish
         from work w
@@ -2893,8 +2900,9 @@ def api_shift(date: str = "", all: str = "", q: str = ""):
             # На эту дату по графику вообще ни у кого нет плана (пробел
             # импорта, см. docs/ID_KONTUR... нет — SMR-отчёт от 29.08) —
             # не запираем человека пустым списком, откатываемся к
-            # прежнему критерию "не завершена физически".
-            where_extra += " and w.status not in %s"
+            # прежнему критерию "не завершена физически". Статус — из
+            # fact_pct, не столбец w.status (координатор, 08.09.2026).
+            where_extra += f" and {_work_status_expr()} not in %s"
             params.append(tuple(DONE_STATUSES))
     if q.strip():
         where_extra += " and (w.code ilike %s or w.name ilike %s)"
@@ -2903,7 +2911,7 @@ def api_shift(date: str = "", all: str = "", q: str = ""):
 
     works = query(
         f"""
-        select w.id, w.code, w.name, w.location, w.source, w.status, w.fact_pct as work_fact_pct
+        select w.id, w.code, w.name, w.location, w.source, {_work_status_expr()} as status, w.fact_pct as work_fact_pct
         from work w
         where true {where_extra}
         order by w.source, w.code
@@ -3076,14 +3084,16 @@ def _csv_response(filename, header, rows):
 @app.get("/export/works.csv")
 def export_works_csv(source: str = "", status: str = "", executor_type: str = "", q: str = ""):
     # Те же фильтры, что и на /works — выгружает то, что видно на экране,
-    # не всегда весь реестр целиком.
-    sql = ("select code, source, location, name, unit, status, executor_type, "
+    # не всегда весь реестр целиком. Статус — та же _work_status_expr(),
+    # что и на /works (координатор, 08.09.2026).
+    status_expr = _work_status_expr(None)
+    sql = (f"select code, source, location, name, unit, {status_expr} as status, executor_type, "
            "fact_pct, plan_finish_date from work where true")
     params = []
     if source:
         sql += " and source=%s"; params.append(source)
     if status:
-        sql += " and status=%s"; params.append(status)
+        sql += f" and {status_expr}=%s"; params.append(status)
     if executor_type:
         sql += " and executor_type=%s"; params.append(executor_type)
     if q:
