@@ -608,6 +608,28 @@ def current_user_id_or_web_form():
     return ensure_web_form_user()
 
 
+def _work_status_expr(alias="w"):
+    """Единственное определение "статуса работы" в проекте — вычисляется
+    из fact_pct на каждый запрос, не читает столбец work.status: тот
+    заполняется один раз при импорте и с тех пор не обновляется, хотя
+    fact_pct живой (обновляется формой ввода факта, main.py). Найдено
+    координатором 08.09.2026: 100 из 169 работ показывались "не начата"
+    неделями, включая работы со 100% факта, потому что дашборд читал
+    именно этот замороженный столбец. Порог 0%/100% и трактовка
+    fact_pct IS NULL как "нет факта" — то же самое, что уже использует
+    compute_weighted_progress (analytics.py) для взвешенного процента:
+    один и тот же критерий "есть ли факт", а не отдельное правило.
+    Используется везде, где раньше читали w.status для логики (не для
+    чисто информационного отображения/фильтра на /works — та страница
+    вне периметра этой задачи, см. отчёт)."""
+    col = f"{alias}.fact_pct" if alias else "fact_pct"
+    return (
+        f"(case when {col} is null or {col} = 0 then 'not_started' "
+        f"when {col} >= 100 then 'done_physically' "
+        f"else 'in_progress' end)"
+    )
+
+
 def get_remaining_effort():
     """
     Остаток трудоёмкости (чел-дни) ТОЛЬКО по работам с реальной
@@ -624,7 +646,7 @@ def get_remaining_effort():
     )
     trudoemkost_by_work = {r["work_id"]: float(r["t"]) for r in trudoemkost_rows}
 
-    works = query("select id, fact_pct, status from work")
+    works = query(f"select id, fact_pct, {_work_status_expr(None)} as status from work")
     remaining = 0.0
     known_count = 0
     excluded_count = 0
@@ -799,8 +821,8 @@ def get_criticality_data():
     today = object_today()
 
     works_with_baseline = query(
-        """
-        select w.code, w.name, w.status, bs.plan_finish
+        f"""
+        select w.code, w.name, {_work_status_expr()} as status, bs.plan_finish
         from work w
         join baseline_schedule bs on bs.work_id = w.id
         where bs.plan_finish is not null and bs.confidence in ('high', 'medium')
@@ -4294,8 +4316,11 @@ def change_detail_post(
 @app.get("/dashboard")
 def home_v2(request: Request):
     works_total = query_one("select count(*) as n from work")["n"]
+    # Статус — вычисляется из fact_pct (_work_status_expr), не читает
+    # столбец work.status: тот не обновлялся неделями, хотя факт вводится
+    # регулярно (координатор, 08.09.2026).
     by_status = query(
-        "select status, count(*) as n from work group by status order by n desc"
+        f"select {_work_status_expr(None)} as status, count(*) as n from work group by 1 order by n desc"
     )
     needs_review = query_one(
         "select count(*) as n from work where data_quality_flag='needs_review'"
