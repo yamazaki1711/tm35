@@ -1227,12 +1227,16 @@ def get_critical_rule_works(today, directive_deadline, trudoemkost_by_work, last
             "select work_id, count(*) as n from blocker where work_id is not null and status='active' group by work_id"
         )
     }
+    # "Просрочена" — тот же compute_overdue(), что и в get_criticality_data()
+    # (координатор, 08.09.2026: раньше сравнение plan_finish < today было
+    # реализовано здесь заново инлайн — тот же вопрос, отдельная копия).
+    overdue_codes = {w["code"] for w in compute_overdue(works, today)}
     result = []
     for w in works:
         if w["status"] in DONE_STATUSES:
             continue
         reasons = []
-        if w["plan_finish"] < today:
+        if w["code"] in overdue_codes:
             reasons.append("просрочена относительно планового срока")
         if directive_deadline and w["plan_finish"] > directive_deadline:
             reasons.append("плановое окончание позже директивного срока проекта")
@@ -2557,16 +2561,11 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
         """,
         params,
     )
-    overdue_codes = {w["code"] for w in compute_overdue(
-        query(
-            """
-            select w.code, w.name, w.status, bs.plan_finish
-            from work w join baseline_schedule bs on bs.work_id = w.id
-            where bs.plan_finish is not null
-            """
-        ),
-        object_today(),
-    )}
+    # Просрочка — тот же список, что на /dashboard и /critical
+    # (get_criticality_data, единственный источник, координатор,
+    # 08.09.2026: раньше здесь был свой запрос без фильтра confidence и
+    # со стухшим w.status — 31 просроченная работа против 17 канонических).
+    overdue_codes = {w["code"] for w in get_criticality_data()["overdue"]}
 
     cells = query(
         LATEST_DP_CTE + """
