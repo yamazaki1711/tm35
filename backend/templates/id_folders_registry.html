@@ -20,11 +20,11 @@
     <div class="kpi-label">Передано в СДО</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ '{:,.2f}'.format(totals.amount_total)|replace(',', ' ') }}</div>
+    <div class="kpi-num">{{ totals.amount_total|ru_money }}</div>
     <div class="kpi-label">Стоимость всех папок, ₽</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ '{:,.2f}'.format(totals.amount_transferred)|replace(',', ' ') }}</div>
+    <div class="kpi-num">{{ totals.amount_transferred|ru_money }}</div>
     <div class="kpi-label">Стоимость переданных в СДО, ₽</div>
   </div>
 </div>
@@ -64,7 +64,7 @@
       <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
       <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td>{{ f.row_count }}</td>
-      <td>{{ '{:,.2f}'.format(f.amount_sum or 0)|replace(',', ' ') }}</td>
+      <td>{{ f.amount_sum or 0|ru_money }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
       <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td>

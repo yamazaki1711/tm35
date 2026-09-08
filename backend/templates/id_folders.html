@@ -16,13 +16,13 @@
     <div class="kpi-label">Подписано, ещё не в папке</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ '{:,.2f}'.format(stats.signed_folders_sum)|replace(',', ' ') }}</div>
+    <div class="kpi-num">{{ stats.signed_folders_sum|ru_money }}</div>
     <div class="kpi-label">Сумма подписанных папок, ₽</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ '{:,.2f}'.format(stats.money_remaining)|replace(',', ' ') }}</div>
+    <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
     <div class="kpi-label">Остаток в деньгах, ₽</div>
-    <div class="kpi-sub">из {{ '{:,.2f}'.format(stats.contract_total)|replace(',', ' ') }} ₽ по контракту (с НДС)</div>
+    <div class="kpi-sub">из {{ stats.contract_total|ru_money }} ₽ по контракту (с НДС)</div>
   </div>
 </div>
 
@@ -54,7 +54,7 @@
       <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
       <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td>{{ f.row_count }}</td>
-      <td>{{ '{:,.2f}'.format(f.amount_sum or 0)|replace(',', ' ') }}</td>
+      <td>{{ f.amount_sum or 0|ru_money }}</td>
       <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
     </tr>
@@ -84,7 +84,7 @@
     {% for m in manual_volumes %}
     <tr>
       <td class="wrap">{{ m.description }}</td>
-      <td>{{ '{:,.2f}'.format(m.amount_rub)|replace(',', ' ') }}</td>
+      <td>{{ m.amount_rub|ru_money }}</td>
       <td>
         <form method="post" action="/api/manual-volume/{{ m.id }}/delete" style="display:inline">
           <button type="submit" class="btn-secondary">Убрать</button>
@@ -95,7 +95,7 @@
     <tr><td colspan="3" class="empty-note">Записей нет.</td></tr>
     {% endfor %}
     {% if manual_volumes %}
-    <tr><td><b>Итого</b></td><td><b>{{ '{:,.2f}'.format(stats.manual_sum)|replace(',', ' ') }}</b></td><td></td></tr>
+    <tr><td><b>Итого</b></td><td><b>{{ stats.manual_sum|ru_money }}</b></td><td></td></tr>
     {% endif %}
   </tbody>
 </table>

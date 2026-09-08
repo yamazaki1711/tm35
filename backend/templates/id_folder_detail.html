@@ -30,7 +30,7 @@
     <div class="kpi-label">Разделов в папке</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ '{:,.2f}'.format(folder.amount_rub or 0)|replace(',', ' ') }}</div>
+    <div class="kpi-num">{{ folder.amount_rub or 0|ru_money }}</div>
     <div class="kpi-label">Сумма папки, ₽</div>
   </div>
 </div>

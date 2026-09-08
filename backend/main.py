@@ -395,6 +395,23 @@ def _dmy(value):
 
 templates.env.filters["dmy"] = _dmy
 
+
+def _ru_money(v):
+    """Единственное место форматирования денег в интерфейсе — запятая
+    вместо точки у копеек, неразрывный пробел (не обычный) между
+    разрядами, чтобы крупная сумма не переносилась посередине на узкой
+    колонке. Раньше каждый шаблон делал `'{:,.2f}'.format(x)|replace(',',
+    ' ')` у себя — точка у копеек и обычный (разрывной) пробел были
+    скопированы в 5 файлов одинаково неверно."""
+    if v is None:
+        return "—"
+    s = "{:,.2f}".format(float(v))
+    int_part, dec_part = s.split(".")
+    return int_part.replace(",", " ") + "," + dec_part
+
+
+templates.env.filters["ru_money"] = _ru_money
+
 # "Последняя запись побеждает" между excel_import и web_form за один
 # (дата, работа) — обе строки физически остаются в daily_progress
 # (unique включает source), эта CTE выбирает победителя для отображения.
@@ -757,11 +774,27 @@ def get_evm_data():
 
 def get_criticality_data():
     """
-    Общая для / и /critical выборка: критичность отставания, прогноз
-    завершения, ресурсный дефицит. Формулы и обоснование — backend/analytics.py
-    и docs/GAP_ANALYSIS.md (Цикл 1). Использует ТОЛЬКО данные из БД —
-    ничего не придумывает; если временного baseline нет для работы, она
-    просто не попадает в расчёт (не считается ни просроченной, ни в срок).
+    Общая для /, /critical, /gantt (api-gantt-metrics) и /data — критичность
+    отставания, прогноз завершения, ресурсный дефицит. Формулы и обоснование —
+    backend/analytics.py и docs/GAP_ANALYSIS.md (Цикл 1). Использует ТОЛЬКО
+    данные из БД — ничего не придумывает; если временного baseline нет для
+    работы, она просто не попадает в расчёт (не считается ни просроченной,
+    ни в срок).
+
+    Единственный источник "даты завершения" в проекте (докс координатора
+    08.09.2026, docs/FORECAST_UNIFICATION_2026-09-08.md) — раньше "Обзор"
+    (эта функция) и "/status" (get_scurve_data) считали дату завершения
+    двумя разными формулами независимо и расходились (28.11→08.12 здесь
+    против 07.01.2027 там). Проверка "нужная численность против реально
+    достигнутой" показала: по факту темпа последних 14 дней (~20 чел/день)
+    проект не успевает даже к дате "baseline + текущая просрочка" (нужно
+    ~27 чел/день) — расчёт по фактическому темпу (compute_forecast_by_pace)
+    честнее, он же и стал единственным "forecast_date". Старая формула
+    (baseline + средняя просрочка уже просроченных работ) отставлена под
+    именем baseline_lag_forecast_date — она недооценивает риск структурно
+    (реагирует только на уже просроченные работы, не на общий темп) и
+    сохранена лишь для истории графика тренда (forecast_snapshot,
+    method='baseline_lag'), в интерфейсе больше не показывается как "прогноз".
     """
     today = object_today()
 
@@ -780,7 +813,19 @@ def get_criticality_data():
         if w["status"] not in DONE_STATUSES
     ]
     overdue_lags = [w["lag_days"] for w in overdue]
-    forecast_date, avg_lag, baseline_date = compute_project_forecast(active_finishes, overdue_lags)
+    baseline_lag_forecast_date, avg_lag, baseline_date = compute_project_forecast(active_finishes, overdue_lags)
+
+    # Канонический прогноз — по фактическому темпу (см. докстринг выше).
+    remaining, known_work_count, excluded_work_count = get_remaining_effort()
+    recent_rows = query(
+        LATEST_DP_CTE + """
+        select date, sum(actual_crew) as v from latest_dp
+        where actual_crew is not null
+        group by date order by date desc limit 14
+        """
+    )
+    recent_actuals = [float(r["v"] or 0) for r in recent_rows]
+    forecast_date, avg_pace, pace_working_days_needed = compute_forecast_by_pace(remaining, recent_actuals, today)
 
     # Запланировано И фактически вышло на ОДИН И ТОТ ЖЕ день (last_actual_date) —
     # раньше required_crew считался как сумма "Кол-во чел." по ВСЕМ активным
@@ -820,6 +865,12 @@ def get_criticality_data():
         "overdue_count": len(overdue),
         "works_with_baseline_count": len(works_with_baseline),
         "forecast_date": forecast_date,
+        "avg_pace": avg_pace,
+        "pace_working_days_needed": pace_working_days_needed,
+        "remaining_effort_days": remaining,
+        "known_work_count": known_work_count,
+        "excluded_work_count": excluded_work_count,
+        "baseline_lag_forecast_date": baseline_lag_forecast_date,
         "avg_lag": avg_lag,
         "baseline_date": baseline_date,
         "required_crew": required_crew,
@@ -926,14 +977,22 @@ def get_scurve_data():
     Данные экрана "Успеваем?" (докладная координатора "что делают
     отраслевые системы", 16.08.2026): S-кривая план/факт нарастающим
     итогом из человеко-дней (та же трудоёмкость, что и в EVM-слое),
-    гистограмма численности по дням, две независимые оценки прогноза
-    (по темпу и по baseline+просрочке), тренд прогноза по неделям,
-    дефицит ресурса до директивного срока.
+    гистограмма численности по дням, прогноз завершения по темпу (единая
+    функция — get_criticality_data(), 08.09.2026: раньше здесь стояла
+    вторая, независимая формула, из-за которой /status и "Обзор"
+    показывали разные даты), тренд прогноза по неделям (метод
+    "baseline_lag" в тренде — историческая вторая оценка, оставлена только
+    в графике тренда, не как текущий прогноз), дефицит ресурса до
+    директивного срока.
     """
     today = object_today()
     evm = get_evm_data()
     crit = get_criticality_data()
-    remaining, known_count, excluded_count = get_remaining_effort()
+    # Остаток трудоёмкости и прогноз по темпу считает get_criticality_data()
+    # (единственное место, см. её докстринг) — здесь не пересчитываем.
+    remaining = crit["remaining_effort_days"]
+    known_count = crit["known_work_count"]
+    excluded_count = crit["excluded_work_count"]
 
     daily = query(
         LATEST_DP_CTE + """
@@ -970,20 +1029,15 @@ def get_scurve_data():
 
     directive_deadline = get_directive_deadline()
 
-    forecast_pace_date = avg_pace = None
-    if evm.get("available"):
-        recent_rows = query(
-            LATEST_DP_CTE + """
-            select date, sum(actual_crew) as v from latest_dp
-            where actual_crew is not null
-            group by date order by date desc limit 14
-            """
-        )
-        recent_actuals = [float(r["v"] or 0) for r in recent_rows]
-        forecast_pace_date, avg_pace, _ = compute_forecast_by_pace(remaining, recent_actuals, today)
+    # Прогноз по темпу — тот же, что уже посчитан в crit["forecast_date"]
+    # (см. докстринг get_criticality_data): не пересчитываем повторно,
+    # только логируем снимок для графика тренда по неделям.
+    forecast_pace_date = crit["forecast_date"]
+    avg_pace = crit["avg_pace"]
+    if avg_pace is not None:
         record_forecast_snapshot(today, forecast_pace_date, "pace", round(remaining, 1), avg_pace)
-    if crit.get("forecast_date"):
-        record_forecast_snapshot(today, crit["forecast_date"], "baseline_lag", None, None)
+    if crit.get("baseline_lag_forecast_date"):
+        record_forecast_snapshot(today, crit["baseline_lag_forecast_date"], "baseline_lag", None, None)
 
     trend_rows = query(
         "select snapshot_date, iso_year, iso_week, forecast_date, method "
@@ -3679,9 +3733,11 @@ def compute_id_folder_stats():
     signed_folders_sum = query_one(
         "select coalesce(sum(amount_rub), 0) as s from id_folder where sdo_transfer_date is not null"
     )["s"]
-    money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum)
-
     manual_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_manual_volume")["s"]
+    # Координатор, 08.09.2026: "Остаток в деньгах" не вычитал незакрытый
+    # ручной объём — считал только minus подписанные папки, показывал
+    # фактически "контракт минус подписано", не настоящий остаток.
+    money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum) - float(manual_sum)
 
     return {
         "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,

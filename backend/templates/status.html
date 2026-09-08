@@ -12,7 +12,7 @@
   <div class="kpi">
     <div class="kpi-num" style="font-size:1.4rem">{{ forecast_pace_date|dmy }}</div>
     <div class="kpi-label">Прогноз завершения по фактическому темпу</div>
-    {% if avg_pace %}<div class="kpi-sub">{{ avg_pace }} чел-дн/раб.день, посл. 14 дней с данными</div>{% endif %}
+    {% if avg_pace %}<div class="kpi-sub">Средняя численность за последние 14 дней с внесённым фактом — {{ '%.1f'|format(avg_pace)|replace('.', ',') }} чел./день</div>{% endif %}
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'danger' if deviation_days and deviation_days > 7 else ('warn' if deviation_days and deviation_days > 0 else ('ok' if deviation_days is not none)) }}">

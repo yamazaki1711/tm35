@@ -63,7 +63,7 @@
     <tr><th>Проектировщик</th><td>{{ c.designer_name or '—' }}</td></tr>
     <tr><th>Дата запроса</th><td>{{ c.request_date|fmt_dmy if c.request_date else '—' }}</td></tr>
     <tr><th>SLA, дней</th><td>{{ c.sla_days or '—' }}</td></tr>
-    <tr><th>Сумма под блокировкой, ₽</th><td>{{ '{:,.2f}'.format(c.blocked_amount_rub)|replace(',', ' ') if c.blocked_amount_rub else '—' }}</td></tr>
+    <tr><th>Сумма под блокировкой, ₽</th><td>{{ c.blocked_amount_rub|ru_money if c.blocked_amount_rub else '—' }}</td></tr>
     <tr><th>Комментарий</th><td class="wrap">{{ c.comment or '—' }}</td></tr>
   </tbody>
 </table>
