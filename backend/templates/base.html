@@ -4,11 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}ТМ-35{% endblock %}</title>
-<<<<<<< HEAD
 <link rel="stylesheet" href="/static/style.css?v=20260907a">
-=======
-<link rel="stylesheet" href="/static/style.css?v=20260904b">
->>>>>>> origin/main
 <script>
   /* Решение координатора 29.08.2026: "сегодня" везде на сайте — по
      часовому поясу объекта (Хабаровск), не по часовому поясу браузера
@@ -19,20 +15,12 @@
 </script>
 <script src="/static/ru-date.js?v=20260827a"></script>
 <script src="/static/datepicker.js?v=20260829a"></script>
-<<<<<<< HEAD
 <script src="/static/hotkeys.js?v=20260906c"></script>
 </head>
 <body>
 {% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
 {% set id_active = active in ['id-packages', 'changes', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry'] %}
 {% set rsk_active = active in ['rsk-registry', 'rsk-dashboard', 'rsk-processing', 'rsk-import'] %}
-=======
-<script src="/static/hotkeys.js?v=20260904c"></script>
-</head>
-<body>
-{% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
-{% set id_active = active in ['id-packages', 'changes', 'prescriptions', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry'] %}
->>>>>>> origin/main
 <nav>
 <div class="nav-inner">
   <a href="/dashboard" class="nav-brand"><span class="mark">ТМ</span> ТМ-35</a>
