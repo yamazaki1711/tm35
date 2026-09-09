@@ -3921,7 +3921,7 @@ def id_grafik_page(request: Request):
                   changes_total=changes_total)
 
 
-# ====== Патч реального шаблона (координатор, часть 4, 09.09.2026) ======
+# ====== Патч реального шаблона (координатор, часть 4/5, 09.09.2026) ======
 # Координатор прислал настоящий файл "01.09.26 График ИД Хабаровск с
 # комм. ред.xlsx" и проверенный способ его обновлять без разрушения:
 # книга содержит примечания (xl/comments1.xml — 57 КБ, xl/comments2.xml
@@ -3934,39 +3934,39 @@ def id_grafik_page(request: Request):
 # openpyxl используется только для ЧТЕНИЯ/сверки, никогда для записи
 # этого файла — тот же принцип, что и в присланном PoC-скрипте.
 #
-# Соответствие "группа в БД <-> строка книги" — прямое и точное:
-# id_report_group.source_row — это и есть номер строки в ЭТОМ ЖЕ файле
-# (импорт часть 1/3 брал его оттуда же). Патчатся только группы с
-# n_members>0 (52 из 133 на 09.09.2026, см. decisions_needed часть 3) —
-# колонка "Статус" (текст + заливка по легенде §3) и, если группа
-# подписана на 100% и дата попадает в диапазон сетки (май-сентябрь
-# 2026, см. ниже), Гант-ячейка формулой "=E{row}" — тем же видом
-# формулы, что и в оригинале (проверено на живых данных файла).
-# Остальные 81 группы без живых данных, а также вкладки "ИД труба",
-# "ИД труба в плане", "ИД архив", "График ИД по папкам", "ИЗМЫ ПД" —
-# НЕ ТРОГАЮТСЯ вообще, остаются снимком на 01.09.2026 как есть — не
-# затираются заглушкой и не перестраиваются с нуля. Подробности и
-# почему "По папкам"/"ИЗМЫ ПД" в части 1-3 не годятся как замена этому
-# — см. docs/decisions_needed_grafik_id_export.md, часть 4.
+# Часть 5 (правка части 4): колонки Гант-сетки (F..O) НЕ патчатся
+# ВООБЩЕ. Проверка координатора на всех 133 строках показала — это не
+# "дата фактического подписания", а живой ПЛАН ЗАКРЫТИЯ КС-2 по
+# полумесяцам, который ведёт человек (128 из 133 строк с меткой, из
+# них 109 НЕ подписаны; строка 2 — его помесячный итог на 4020 млн, то
+# самое число, ради которого руководство Заказчика открывает лист).
+# Патч части 4 (даже с очисткой задвоения) тихо подменял бы этот план
+# нашим неполным покрытием БД по мере роста числа групп — хуже
+# задвоения. Если фактическую дату подписания из системы понадобится
+# показывать — через НОВУЮ колонку, которую человек добавит в шаблон
+# сам (например "Факт подписания (из системы)"), не в существующую
+# сетку; см. decisions_needed, часть 5, п.1 — вариант зафиксирован, не
+# реализован.
+#
+# Статус (единственное, что патчится) — тоже не понижается: КЭВ/КРВ в
+# оригинале означают "подписано, с фамилией подписанта" — тир, равный
+# или выше нашего "Подписано"/"Подписано N%". Если шаблон уже на этом
+# тире (или наш расчёт даёт МЕНЕЕ полное состояние, чем уже стоит) —
+# ячейка не трогается вообще, расхождение уходит в лог выгрузки
+# (координатор, часть 5, п.2), не в файл. Экспорт может повышать статус
+# и уточнять процент, но не понижать и не заменять более информативное
+# значение (с фамилией) на более общее.
+#
+# Самопроверка (часть 5, п.2) — не только "части архива не потерялись"
+# (это не поймало бы правку Ганта в части 4), а полный инвариант: после
+# патча ЛЮБАЯ ячейка листа "График ИД", кроме заявленного множества
+# патченных C{row}, обязана совпасть со значением в шаблоне — сверяется
+# через openpyxl (только чтение) над обеими книгами. Расхождение —
+# отказ отдавать файл, откат на немодифицированный шаблон.
 
 GRAFIK_ID_TEMPLATE_PATH = "/app/docs_import/grafik_id_template_20260901.xlsx"
 GRAFIK_ID_SHEET1_PART = "xl/worksheets/sheet1.xml"  # "График ИД" — сверено через xl/_rels/workbook.xml.rels
-
-# Гант-сетка листа 1 в оригинале — фиксированный диапазон май-сентябрь
-# 2026 (в самом файле: F9="Май", H9="Июнь", J9="Июль", L9="Август",
-# N9="Сентябрь", по 2 подколонки на месяц), не "текущий и следующие
-# месяцы" — это готовый отчёт за конкретный период, не окно, катящееся
-# с датой экспорта. Если группа подписана позже сентября 2026 — Гант-
-# ячейку поставить некуда, оставляем без неё (тот же принцип, что и в
-# части 1/3 — не расширять сетку самовольно). См. decisions_needed,
-# часть 4, о напряжении между "фиксированный шаблон" и "живой отчёт".
-GRAFIK_ID_TEMPLATE_MONTHS = [
-    (date_cls(2026, 5, 1), "F", "G"),
-    (date_cls(2026, 6, 1), "H", "I"),
-    (date_cls(2026, 7, 1), "J", "K"),
-    (date_cls(2026, 8, 1), "L", "M"),
-    (date_cls(2026, 9, 1), "N", "O"),
-]
+GRAFIK_ID_SHEET1_NAME = "График ИД"
 
 
 def _xlsx_read_parts(data: bytes):
@@ -4035,6 +4035,11 @@ def _xlsx_escape(text):
     return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _xlsx_unescape(text):
+    return (text.replace("&lt;", "<").replace("&gt;", ">")
+                .replace("&quot;", '"').replace("&apos;", "'").replace("&amp;", "&"))
+
+
 def _xlsx_set_text(sheet_xml, coord, text, style=None):
     """inlineStr — sharedStrings.xml не трогаем вообще (иначе пришлось бы
     пересчитывать индексы всех строк книги)."""
@@ -4045,39 +4050,85 @@ def _xlsx_set_text(sheet_xml, coord, text, style=None):
     return sheet_xml[: m.start()] + new + sheet_xml[m.end():]
 
 
-def _xlsx_set_formula(sheet_xml, coord, formula, style=None):
-    """Кэшированное <v> не пишем — посчитает Excel при открытии
-    (force_full_recalc)."""
-    m = _xlsx_find_cell(sheet_xml, coord)
-    s = _xlsx_style_of(m.group("attrs"), style)
-    s_attr = f' s="{s}"' if s is not None else ""
-    new = f'<c r="{coord}"{s_attr}><f>{_xlsx_escape(formula)}</f></c>'
-    return sheet_xml[: m.start()] + new + sheet_xml[m.end():]
-
-
-def _xlsx_clear_value(sheet_xml, coord):
-    """Очищает значение/формулу, СОХРАНЯЯ оформление ячейки."""
-    try:
-        m = _xlsx_find_cell(sheet_xml, coord)
-    except KeyError:
-        return sheet_xml
-    s = _xlsx_style_of(m.group("attrs"))
-    s_attr = f' s="{s}"' if s is not None else ""
-    return sheet_xml[: m.start()] + f'<c r="{coord}"{s_attr}/>' + sheet_xml[m.end():]
-
-
 def _xlsx_force_full_recalc(workbook_xml):
     if "fullCalcOnLoad" in workbook_xml:
         return workbook_xml
     return re.sub(r"<calcPr ([^>]*?)/>", r'<calcPr \1 fullCalcOnLoad="1"/>', workbook_xml)
 
 
-def _patch_grafik_id_sheet1(sheet_xml, styles_xml, groups):
-    """groups — плоский список из _grafik_id_rows(). Патчит только
-    статус (колонка C) и, для 100%-подписанных групп с датой в диапазоне
-    сетки, Гант-формулу "=E{row}" (тот же вид, что в оригинале)."""
+def _xlsx_parse_shared_strings(sst_xml):
+    items = re.findall(r"<si>(.*?)</si>", sst_xml, re.S)
+    result = []
+    for item in items:
+        texts = re.findall(r"<t[^>]*>(.*?)</t>", item, re.S)
+        result.append(_xlsx_unescape("".join(texts)))
+    return result
+
+
+def _xlsx_get_cell_text(sheet_xml, coord, shared_strings):
+    """Текущий текст ячейки — она может быть shared-string (t="s", как в
+    исходном шаблоне) или inlineStr (как после нашего патча), нужно
+    уметь прочитать оба вида, чтобы сравнивать «что уже стоит» перед
+    решением, повышаем мы статус или понижаем."""
+    try:
+        m = _xlsx_find_cell(sheet_xml, coord)
+    except KeyError:
+        return None
+    full = m.group(0)
+    attrs = m.group("attrs")
+    t_attr = re.search(r't="(\w+)"', attrs)
+    cell_type = t_attr.group(1) if t_attr else None
+    if cell_type == "inlineStr":
+        tm = re.search(r"<t[^>]*>(.*?)</t>", full, re.S)
+        return _xlsx_unescape(tm.group(1)) if tm else ""
+    if cell_type == "s":
+        vm = re.search(r"<v>(\d+)</v>", full)
+        if vm:
+            idx = int(vm.group(1))
+            if 0 <= idx < len(shared_strings):
+                return shared_strings[idx]
+        return None
+    vm = re.search(r"<v>(.*?)</v>", full, re.S)
+    return _xlsx_unescape(vm.group(1)) if vm else None
+
+
+def _status_tier(text):
+    """Тир 2 — подписано (включая КЭВ/КРВ — подписано с фамилией
+    подписанта); тир 1 — любой другой известный статус; тир 0 — пусто."""
+    if not text:
+        return 0
+    s = text.strip()
+    if not s:
+        return 0
+    if s.lower().startswith("подписано") or s in ("КЭВ", "КРВ"):
+        return 2
+    return 1
+
+
+def _status_is_full(text):
+    """Тир-2 без явного процента — трактуется как «полностью», включая
+    КЭВ/КРВ (без процента по построению — это пометка подписанта, не
+    доля)."""
+    if not text:
+        return False
+    s = text.strip()
+    if s in ("КЭВ", "КРВ"):
+        return True
+    return s.lower().startswith("подписано") and "%" not in s
+
+
+def _patch_grafik_id_sheet1(sheet_xml, styles_xml, shared_strings, groups):
+    """Патчит ТОЛЬКО колонку "Статус" (C{source_row}) для групп с
+    n_members>0 — координатор, часть 5: колонки Гант-сетки не трогаются
+    вообще (см. комментарий блока выше). Статус не понижается: если в
+    шаблоне уже стоит состояние не менее полное, чем наш расчёт, —
+    ячейка не трогается, расхождение идёт в лог. Возвращает
+    (sheet_xml, {патченные координаты}, [строки лога о пропусках])."""
     by_colour = _xlsx_harvest_style_by_colour(styles_xml)
     plain_style = _xlsx_style_of(_xlsx_find_cell(sheet_xml, "C26").group("attrs"))
+
+    patched = set()
+    skipped = []
 
     for g in groups:
         if not g["n_members"] or not g["source_row"]:
@@ -4089,33 +4140,59 @@ def _patch_grafik_id_sheet1(sheet_xml, styles_xml, groups):
         except KeyError:
             continue  # строка не нашлась в этом файле — не должно происходить, но не роняем весь экспорт
 
-        fill_hex = status_fill_color(g["status_text"])
+        template_text = _xlsx_get_cell_text(sheet_xml, coord, shared_strings)
+        computed_text = g["status_text"]
+
+        template_tier = _status_tier(template_text)
+        computed_tier = _status_tier(computed_text)
+        skip = False
+        if template_tier > computed_tier:
+            skip = True
+        elif template_tier == 2 and computed_tier == 2:
+            template_full = _status_is_full(template_text)
+            computed_full = _status_is_full(computed_text)
+            if template_full and not computed_full:
+                skip = True
+            elif template_full and computed_full and (template_text or "").strip() in ("КЭВ", "КРВ"):
+                skip = True
+
+        if skip:
+            skipped.append(
+                f"стр.{row}: шаблон {template_text!r}, система {computed_text!r} — оставлено значение шаблона"
+            )
+            continue
+
+        fill_hex = status_fill_color(computed_text)
         style = by_colour.get(fill_hex, [plain_style])[0] if fill_hex else plain_style
-        sheet_xml = _xlsx_set_text(sheet_xml, coord, g["status_text"], style=style)
+        sheet_xml = _xlsx_set_text(sheet_xml, coord, computed_text, style=style)
+        patched.add(coord)
 
-        # Раз статус этой строки теперь живой (не снимок на 01.09), Гант-
-        # метка тоже пересчитывается с нуля — иначе старая ручная отметка
-        # оригинала (не обязательно означавшая "подписано", см.
-        # decisions_needed часть 4) остаётся рядом с новой и задваивает
-        # сумму в итогах месяца/участка. Чистим все подколонки диапазона
-        # перед тем, как (возможно) поставить новую.
-        for _m, col1, col2 in GRAFIK_ID_TEMPLATE_MONTHS:
-            sheet_xml = _xlsx_clear_value(sheet_xml, f"{col1}{row}")
-            sheet_xml = _xlsx_clear_value(sheet_xml, f"{col2}{row}")
+    return sheet_xml, patched, skipped
 
-        completed = g["completed_date"]
-        if completed:
-            for month_start, col1, col2 in GRAFIK_ID_TEMPLATE_MONTHS:
-                if completed.year == month_start.year and completed.month == month_start.month:
-                    target_col = col1 if completed.day <= 15 else col2
-                    gcoord = f"{target_col}{row}"
-                    try:
-                        _xlsx_find_cell(sheet_xml, gcoord)
-                        sheet_xml = _xlsx_set_formula(sheet_xml, gcoord, f"E{row}")
-                    except KeyError:
-                        pass
-                    break
-    return sheet_xml
+
+def _xlsx_verify_only_patched_changed(template_bytes, candidate_bytes, patched_coords):
+    """Полный инвариант (координатор, часть 5, п.2) — не просто "части
+    архива не потерялись" (это пропустило бы патч Ганта в части 4), а
+    прямое сравнение значений: на листе "График ИД" любая ячейка, кроме
+    заявленных patched_coords, обязана совпасть с шаблоном. openpyxl —
+    только для чтения, книги не пересохраняются."""
+    from openpyxl import load_workbook
+    wb_a = load_workbook(io.BytesIO(template_bytes), data_only=False)
+    wb_b = load_workbook(io.BytesIO(candidate_bytes), data_only=False)
+    ws_a = wb_a[GRAFIK_ID_SHEET1_NAME]
+    ws_b = wb_b[GRAFIK_ID_SHEET1_NAME]
+    mismatches = []
+    for row in ws_a.iter_rows():
+        for cell in row:
+            coord = cell.coordinate
+            if coord in patched_coords:
+                continue
+            va = cell.value
+            vb = ws_b[coord].value
+            if va != vb:
+                mismatches.append((coord, va, vb))
+    if mismatches:
+        raise AssertionError(f"патч изменил незаявленные ячейки: {mismatches[:20]}")
 
 
 @app.get("/export/id-grafik.xlsx")
@@ -4127,16 +4204,29 @@ def export_id_grafik_xlsx():
         template_bytes = f.read()
     order, parts = _xlsx_read_parts(template_bytes)
 
+    out_bytes = template_bytes
     try:
         sheet_xml = parts[GRAFIK_ID_SHEET1_PART].decode("utf-8")
         styles_xml = parts["xl/styles.xml"].decode("utf-8")
-        sheet_xml = _patch_grafik_id_sheet1(sheet_xml, styles_xml, all_groups)
+        shared_strings = _xlsx_parse_shared_strings(parts["xl/sharedStrings.xml"].decode("utf-8"))
+        sheet_xml, patched_coords, skipped_log = _patch_grafik_id_sheet1(
+            sheet_xml, styles_xml, shared_strings, all_groups)
         parts[GRAFIK_ID_SHEET1_PART] = sheet_xml.encode("utf-8")
         parts["xl/workbook.xml"] = _xlsx_force_full_recalc(
             parts["xl/workbook.xml"].decode("utf-8")).encode("utf-8")
-        out_bytes = _xlsx_write_parts(order, parts)
+        candidate_bytes = _xlsx_write_parts(order, parts)
+
+        _xlsx_verify_only_patched_changed(template_bytes, candidate_bytes, patched_coords)
+
+        out_bytes = candidate_bytes
+        print(f"[id-grafik.xlsx] пропатчено {len(patched_coords)} ячеек: {sorted(patched_coords)}")
+        if skipped_log:
+            print("[id-grafik.xlsx] статус не понижен (оставлено значение шаблона):")
+            for line in skipped_log:
+                print("  " + line)
     except Exception:
-        # Патч не должен уронить экспорт — при любой ошибке отдаём
+        # Патч не должен уронить экспорт — при любой ошибке (в т.ч. если
+        # самопроверка нашла незаявленное расхождение) отдаём
         # немодифицированный шаблон (снимок на 01.09.2026), не 500.
         import traceback
         traceback.print_exc()
