@@ -3074,6 +3074,7 @@ def api_shift_cell_save(
 
 import csv
 import io
+import zipfile
 from fastapi.responses import Response
 
 
@@ -3761,35 +3762,6 @@ def status_fill_color(status_text):
     return None
 
 
-_RU_MONTHS_NOM = ["январь", "февраль", "март", "апрель", "май", "июнь",
-                  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
-
-
-def _grafik_id_month_range():
-    """Диапазон месяцев Гант-сетки — от текущего месяца (по календарю
-    объекта) до месяца директивного срока включительно (app_setting).
-    Если директивный срок уже в прошлом (проект просрочен на момент
-    экспорта) — берём один текущий месяц, не гадаем дальше; см.
-    decisions_needed."""
-    start = object_today().replace(day=1)
-    row = query_one("select value from app_setting where key='directive_deadline'")
-    try:
-        deadline = date_cls.fromisoformat(row["value"]) if row and row["value"] else start
-    except ValueError:
-        deadline = start
-    if deadline < start:
-        deadline = start
-    months = []
-    cur = start
-    while (cur.year, cur.month) <= (deadline.year, deadline.month):
-        months.append(cur)
-        if cur.month == 12:
-            cur = cur.replace(year=cur.year + 1, month=1)
-        else:
-            cur = cur.replace(month=cur.month + 1)
-    return months
-
-
 # Модель "группа" (часть 3, 09.09.2026) — заменяет id_row_report_meta.
 # Строка Excel "Н1-4" — это ГРУППА из нескольких id_form_row (Н1, Н2,
 # Н2.1, Н3, Н4), не один раздел; id_row_report_meta (row_id unique)
@@ -3816,6 +3788,7 @@ GRAFIK_ID_LIST_SQL = LATEST_ID_FORM_ENTRY_CTE + """
     )
     select g.id as group_id, g.uchastok_no, g.uchastok_label, g.category_group,
            g.group_label, g.type_label, g.executor_name, g.display_order, g.ks2_cost_mln,
+           g.source_row,
            count(ms.row_id) as n_members,
            count(*) filter (where ms.status_code = 'Подписано') as n_signed,
            max(ms.first_signed_date) as completed_date,
@@ -3915,51 +3888,6 @@ def _grafik_folders_by_category():
     return grouped, skipped
 
 
-def _grafik_id_week_columns():
-    """Недельная сетка вкладки 2 — тот же диапазон месяцев, что и на
-    вкладке 1 (_grafik_id_month_range), плюс одна ведущая колонка —
-    4-я неделя месяца перед началом диапазона (координатор, §«Вкладка
-    2»). Неделя внутри месяца — фиксированные блоки 1-7/8-14/15-21/
-    22-конец месяца (не календарная ISO-неделя): самого файла-оригинала
-    нет, чтобы сверить точную границу, выбран простой и предсказуемый
-    вариант, тот же принцип квартования, что и полумесяцы на вкладке 1.
-    См. decisions_needed."""
-    months = _grafik_id_month_range()
-    first = months[0]
-    prior_month_last_day = first - timedelta(days=1)
-    prior = prior_month_last_day.replace(day=1)
-    cols = [(prior, 4)]
-    for m in months:
-        for w in (1, 2, 3, 4):
-            cols.append((m, w))
-    return cols
-
-
-def _week_bounds(month_first_day, week_no):
-    import calendar
-    last_day = calendar.monthrange(month_first_day.year, month_first_day.month)[1]
-    starts = {1: 1, 2: 8, 3: 15, 4: 22}
-    start = month_first_day.replace(day=starts[week_no])
-    end_day = (starts[week_no + 1] - 1) if week_no < 4 else last_day
-    end = month_first_day.replace(day=min(end_day, last_day))
-    return start, end
-
-
-def _week_col_index(cols, d):
-    """Индекс столбца недели для даты d. Дата раньше первого столбца —
-    прижимаем к первому (папка сформирована до отображаемого окна, не
-    достраиваем сетку назад — тот же принцип, что и с датой подписания
-    вне окна на вкладке 1, decisions_needed п.9)."""
-    first_start, _ = _week_bounds(*cols[0])
-    if d < first_start:
-        return 0
-    for i, (m, w) in enumerate(cols):
-        start, end = _week_bounds(m, w)
-        if start <= d <= end:
-            return i
-    return len(cols) - 1
-
-
 # ====== Вкладка 3 «ИЗМЫ ПД» — реестр изменений проектной документации,
 # источник — существующая таблица change. Часть колонок оригинала
 # (Обозначение, Стадия, Отдел) не имеют соответствия в схеме — не
@@ -3993,347 +3921,232 @@ def id_grafik_page(request: Request):
                   changes_total=changes_total)
 
 
-def _xlsx_response(filename, wb):
+# ====== Патч реального шаблона (координатор, часть 4, 09.09.2026) ======
+# Координатор прислал настоящий файл "01.09.26 График ИД Хабаровск с
+# комм. ред.xlsx" и проверенный способ его обновлять без разрушения:
+# книга содержит примечания (xl/comments1.xml — 57 КБ, xl/comments2.xml
+# — 121 КБ), threaded comments, VML-рисунки, printerSettings — все эти
+# части ОБЫЧНЫЙ openpyxl.Workbook().save() на этом файле теряет (16
+# частей архива пропадает). Поэтому лист "График ИД" больше не строится
+# заново через openpyxl (как в частях 1-3) — патчится точечно поверх
+# оригинала сырой правкой XML внутри .xlsx-архива (это ZIP): переписывается
+# только конкретная ячейка <c>, всё остальное копируется побайтово.
+# openpyxl используется только для ЧТЕНИЯ/сверки, никогда для записи
+# этого файла — тот же принцип, что и в присланном PoC-скрипте.
+#
+# Соответствие "группа в БД <-> строка книги" — прямое и точное:
+# id_report_group.source_row — это и есть номер строки в ЭТОМ ЖЕ файле
+# (импорт часть 1/3 брал его оттуда же). Патчатся только группы с
+# n_members>0 (52 из 133 на 09.09.2026, см. decisions_needed часть 3) —
+# колонка "Статус" (текст + заливка по легенде §3) и, если группа
+# подписана на 100% и дата попадает в диапазон сетки (май-сентябрь
+# 2026, см. ниже), Гант-ячейка формулой "=E{row}" — тем же видом
+# формулы, что и в оригинале (проверено на живых данных файла).
+# Остальные 81 группы без живых данных, а также вкладки "ИД труба",
+# "ИД труба в плане", "ИД архив", "График ИД по папкам", "ИЗМЫ ПД" —
+# НЕ ТРОГАЮТСЯ вообще, остаются снимком на 01.09.2026 как есть — не
+# затираются заглушкой и не перестраиваются с нуля. Подробности и
+# почему "По папкам"/"ИЗМЫ ПД" в части 1-3 не годятся как замена этому
+# — см. docs/decisions_needed_grafik_id_export.md, часть 4.
+
+GRAFIK_ID_TEMPLATE_PATH = "/app/docs_import/grafik_id_template_20260901.xlsx"
+GRAFIK_ID_SHEET1_PART = "xl/worksheets/sheet1.xml"  # "График ИД" — сверено через xl/_rels/workbook.xml.rels
+
+# Гант-сетка листа 1 в оригинале — фиксированный диапазон май-сентябрь
+# 2026 (в самом файле: F9="Май", H9="Июнь", J9="Июль", L9="Август",
+# N9="Сентябрь", по 2 подколонки на месяц), не "текущий и следующие
+# месяцы" — это готовый отчёт за конкретный период, не окно, катящееся
+# с датой экспорта. Если группа подписана позже сентября 2026 — Гант-
+# ячейку поставить некуда, оставляем без неё (тот же принцип, что и в
+# части 1/3 — не расширять сетку самовольно). См. decisions_needed,
+# часть 4, о напряжении между "фиксированный шаблон" и "живой отчёт".
+GRAFIK_ID_TEMPLATE_MONTHS = [
+    (date_cls(2026, 5, 1), "F", "G"),
+    (date_cls(2026, 6, 1), "H", "I"),
+    (date_cls(2026, 7, 1), "J", "K"),
+    (date_cls(2026, 8, 1), "L", "M"),
+    (date_cls(2026, 9, 1), "N", "O"),
+]
+
+
+def _xlsx_read_parts(data: bytes):
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        order = z.namelist()
+        return order, {n: z.read(n) for n in order}
+
+
+def _xlsx_write_parts(order, parts) -> bytes:
     buf = io.BytesIO()
-    wb.save(buf)
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for n in order:
+            z.writestr(n, parts[n])
+    return buf.getvalue()
+
+
+def _xlsx_harvest_style_by_colour(styles_xml):
+    """{цвет заливки -> [индексы стилей cellXfs]} из самого шаблона —
+    чтобы покрасить ячейку статуса в тот же зелёный/янтарный, что в
+    оригинале, не добавляя новый стиль в styles.xml. Индексы не
+    хардкодятся — пересобираются при каждом запросе (правка шаблона
+    человеком может их сдвинуть)."""
+    fills_block = re.search(r'<fills count="\d+">(.*?)</fills>', styles_xml, re.S).group(1)
+    fills = re.findall(r"<fill>.*?</fill>|<fill/>", fills_block, re.S)
+
+    def colour_of(fill_idx):
+        f = fills[fill_idx]
+        m = re.search(r'fgColor rgb="([0-9A-Fa-f]{8})"', f)
+        if m:
+            return m.group(1).upper()
+        m = re.search(r'fgColor theme="(\d+)"', f)
+        return "theme" + m.group(1) if m else None
+
+    xfs_block = re.search(r'<cellXfs count="\d+">(.*?)</cellXfs>', styles_xml, re.S).group(1)
+    xfs = re.findall(r"<xf [^>]*/>|<xf .*?</xf>", xfs_block, re.S)
+
+    by_colour = {}
+    for idx, xf in enumerate(xfs):
+        m = re.search(r'fillId="(\d+)"', xf)
+        if not m:
+            continue
+        c = colour_of(int(m.group(1)))
+        if c:
+            by_colour.setdefault(c, []).append(idx)
+    return by_colour
+
+
+_XLSX_CELL_RE = r'<c r="%s"(?P<attrs>[^>]*?)(?:/>|>.*?</c>)'
+
+
+def _xlsx_find_cell(sheet_xml, coord):
+    m = re.search(_XLSX_CELL_RE % coord, sheet_xml, re.S)
+    if not m:
+        raise KeyError(f"ячейка {coord} отсутствует в XML листа шаблона")
+    return m
+
+
+def _xlsx_style_of(attrs, override=None):
+    if override is not None:
+        return str(override)
+    m = re.search(r's="(\d+)"', attrs)
+    return m.group(1) if m else None
+
+
+def _xlsx_escape(text):
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _xlsx_set_text(sheet_xml, coord, text, style=None):
+    """inlineStr — sharedStrings.xml не трогаем вообще (иначе пришлось бы
+    пересчитывать индексы всех строк книги)."""
+    m = _xlsx_find_cell(sheet_xml, coord)
+    s = _xlsx_style_of(m.group("attrs"), style)
+    s_attr = f' s="{s}"' if s is not None else ""
+    new = f'<c r="{coord}"{s_attr} t="inlineStr"><is><t>{_xlsx_escape(text)}</t></is></c>'
+    return sheet_xml[: m.start()] + new + sheet_xml[m.end():]
+
+
+def _xlsx_set_formula(sheet_xml, coord, formula, style=None):
+    """Кэшированное <v> не пишем — посчитает Excel при открытии
+    (force_full_recalc)."""
+    m = _xlsx_find_cell(sheet_xml, coord)
+    s = _xlsx_style_of(m.group("attrs"), style)
+    s_attr = f' s="{s}"' if s is not None else ""
+    new = f'<c r="{coord}"{s_attr}><f>{_xlsx_escape(formula)}</f></c>'
+    return sheet_xml[: m.start()] + new + sheet_xml[m.end():]
+
+
+def _xlsx_clear_value(sheet_xml, coord):
+    """Очищает значение/формулу, СОХРАНЯЯ оформление ячейки."""
+    try:
+        m = _xlsx_find_cell(sheet_xml, coord)
+    except KeyError:
+        return sheet_xml
+    s = _xlsx_style_of(m.group("attrs"))
+    s_attr = f' s="{s}"' if s is not None else ""
+    return sheet_xml[: m.start()] + f'<c r="{coord}"{s_attr}/>' + sheet_xml[m.end():]
+
+
+def _xlsx_force_full_recalc(workbook_xml):
+    if "fullCalcOnLoad" in workbook_xml:
+        return workbook_xml
+    return re.sub(r"<calcPr ([^>]*?)/>", r'<calcPr \1 fullCalcOnLoad="1"/>', workbook_xml)
+
+
+def _patch_grafik_id_sheet1(sheet_xml, styles_xml, groups):
+    """groups — плоский список из _grafik_id_rows(). Патчит только
+    статус (колонка C) и, для 100%-подписанных групп с датой в диапазоне
+    сетки, Гант-формулу "=E{row}" (тот же вид, что в оригинале)."""
+    by_colour = _xlsx_harvest_style_by_colour(styles_xml)
+    plain_style = _xlsx_style_of(_xlsx_find_cell(sheet_xml, "C26").group("attrs"))
+
+    for g in groups:
+        if not g["n_members"] or not g["source_row"]:
+            continue
+        row = g["source_row"]
+        coord = f"C{row}"
+        try:
+            _xlsx_find_cell(sheet_xml, coord)
+        except KeyError:
+            continue  # строка не нашлась в этом файле — не должно происходить, но не роняем весь экспорт
+
+        fill_hex = status_fill_color(g["status_text"])
+        style = by_colour.get(fill_hex, [plain_style])[0] if fill_hex else plain_style
+        sheet_xml = _xlsx_set_text(sheet_xml, coord, g["status_text"], style=style)
+
+        # Раз статус этой строки теперь живой (не снимок на 01.09), Гант-
+        # метка тоже пересчитывается с нуля — иначе старая ручная отметка
+        # оригинала (не обязательно означавшая "подписано", см.
+        # decisions_needed часть 4) остаётся рядом с новой и задваивает
+        # сумму в итогах месяца/участка. Чистим все подколонки диапазона
+        # перед тем, как (возможно) поставить новую.
+        for _m, col1, col2 in GRAFIK_ID_TEMPLATE_MONTHS:
+            sheet_xml = _xlsx_clear_value(sheet_xml, f"{col1}{row}")
+            sheet_xml = _xlsx_clear_value(sheet_xml, f"{col2}{row}")
+
+        completed = g["completed_date"]
+        if completed:
+            for month_start, col1, col2 in GRAFIK_ID_TEMPLATE_MONTHS:
+                if completed.year == month_start.year and completed.month == month_start.month:
+                    target_col = col1 if completed.day <= 15 else col2
+                    gcoord = f"{target_col}{row}"
+                    try:
+                        _xlsx_find_cell(sheet_xml, gcoord)
+                        sheet_xml = _xlsx_set_formula(sheet_xml, gcoord, f"E{row}")
+                    except KeyError:
+                        pass
+                    break
+    return sheet_xml
 
 
 @app.get("/export/id-grafik.xlsx")
 def export_id_grafik_xlsx():
-    import calendar
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from openpyxl.utils import get_column_letter
-
     grouped = _grafik_id_rows()
-    months = _grafik_id_month_range()
+    all_groups = [r for cats in grouped.values() for v in cats.values() for r in v]
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "График ИД"
+    with open(GRAFIK_ID_TEMPLATE_PATH, "rb") as f:
+        template_bytes = f.read()
+    order, parts = _xlsx_read_parts(template_bytes)
 
-    FONT = Font(name="Calibri", size=11)
-    FONT_BOLD = Font(name="Calibri", size=11, bold=True)
-    FONT_HEADER = Font(name="Calibri", size=11, bold=True)
-    THIN = Side(style="thin", color="FFB0B0B0")
-    BORDER_ALL = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-    WRAP_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    try:
+        sheet_xml = parts[GRAFIK_ID_SHEET1_PART].decode("utf-8")
+        styles_xml = parts["xl/styles.xml"].decode("utf-8")
+        sheet_xml = _patch_grafik_id_sheet1(sheet_xml, styles_xml, all_groups)
+        parts[GRAFIK_ID_SHEET1_PART] = sheet_xml.encode("utf-8")
+        parts["xl/workbook.xml"] = _xlsx_force_full_recalc(
+            parts["xl/workbook.xml"].decode("utf-8")).encode("utf-8")
+        out_bytes = _xlsx_write_parts(order, parts)
+    except Exception:
+        # Патч не должен уронить экспорт — при любой ошибке отдаём
+        # немодифицированный шаблон (снимок на 01.09.2026), не 500.
+        import traceback
+        traceback.print_exc()
+        out_bytes = template_bytes
 
-    n_fixed_cols = 5  # A..E: Наименование / Тип / Статус / Исполнитель / КС2
-    n_month_cols = len(months) * 2
-    n_rsk_cols = 4
-    n_problem_cols = 4
-    total_cols = n_fixed_cols + n_month_cols + n_rsk_cols + n_problem_cols
-
-    HEADER_ROW1 = 1
-    HEADER_ROW2 = 2
-
-    fixed_headers = ["Наименование участка", "Тип", "Статус", "Исполнитель",
-                      "Ожидаемая стоимость по КС-2, млн руб."]
-    for i, text in enumerate(fixed_headers, start=1):
-        cell = ws.cell(row=HEADER_ROW1, column=i, value=text)
-        cell.font = FONT_HEADER
-        cell.alignment = WRAP_CENTER
-        cell.border = BORDER_ALL
-        ws.merge_cells(start_row=HEADER_ROW1, start_column=i, end_row=HEADER_ROW2, end_column=i)
-
-    col = n_fixed_cols + 1
-    for m in months:
-        last_day = calendar.monthrange(m.year, m.month)[1]
-        title = f"{_RU_MONTHS_NOM[m.month - 1].capitalize()} {m.year}"
-        cell = ws.cell(row=HEADER_ROW1, column=col, value=title)
-        cell.font = FONT_HEADER
-        cell.alignment = WRAP_CENTER
-        ws.merge_cells(start_row=HEADER_ROW1, start_column=col, end_row=HEADER_ROW1, end_column=col + 1)
-        sub1 = ws.cell(row=HEADER_ROW2, column=col, value="01–15")
-        sub2 = ws.cell(row=HEADER_ROW2, column=col + 1, value=f"16–{last_day:02d}")
-        for c in (cell, ws.cell(row=HEADER_ROW1, column=col + 1), sub1, sub2):
-            c.font = FONT
-            c.alignment = WRAP_CENTER
-            c.border = BORDER_ALL
-        col += 2
-
-    rsk_col_start = col
-    cell = ws.cell(row=HEADER_ROW1, column=rsk_col_start, value="Замеч. РСК, препятствующие принятию ИД")
-    cell.font = FONT_BOLD
-    cell.alignment = WRAP_CENTER
-    ws.merge_cells(start_row=HEADER_ROW1, start_column=rsk_col_start,
-                    end_row=HEADER_ROW2, end_column=rsk_col_start + n_rsk_cols - 1)
-    for c in range(rsk_col_start, rsk_col_start + n_rsk_cols):
-        ws.cell(row=HEADER_ROW1, column=c).border = BORDER_ALL
-        ws.cell(row=HEADER_ROW2, column=c).border = BORDER_ALL
-    col = rsk_col_start + n_rsk_cols
-
-    problem_col_start = col
-    # Заголовок T/U/V/W дан в задаче только описательно ("проблемные
-    # вопросы") — буквального текста из исходника у нас нет (в CSV-
-    # экстракте эти колонки не выгружались, только упомянуты прозой).
-    # Не сочиняю 4 разных подписи — один заголовок на объединённые 4
-    # колонки. См. decisions_needed.
-    cell = ws.cell(row=HEADER_ROW1, column=problem_col_start, value="Проблемные вопросы")
-    cell.font = FONT_BOLD
-    cell.alignment = WRAP_CENTER
-    ws.merge_cells(start_row=HEADER_ROW1, start_column=problem_col_start,
-                    end_row=HEADER_ROW2, end_column=problem_col_start + n_problem_cols - 1)
-    for c in range(problem_col_start, problem_col_start + n_problem_cols):
-        ws.cell(row=HEADER_ROW1, column=c).border = BORDER_ALL
-        ws.cell(row=HEADER_ROW2, column=c).border = BORDER_ALL
-
-    # Ширины колонок — держаться исходных пропорций (координатор, §4a).
-    ws.column_dimensions["A"].width = 28
-    ws.column_dimensions["B"].width = 6
-    ws.column_dimensions["C"].width = 22
-    ws.column_dimensions["D"].width = 24
-    ws.column_dimensions["E"].width = 14
-    for c in range(n_fixed_cols + 1, rsk_col_start):
-        ws.column_dimensions[get_column_letter(c)].width = 10
-    for c in range(rsk_col_start, problem_col_start):
-        ws.column_dimensions[get_column_letter(c)].width = 16
-    for c in range(problem_col_start, problem_col_start + n_problem_cols):
-        ws.column_dimensions[get_column_letter(c)].width = 78
-
-    row = HEADER_ROW2 + 1
-    grand_data_rows = []
-
-    for (uchastok_no, uchastok_label), categories in sorted(grouped.items()):
-        cell = ws.cell(row=row, column=1, value=uchastok_label)
-        cell.font = FONT_BOLD
-        cell.alignment = LEFT
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-        row += 1
-
-        uchastok_data_rows = []
-
-        for category_group in sorted(categories.keys()):
-            cat_cell = ws.cell(row=row, column=1, value=category_group)
-            cat_cell.font = FONT
-            cat_cell.alignment = LEFT
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
-            row += 1
-
-            for r in sorted(categories[category_group], key=lambda x: x["display_order"]):
-                ws.cell(row=row, column=1, value=r["group_label"]).font = FONT
-                ws.cell(row=row, column=2, value=r["type_label"] or "").font = FONT
-                status_cell = ws.cell(row=row, column=3, value=r["status_text"])
-                status_cell.font = FONT
-                fill_hex = status_fill_color(r["status_text"])
-                if fill_hex:
-                    status_cell.fill = PatternFill(fgColor=fill_hex, fill_type="solid")
-                ws.cell(row=row, column=4, value=r["executor_name"] or "").font = FONT
-                cost_cell = ws.cell(row=row, column=5, value=float(r["ks2_cost_mln"]) if r["ks2_cost_mln"] is not None else None)
-                cost_cell.font = FONT
-                cost_cell.number_format = "0.00"
-
-                signed = r["completed_date"]
-                if signed and r["ks2_cost_mln"] is not None:
-                    mcol = n_fixed_cols + 1
-                    for m in months:
-                        if signed.year == m.year and signed.month == m.month:
-                            target_col = mcol if signed.day <= 15 else mcol + 1
-                            gc = ws.cell(row=row, column=target_col, value=float(r["ks2_cost_mln"]))
-                            gc.font = FONT
-                            gc.number_format = "0.00"
-                            break
-                        mcol += 2
-
-                for c in range(1, total_cols + 1):
-                    ws.cell(row=row, column=c).border = BORDER_ALL
-
-                uchastok_data_rows.append(row)
-                grand_data_rows.append(row)
-                row += 1
-
-        if uchastok_data_rows:
-            r0, r1 = uchastok_data_rows[0], uchastok_data_rows[-1]
-            total_cell = ws.cell(row=row, column=1, value=f"Итого по участку №{uchastok_no}")
-            total_cell.font = FONT_BOLD
-            e_letter = "E"
-            ws.cell(row=row, column=5, value=f"=SUM({e_letter}{r0}:{e_letter}{r1})").font = FONT_BOLD
-            ws.cell(row=row, column=5).number_format = "0.00"
-            for mi in range(n_month_cols):
-                c = n_fixed_cols + 1 + mi
-                letter = get_column_letter(c)
-                tcell = ws.cell(row=row, column=c, value=f"=SUM({letter}{r0}:{letter}{r1})")
-                tcell.font = FONT_BOLD
-                tcell.number_format = "0.00"
-            for c in range(1, total_cols + 1):
-                ws.cell(row=row, column=c).border = BORDER_ALL
-            row += 1
-
-    if grand_data_rows:
-        row += 1
-        ws.cell(row=row, column=1, value="Итого по всем участкам").font = FONT_BOLD
-        # Диапазоны не смежные (между участками — заголовки/строки "Итого
-        # по участку") — суммируем по фактическому списку строк с данными,
-        # не по одному непрерывному диапазону.
-        e_terms = "+".join(f"E{r}" for r in grand_data_rows)
-        ws.cell(row=row, column=5, value=f"={e_terms}").font = FONT_BOLD
-        ws.cell(row=row, column=5).number_format = "0.00"
-        for mi in range(n_month_cols):
-            c = n_fixed_cols + 1 + mi
-            letter = get_column_letter(c)
-            terms = "+".join(f"{letter}{r}" for r in grand_data_rows)
-            gcell = ws.cell(row=row, column=c, value=f"={terms}")
-            gcell.font = FONT_BOLD
-            gcell.number_format = "0.00"
-        for c in range(1, total_cols + 1):
-            ws.cell(row=row, column=c).border = BORDER_ALL
-
-    ws.freeze_panes = None  # намеренно не закрепляем — в оригинале нет, см. §4a
-
-    # ── Вкладка 2 «График ИД по папкам» ──
-    ws2 = wb.create_sheet("График ИД по папкам")
-    week_cols = _grafik_id_week_columns()
-    folders_grouped, _folders_skipped = _grafik_folders_by_category()
-
-    GRAY = "FFD9D9D9"
-    GREEN = "FF92D050"
-
-    n_fixed2 = 4  # Номер папки / Состав / Сумма, руб. / Статус формирования
-    n_week_cols = len(week_cols)
-    total_cols2 = n_fixed2 + n_week_cols + 1  # + Примечания
-
-    fixed_headers2 = ["Номер папки", "Состав", "Сумма, руб.", "Статус формирования"]
-    for i, text in enumerate(fixed_headers2, start=1):
-        cell = ws2.cell(row=1, column=i, value=text)
-        cell.font = FONT_HEADER
-        cell.alignment = WRAP_CENTER
-        cell.border = BORDER_ALL
-        ws2.merge_cells(start_row=1, start_column=i, end_row=2, end_column=i)
-
-    col = n_fixed2 + 1
-    prev_month_key = None
-    month_start_col = col
-    for (m, w) in week_cols:
-        key = (m.year, m.month)
-        if key != prev_month_key:
-            if prev_month_key is not None:
-                ws2.merge_cells(start_row=1, start_column=month_start_col, end_row=1, end_column=col - 1)
-            month_start_col = col
-            prev_month_key = key
-        start, end = _week_bounds(m, w)
-        title_cell = ws2.cell(row=1, column=col, value=f"{_RU_MONTHS_NOM[m.month - 1].capitalize()} {m.year}")
-        title_cell.font = FONT_HEADER
-        title_cell.alignment = WRAP_CENTER
-        sub = ws2.cell(row=2, column=col, value=f"{start.day:02d}–{end.day:02d}")
-        sub.font = FONT
-        sub.alignment = WRAP_CENTER
-        title_cell.border = BORDER_ALL
-        sub.border = BORDER_ALL
-        col += 1
-    if prev_month_key is not None:
-        ws2.merge_cells(start_row=1, start_column=month_start_col, end_row=1, end_column=col - 1)
-
-    notes_col2 = col
-    note_cell = ws2.cell(row=1, column=notes_col2, value="Примечания")
-    note_cell.font = FONT_HEADER
-    note_cell.alignment = WRAP_CENTER
-    ws2.merge_cells(start_row=1, start_column=notes_col2, end_row=2, end_column=notes_col2)
-    for r in (1, 2):
-        ws2.cell(row=r, column=notes_col2).border = BORDER_ALL
-
-    ws2.column_dimensions["A"].width = 14
-    ws2.column_dimensions["B"].width = 42
-    ws2.column_dimensions["C"].width = 16
-    ws2.column_dimensions["D"].width = 22
-    for c in range(n_fixed2 + 1, notes_col2):
-        ws2.column_dimensions[get_column_letter(c)].width = 8
-    ws2.column_dimensions[get_column_letter(notes_col2)].width = 60
-
-    row2 = 3
-    if not folders_grouped:
-        note = ws2.cell(row=row2, column=1,
-                         value="Ни одна папка не размечена по участку/категории на текущий момент "
-                               "(разделы всех папок не входят ни в одну группу разметки) — "
-                               "см. docs/decisions_needed_grafik_id_export.md")
-        note.font = FONT
-        note.alignment = LEFT
-        ws2.merge_cells(start_row=row2, start_column=1, end_row=row2, end_column=total_cols2)
-        row2 += 1
-    else:
-        for category_group in sorted(folders_grouped.keys()):
-            cat_row = row2
-            cat_cell = ws2.cell(row=row2, column=1, value=category_group)
-            cat_cell.font = FONT_BOLD
-            for c in range(1, total_cols2 + 1):
-                ws2.cell(row=row2, column=c).border = Border(bottom=THIN)
-            row2 += 1
-            data_rows2 = []
-            for fld in folders_grouped[category_group]:
-                ws2.cell(row=row2, column=1, value=fld["name"]).font = FONT
-                comp_cell = ws2.cell(row=row2, column=2, value="; ".join(fld["section_labels"]))
-                comp_cell.font = FONT
-                comp_cell.alignment = LEFT
-                amount_cell = ws2.cell(row=row2, column=3,
-                                        value=float(fld["amount_rub"]) if fld["amount_rub"] is not None else None)
-                amount_cell.font = FONT
-                amount_cell.number_format = "#,##0.00"
-                status_text = "Передана в СДО" if fld["sdo_transfer_date"] else "Сформирована"
-                ws2.cell(row=row2, column=4, value=status_text).font = FONT
-
-                start_col_idx = _week_col_index(week_cols, fld["folder_date"])
-                if fld["sdo_transfer_date"]:
-                    end_col_idx = _week_col_index(week_cols, fld["sdo_transfer_date"])
-                else:
-                    end_col_idx = _week_col_index(week_cols, object_today())
-                for wi in range(start_col_idx, end_col_idx + 1):
-                    ws2.cell(row=row2, column=n_fixed2 + 1 + wi).fill = PatternFill(fgColor=GRAY, fill_type="solid")
-                if fld["sdo_transfer_date"]:
-                    for wi in range(end_col_idx + 1, n_week_cols):
-                        ws2.cell(row=row2, column=n_fixed2 + 1 + wi).fill = PatternFill(fgColor=GREEN, fill_type="solid")
-
-                for c in range(1, total_cols2 + 1):
-                    ws2.cell(row=row2, column=c).border = BORDER_ALL
-                data_rows2.append(row2)
-                row2 += 1
-            if data_rows2:
-                r0, r1 = data_rows2[0], data_rows2[-1]
-                sum_cell = ws2.cell(row=cat_row, column=3, value=f"=SUM(C{r0}:C{r1})")
-                sum_cell.font = FONT_BOLD
-                sum_cell.number_format = "#,##0.00"
-
-    ws2.freeze_panes = None
-
-    # ── Вкладка 3 «ИЗМЫ ПД» — реестр изменений ПД (таблица change).
-    # Обозначение/Стадия/Отдел оригинала не выведены — нет соответствия
-    # в схеме change, не выдумано. См. decisions_needed. ──
-    ws3 = wb.create_sheet("ИЗМЫ ПД")
-    headers3 = ["№ п/п", "Номер разрешения", "Дата внесения изменения",
-                "Наименование объекта (по титулу)", "Номер изменения", "ГИП"]
-    for i, text in enumerate(headers3, start=1):
-        cell = ws3.cell(row=1, column=i, value=text)
-        cell.font = FONT_HEADER
-        cell.alignment = WRAP_CENTER
-        cell.border = BORDER_ALL
-    ws3.column_dimensions["A"].width = 6
-    ws3.column_dimensions["B"].width = 18
-    ws3.column_dimensions["C"].width = 16
-    ws3.column_dimensions["D"].width = 44
-    ws3.column_dimensions["E"].width = 14
-    ws3.column_dimensions["F"].width = 22
-
-    OBJECT_TITLE = "Тепломагистраль № 35 от Хабаровской ТЭЦ-3 · г. Хабаровск"
-    for i, r in enumerate(_grafik_changes_rows(), start=1):
-        row_i = i + 1
-        ws3.cell(row=row_i, column=1, value=i).font = FONT
-        ws3.cell(row=row_i, column=2, value=r["code"]).font = FONT
-        date_val = r["actual_response_date"].strftime("%d.%m.%Y") if r["actual_response_date"] else ""
-        ws3.cell(row=row_i, column=3, value=date_val).font = FONT
-        ws3.cell(row=row_i, column=4, value=OBJECT_TITLE).font = FONT
-        ws3.cell(row=row_i, column=5, value=r["change_number"]).font = FONT
-        ws3.cell(row=row_i, column=6, value=r["designer_name"] or "").font = FONT
-        for c in range(1, 7):
-            ws3.cell(row=row_i, column=c).border = BORDER_ALL
-    ws3.freeze_panes = None
-
-    wb.active = 0
-    return _xlsx_response("id_grafik.xlsx", wb)
+    return Response(
+        content=out_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="id_grafik.xlsx"'},
+    )
 
 
 # =======================================================================
