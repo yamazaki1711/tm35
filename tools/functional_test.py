@@ -493,6 +493,80 @@ def test_report_print(page, base_url):
 
 
 # ---------------------------------------------------------------------
+# «График ИД — прогресс по видам работ» (/id-progress), продолжение
+# прогона 10.09.2026 — матрица-светофор + drill-down (задачи 2-3).
+# Написаны по разметке, которую сам же добавил в id_progress.html —
+# не запускались playwright'ом в этой сессии (в контейнере tm_backend
+# playwright не установлен, .secrets/tm_basic_auth.env не найден нигде
+# на сервере) — поведение проверено вручную через браузерную
+# автоматизацию (скриншоты + JS-проверки DOM), но эти конкретные
+# сценарии нужно прогнать отдельно, с окружением, где playwright есть.
+# ---------------------------------------------------------------------
+
+@scenario("«Прогресс по видам работ»: переключение вкладки в матрице меняет строки")
+def test_id_progress_matrix_tab_switch(page, base_url):
+    page.goto(base_url + "/id-progress", wait_until="networkidle")
+    page.wait_for_timeout(400)
+    select = page.locator("select[name='tab_id']")
+    options = select.locator("option").all()
+    if len(options) < 2:
+        return False, f"меньше двух вкладок в фильтре: {len(options)}"
+    label_before = page.locator(".id-matrix-row td").first.inner_text()
+    other_value = None
+    current_value = select.input_value()
+    for opt in options:
+        v = opt.get_attribute("value")
+        if v != current_value:
+            other_value = v
+            break
+    if other_value is None:
+        return False, "не нашёл вкладку, отличную от текущей"
+    select.select_option(other_value)
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(400)
+    label_after = page.locator(".id-matrix-row td").first.inner_text()
+    if label_after == label_before:
+        return False, f"раздел не изменился после смены вкладки: {label_before!r}"
+    return True, f"{label_before!r} -> {label_after!r}"
+
+
+@scenario("«Прогресс по видам работ»: клик по разделу открывает drill-down без перезагрузки")
+def test_id_progress_drilldown(page, base_url):
+    page.goto(base_url + "/id-progress", wait_until="networkidle")
+    page.wait_for_timeout(400)
+    rows = page.locator(".id-matrix-row")
+    if rows.count() == 0:
+        return False, "на дефолтной вкладке нет ни одного раздела"
+    row_label = rows.first.locator("td").first.inner_text()
+    url_before = page.url
+    empty_before = page.locator("#id-matrix-drilldown").inner_text().strip() == ""
+    rows.first.click()
+    page.wait_for_timeout(600)
+    content = page.locator("#id-matrix-drilldown").inner_text()
+    same_url = page.url == url_before
+    if not (empty_before and same_url and row_label in content):
+        return False, f"empty_before={empty_before} same_url={same_url} label_in_content={row_label in content}"
+    return True, f"drill-down по «{row_label}» открылся без перехода"
+
+
+# ---------------------------------------------------------------------
+# Ясность денежных плиток ИД (продолжение прогона 10.09.2026, задача 1) —
+# не полагаться на playwright, доступный в этой сессии (см. оговорку выше).
+# ---------------------------------------------------------------------
+
+@scenario("/id-folders: счётчики «ждёт сметной стоимости»/«ещё не подписано» видны и это числа")
+def test_id_folders_money_clarity_tiles(page, base_url):
+    page.goto(base_url + "/id-folders", wait_until="networkidle")
+    page.wait_for_timeout(300)
+    labels = page.locator(".kpi-label").all_inner_texts()
+    have_smeta = any("ждёт сметной стоимости" in t for t in labels)
+    have_unsigned = any("Ещё не подписано" in t for t in labels)
+    if not (have_smeta and have_unsigned):
+        return False, f"есть смета={have_smeta}, есть неподписано={have_unsigned}"
+    return True, "обе плитки на месте"
+
+
+# ---------------------------------------------------------------------
 # Ссылки между экранами
 # ---------------------------------------------------------------------
 
@@ -500,7 +574,7 @@ REGISTERED_GET_ROUTES = {
     "/", "/status", "/today", "/report", "/losses", "/data", "/dashboard",
     "/critical", "/works", "/norms", "/norm-plan", "/resources", "/downtime",
     "/subcontractors", "/materials", "/blockers", "/daily-report", "/executor",
-    "/quality", "/form", "/gantt", "/healthz",
+    "/quality", "/form", "/gantt", "/healthz", "/id-progress",
 }
 
 
@@ -542,6 +616,9 @@ ALL_SCENARIOS = [
     test_calendar_in_modal,
     test_directive_deadline,
     test_report_print,
+    test_id_progress_matrix_tab_switch,
+    test_id_progress_drilldown,
+    test_id_folders_money_clarity_tiles,
     test_internal_links,
 ]
 
