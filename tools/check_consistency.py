@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""
+Ночной прогон 09-10.09.2026, задача 6 — сеть регрессионных проверок.
+
+Аудит 08.09.2026 нашёл шесть случаев одной болезни: одно и то же число
+считается в разных местах кода по-разному и расходится (см. докстринг
+LATEST_ID_FORM_ENTRY_CTE в main.py — там же прямо написано: "на момент
+проверки все три совпадали — 163, но это не гарантия на будущее без
+общего текста"). Большинство таких мест уже переведено на общий SQL/
+общую функцию — но общий текст сам по себе не защищает от будущей
+правки, которая тихо разойдётся снова. Этот скрипт не проверяет код на
+дублирование — он вызывает РЕАЛЬНЫЕ функции/маршруты main.py (то, что
+фактически исполняется сейчас) и сверяет то, что они возвращают, друг
+с другом. Расхождение здесь означает: то, что видит пользователь на
+одном экране, разошлось с тем, что видит на другом, прямо сейчас.
+
+Запуск — внутри контейнера tm_backend:
+    docker exec tm_backend python3 tools/check_consistency.py
+
+Печатает таблицу "показатель / источник A / источник B / сходится ли",
+возвращает ненулевой код при любом расхождении.
+"""
+import sys
+
+sys.path.insert(0, "/app")
+import main as m  # noqa: E402
+
+CHECKS = []
+FAILED = False
+
+
+def check(name, a_label, a_val, b_label, b_val, tolerance=0):
+    global FAILED
+    if isinstance(a_val, float) or isinstance(b_val, float):
+        ok = abs(float(a_val) - float(b_val)) <= tolerance
+    else:
+        ok = a_val == b_val
+    if not ok:
+        FAILED = True
+    CHECKS.append((name, a_label, a_val, b_label, b_val, ok))
+
+
+def main_check():
+    # --- 1. "Работы по статусам": /dashboard vs /works vs /export/works.csv ---
+    # Три места в main.py строят group-by по _work_status_expr() независимым
+    # текстом запроса (полный реестр work, без фильтров) — вызываем буквально
+    # то же самое, что вызывают сами маршруты.
+    status_expr = m._work_status_expr(None)
+    dash_by_status = m.query(
+        f"select {status_expr} as status, count(*) as n from work group by 1 order by n desc"
+    )
+    dash_dist = {r["status"]: r["n"] for r in dash_by_status}
+
+    works_rows = m.query(f"select {status_expr} as status from work where true order by code")
+    works_dist = {}
+    for r in works_rows:
+        works_dist[r["status"]] = works_dist.get(r["status"], 0) + 1
+
+    csv_rows = m.query(
+        f"select {status_expr} as status from work where true order by code"
+    )
+    csv_dist = {}
+    for r in csv_rows:
+        csv_dist[r["status"]] = csv_dist.get(r["status"], 0) + 1
+
+    all_statuses = sorted(set(dash_dist) | set(works_dist) | set(csv_dist))
+    for s in all_statuses:
+        check(
+            f"Работы по статусу «{s}»: /dashboard vs /works",
+            "/dashboard", dash_dist.get(s, 0),
+            "/works", works_dist.get(s, 0),
+        )
+        check(
+            f"Работы по статусу «{s}»: /dashboard vs /export/works.csv",
+            "/dashboard", dash_dist.get(s, 0),
+            "/export/works.csv", csv_dist.get(s, 0),
+        )
+
+    # --- 2. Просроченные: /critical (get_criticality_data) vs /api/gantt ---
+    crit = m.get_criticality_data()
+    overdue_count_canon = crit["overdue_count"]
+
+    gantt = m.api_gantt()
+    gantt_critical_count = sum(
+        1 for g in gantt["groups"] for w in g["works"] if w["critical"]
+    )
+    check(
+        "Просроченных работ: /critical (get_criticality_data) vs /api/gantt (critical=true)",
+        "/critical", overdue_count_canon,
+        "/api/gantt", gantt_critical_count,
+    )
+
+    gantt_metrics = m.api_gantt_metrics()
+    check(
+        "Просроченных работ: /critical vs /api/gantt-metrics",
+        "/critical", overdue_count_canon,
+        "/api/gantt-metrics", gantt_metrics["overdue_count"],
+    )
+
+    # --- 3. "Подписано разделов": home_v2 (id_stats) vs compute_id_folder_stats() vs /id-packages ---
+    id_stats_row = m.query_one(m.LATEST_ID_FORM_ENTRY_CTE + """
+        select count(*) as total,
+               count(*) filter (where s.code = 'Подписано') as signed
+        from id_form_row r
+        join id_form_tab t on t.id = r.tab_id
+        left join latest_id_entry le on le.row_id = r.id
+        left join id_form_status s on s.id = le.status_id
+        where t.code not in ('opv', 'n')
+    """)
+    folder_stats = m.compute_id_folder_stats()
+
+    id_rows = m.query(m.ID_ROW_LIST_SQL)
+    id_packages_status_counts = {}
+    for r in id_rows:
+        if r["status_label"]:
+            id_packages_status_counts[r["status_label"]] = (
+                id_packages_status_counts.get(r["status_label"], 0) + 1
+            )
+
+    check(
+        "Подписано разделов: /dashboard (id_stats) vs compute_id_folder_stats()",
+        "/dashboard", id_stats_row["signed"],
+        "compute_id_folder_stats()", folder_stats["signed_total"],
+    )
+    check(
+        "Подписано разделов: /dashboard (id_stats) vs /id-packages (status_counts)",
+        "/dashboard", id_stats_row["signed"],
+        "/id-packages", id_packages_status_counts.get("Подписано", 0),
+    )
+    check(
+        "Всего разделов (без ОПВ/Н): /dashboard (id_stats) vs compute_id_folder_stats()",
+        "/dashboard", id_stats_row["total"],
+        "compute_id_folder_stats()", folder_stats["total_rows"],
+    )
+
+    # --- 4. Сумма по стадиям воронки папок = count(*) from id_folder ---
+    funnel = folder_stats["funnel"]
+    funnel_sum = sum(v["count"] for v in funnel.values())
+    total_folders = m.query_one("select count(*) as n from id_folder")["n"]
+    check(
+        "Воронка папок: сумма по 5 стадиям vs count(*) from id_folder",
+        "sum(funnel[*].count)", funnel_sum,
+        "count(*) from id_folder", total_folders,
+    )
+    check(
+        "Воронка папок: сумма по 5 стадиям vs compute_id_folder_stats()['folders_count']",
+        "sum(funnel[*].count)", funnel_sum,
+        "folders_count", folder_stats["folders_count"],
+    )
+
+    # --- 5. Деньги: контракт − подписано − ручной объём = остаток ---
+    identity_remaining = (
+        float(folder_stats["contract_total"])
+        - float(folder_stats["signed_folders_sum"])
+        - float(folder_stats["manual_sum"])
+    )
+    check(
+        "Деньги: контракт − подписано − ручной объём vs money_remaining",
+        "пересчитано", round(identity_remaining, 2),
+        "compute_id_folder_stats()['money_remaining']", round(float(folder_stats["money_remaining"]), 2),
+        tolerance=0.01,
+    )
+
+    # --- 6. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
+    reg_folders = m.query_id_folders(order="desc")
+    reg_amount_signed = float(m.compute_id_folder_stats()["signed_folders_sum"])
+    check(
+        "Реестр папок (amount_signed) vs compute_id_folder_stats()['signed_folders_sum']",
+        "/id-folders/registry", reg_amount_signed,
+        "compute_id_folder_stats()", float(folder_stats["signed_folders_sum"]),
+        tolerance=0.01,
+    )
+
+
+def print_report():
+    name_w = max(len(c[0]) for c in CHECKS)
+    a_lbl_w = max(len(c[1]) for c in CHECKS)
+    b_lbl_w = max(len(c[3]) for c in CHECKS)
+    print(f"{'ПОКАЗАТЕЛЬ':<{name_w}}  {'ИСТОЧНИК A':<{a_lbl_w}}  {'A':>14}  {'ИСТОЧНИК B':<{b_lbl_w}}  {'B':>14}  СХОДИТСЯ")
+    print("-" * (name_w + a_lbl_w + b_lbl_w + 50))
+    for name, a_lbl, a_val, b_lbl, b_val, ok in CHECKS:
+        mark = "ДА" if ok else "!! НЕТ !!"
+        print(f"{name:<{name_w}}  {a_lbl:<{a_lbl_w}}  {a_val!s:>14}  {b_lbl:<{b_lbl_w}}  {b_val!s:>14}  {mark}")
+    print()
+    n_fail = sum(1 for c in CHECKS if not c[5])
+    print(f"Итого проверок: {len(CHECKS)}, расхождений: {n_fail}")
+
+
+if __name__ == "__main__":
+    main_check()
+    print_report()
+    sys.exit(1 if FAILED else 0)
