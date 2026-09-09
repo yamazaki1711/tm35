@@ -191,6 +191,14 @@
       <div class="kpi-num">{{ folder_stats.manual_sum|ru_money }}</div>
       <div class="kpi-label">Незакрытый объём (ручной), ₽</div>
     </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'warn' if folder_stats.awaiting_smeta_count > 0 else '' }}">{{ folder_stats.awaiting_smeta_count }}</div>
+      <div class="kpi-label">Подписано, ждёт сметной стоимости</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'warn' if folder_stats.not_signed_count > 0 else '' }}">{{ folder_stats.not_signed_count }}</div>
+      <div class="kpi-label">Ещё не подписано</div>
+    </div>
   </div>
 
   {# ── Кнопки блока ИД ── #}

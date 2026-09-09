@@ -4558,6 +4558,19 @@ def compute_id_folder_stats():
     # фактически "контракт минус подписано", не настоящий остаток.
     money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum) - float(manual_sum)
 
+    # Продолжение 10.09.2026: "Подписано, ₽" упало до 0,00 — честно, но
+    # читатель не может отличить "ещё ничего не подписано" от "данные не
+    # внесены". Две плитки-счётчика без текста-пояснения (запрещено
+    # правилом "заголовок — и сразу содержимое"), делают эту разницу
+    # видимой: сколько папок ждёт ввода сметной стоимости (подписаны, но
+    # amount_smeta_rub ещё пуст) и сколько ещё вообще не подписано.
+    awaiting_smeta_count = query_one(
+        "select count(*) as n from id_folder where signed_date is not null and amount_smeta_rub is null"
+    )["n"]
+    not_signed_count = query_one(
+        "select count(*) as n from id_folder where signed_date is null"
+    )["n"]
+
     return {
         "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,
         "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
@@ -4565,6 +4578,7 @@ def compute_id_folder_stats():
         "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
         "signed_folders_sum_old_by_transfer_estimate": signed_folders_sum_old_by_transfer_estimate,
         "funnel": compute_id_folder_funnel(),
+        "awaiting_smeta_count": awaiting_smeta_count, "not_signed_count": not_signed_count,
     }
 
 
@@ -4615,6 +4629,10 @@ def id_folders_registry_page(request: Request, status: str = "all", sort: str = 
         folders = [f for f in folders if not f["sdo_transfer_date"]]
     elif status == "transferred":
         folders = [f for f in folders if f["sdo_transfer_date"]]
+    elif status == "awaiting_smeta":
+        folders = [f for f in folders if f["signed_date"] and not f["amount_smeta_rub"]]
+    elif status == "not_signed":
+        folders = [f for f in folders if not f["signed_date"]]
 
     return render(request, "id_folders_registry.html", "id-folders-registry",
                   folders=folders, totals=totals, status=status, sort=sort)

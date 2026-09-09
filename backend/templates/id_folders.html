@@ -42,6 +42,14 @@
     <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
     <div class="kpi-label">Остаток в деньгах, ₽</div>
   </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if stats.awaiting_smeta_count > 0 else '' }}">{{ stats.awaiting_smeta_count }}</div>
+    <div class="kpi-label">Подписано, ждёт сметной стоимости</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if stats.not_signed_count > 0 else '' }}">{{ stats.not_signed_count }}</div>
+    <div class="kpi-label">Ещё не подписано</div>
+  </div>
 </div>
 
 <h3>Разделы</h3>

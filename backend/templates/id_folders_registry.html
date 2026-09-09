@@ -35,6 +35,8 @@
       <option value="all" {{ 'selected' if status=='all' }}>Все</option>
       <option value="formed" {{ 'selected' if status=='formed' }}>Сформированные</option>
       <option value="transferred" {{ 'selected' if status=='transferred' }}>Переданные в СДО</option>
+      <option value="not_signed" {{ 'selected' if status=='not_signed' }}>Ещё не подписаны</option>
+      <option value="awaiting_smeta" {{ 'selected' if status=='awaiting_smeta' }}>Ждут сметную стоимость</option>
     </select>
   </label>
   <label style="flex:1">Сортировка по номеру
