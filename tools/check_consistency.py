@@ -180,7 +180,62 @@ def main_check():
         "/dashboard", change_stats_row["total"],
     )
 
-    # --- 7. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
+    # --- 7. Продолжение прогона 10.09.2026: awaiting_smeta_count/not_signed_count vs прямой SQL ---
+    check(
+        "Ждут сметную стоимость: compute_id_folder_stats() vs прямой SQL",
+        "compute_id_folder_stats()", folder_stats["awaiting_smeta_count"],
+        "прямой SQL", m.query_one(
+            "select count(*) as n from id_folder where signed_date is not null and amount_smeta_rub is null"
+        )["n"],
+    )
+    check(
+        "Ещё не подписано: compute_id_folder_stats() vs прямой SQL",
+        "compute_id_folder_stats()", folder_stats["not_signed_count"],
+        "прямой SQL", m.query_one("select count(*) as n from id_folder where signed_date is null")["n"],
+    )
+
+    # --- 8. Блоки 1-2 "График ИД — прогресс": tiles (один агрегат) vs stream
+    # (group by вкладке) — два независимо написанных запроса над одной и той
+    # же LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE, сумма по вкладкам обязана
+    # сойтись с общим счётом.
+    tiles = m.compute_id_progress_tiles()
+    stream = m.compute_id_progress_stream()
+    check(
+        "«Прогресс по видам работ»: total_pairs (плитки) vs сумма green+yellow+red по вкладкам (поток)",
+        "tiles.total_pairs", tiles["total_pairs"],
+        "sum(stream green+yellow+red)", sum(r["green_n"] + r["yellow_n"] + r["red_n"] for r in stream),
+    )
+    check(
+        "«Прогресс по видам работ»: signed (плитки) vs сумма green_n по вкладкам (поток)",
+        "tiles.signed", tiles["signed"],
+        "sum(stream green_n)", sum(r["green_n"] for r in stream),
+    )
+
+    # --- 9. Матрица «Раздел × Этап»: цвет первого столбца vs независимый
+    # пересчёт по каждой вкладке (тот же LATEST_ID_FORM_ENTRY_CTE, но текст
+    # запроса здесь написан заново, а не переиспользован из compute_id_matrix,
+    # чтобы проверка ловила расхождение, а не подтверждала сама себя).
+    tabs = m.query("select id, label from id_form_tab where code not in ('opv', 'n') order by label")
+    for tab in tabs:
+        mx = m.compute_id_matrix(tab["id"])
+        matrix_green = sum(1 for r in mx["rows"] if r["color"] == "green")
+        direct_green = m.query_one(
+            m.LATEST_ID_FORM_ENTRY_CTE + """
+            select count(*) as n
+            from id_form_row r
+            join latest_id_entry le on le.row_id = r.id
+            join id_form_status s on s.id = le.status_id
+            where r.tab_id = %(tab_id)s and s.code = 'Подписано'
+            """,
+            {"tab_id": tab["id"]},
+        )["n"]
+        check(
+            f"Матрица «{tab['label']}»: раздел зелёный (первый столбец) vs прямой count «Подписано»",
+            "compute_id_matrix()", matrix_green,
+            "прямой SQL", direct_green,
+        )
+
+    # --- 10. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
     reg_folders = m.query_id_folders(order="desc")
     reg_amount_signed = float(m.compute_id_folder_stats()["signed_folders_sum"])
     check(
