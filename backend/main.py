@@ -3822,14 +3822,130 @@ def _grafik_id_rows():
     return grouped
 
 
+# ====== Вкладка 2 «График ИД по папкам» — категория/участок папки не
+# хранятся отдельно, выводятся из id_row_report_meta через её разделы
+# (id_folder_row). Папка без ни одного размеченного раздела, или с
+# разделами, расходящимися по категории/участку, — пропускается, не
+# выбираем произвольно (координатор, часть 2, 09.09.2026). ======
+
+def _grafik_folders_by_category():
+    folders = query_id_folders()
+    meta_rows = query("""
+        select fr.folder_id, m.category_group, m.uchastok_no, m.uchastok_label
+        from id_folder_row fr
+        join id_row_report_meta m on m.row_id = fr.row_id
+    """)
+    combos_by_folder = {}
+    for r in meta_rows:
+        combos_by_folder.setdefault(r["folder_id"], set()).add(
+            (r["category_group"], r["uchastok_no"], r["uchastok_label"])
+        )
+
+    labels_rows = query("""
+        select fr.folder_id, rr.section_label
+        from id_folder_row fr
+        join id_form_row rr on rr.id = fr.row_id
+        order by fr.folder_id, rr.source_row
+    """)
+    labels_by_folder = {}
+    for r in labels_rows:
+        labels_by_folder.setdefault(r["folder_id"], []).append(r["section_label"])
+
+    grouped = {}
+    skipped = []
+    for f in folders:
+        combos = combos_by_folder.get(f["id"])
+        if not combos:
+            skipped.append({"folder": f["name"], "reason": "ни один раздел папки не размечен в id_row_report_meta"})
+            continue
+        if len(combos) > 1:
+            skipped.append({"folder": f["name"],
+                             "reason": "разделы папки расходятся по категории/участку: " +
+                                       "; ".join(f"{c[2]} / {c[0]}" for c in sorted(combos))})
+            continue
+        (category_group, uchastok_no, uchastok_label) = next(iter(combos))
+        grouped.setdefault(category_group, []).append({
+            "folder_id": f["id"], "name": f["name"], "folder_date": f["folder_date"],
+            "sdo_transfer_date": f["sdo_transfer_date"], "amount_rub": f["amount_sum"],
+            "section_labels": labels_by_folder.get(f["id"], []),
+        })
+    return grouped, skipped
+
+
+def _grafik_id_week_columns():
+    """Недельная сетка вкладки 2 — тот же диапазон месяцев, что и на
+    вкладке 1 (_grafik_id_month_range), плюс одна ведущая колонка —
+    4-я неделя месяца перед началом диапазона (координатор, §«Вкладка
+    2»). Неделя внутри месяца — фиксированные блоки 1-7/8-14/15-21/
+    22-конец месяца (не календарная ISO-неделя): самого файла-оригинала
+    нет, чтобы сверить точную границу, выбран простой и предсказуемый
+    вариант, тот же принцип квартования, что и полумесяцы на вкладке 1.
+    См. decisions_needed."""
+    months = _grafik_id_month_range()
+    first = months[0]
+    prior_month_last_day = first - timedelta(days=1)
+    prior = prior_month_last_day.replace(day=1)
+    cols = [(prior, 4)]
+    for m in months:
+        for w in (1, 2, 3, 4):
+            cols.append((m, w))
+    return cols
+
+
+def _week_bounds(month_first_day, week_no):
+    import calendar
+    last_day = calendar.monthrange(month_first_day.year, month_first_day.month)[1]
+    starts = {1: 1, 2: 8, 3: 15, 4: 22}
+    start = month_first_day.replace(day=starts[week_no])
+    end_day = (starts[week_no + 1] - 1) if week_no < 4 else last_day
+    end = month_first_day.replace(day=min(end_day, last_day))
+    return start, end
+
+
+def _week_col_index(cols, d):
+    """Индекс столбца недели для даты d. Дата раньше первого столбца —
+    прижимаем к первому (папка сформирована до отображаемого окна, не
+    достраиваем сетку назад — тот же принцип, что и с датой подписания
+    вне окна на вкладке 1, decisions_needed п.9)."""
+    first_start, _ = _week_bounds(*cols[0])
+    if d < first_start:
+        return 0
+    for i, (m, w) in enumerate(cols):
+        start, end = _week_bounds(m, w)
+        if start <= d <= end:
+            return i
+    return len(cols) - 1
+
+
+# ====== Вкладка 3 «ИЗМЫ ПД» — реестр изменений проектной документации,
+# источник — существующая таблица change. Часть колонок оригинала
+# (Обозначение, Стадия, Отдел) не имеют соответствия в схеме — не
+# выводятся, см. decisions_needed. ======
+
+GRAFIK_CHANGES_SQL = """
+    select code, actual_response_date, change_number, designer_name
+    from change
+    order by change_number nulls last, code
+"""
+
+
+def _grafik_changes_rows():
+    return query(GRAFIK_CHANGES_SQL)
+
+
 @app.get("/id-grafik")
 def id_grafik_page(request: Request):
     grouped = _grafik_id_rows()
     total_rows = sum(len(v) for cats in grouped.values() for v in cats.values())
     total_matched_row_ids = {r["row_id"] for cats in grouped.values() for v in cats.values() for r in v}
     unmatched_count = 133 - len(total_matched_row_ids)  # 133 — размер исходного экстракта на 01.09.2026
+    folders_grouped, folders_skipped = _grafik_folders_by_category()
+    folders_total = query_one("select count(*) as n from id_folder")["n"]
+    changes_total = len(_grafik_changes_rows())
     return render(request, "id_grafik.html", "id-grafik",
-                  grouped=grouped, total_rows=total_rows, unmatched_count=unmatched_count)
+                  grouped=grouped, total_rows=total_rows, unmatched_count=unmatched_count,
+                  folders_grouped=folders_grouped, folders_skipped=folders_skipped, folders_total=folders_total,
+                  changes_total=changes_total)
 
 
 def _xlsx_response(filename, wb):
@@ -4026,6 +4142,152 @@ def export_id_grafik_xlsx():
 
     ws.freeze_panes = None  # намеренно не закрепляем — в оригинале нет, см. §4a
 
+    # ── Вкладка 2 «График ИД по папкам» ──
+    ws2 = wb.create_sheet("График ИД по папкам")
+    week_cols = _grafik_id_week_columns()
+    folders_grouped, _folders_skipped = _grafik_folders_by_category()
+
+    GRAY = "FFD9D9D9"
+    GREEN = "FF92D050"
+
+    n_fixed2 = 4  # Номер папки / Состав / Сумма, руб. / Статус формирования
+    n_week_cols = len(week_cols)
+    total_cols2 = n_fixed2 + n_week_cols + 1  # + Примечания
+
+    fixed_headers2 = ["Номер папки", "Состав", "Сумма, руб.", "Статус формирования"]
+    for i, text in enumerate(fixed_headers2, start=1):
+        cell = ws2.cell(row=1, column=i, value=text)
+        cell.font = FONT_HEADER
+        cell.alignment = WRAP_CENTER
+        cell.border = BORDER_ALL
+        ws2.merge_cells(start_row=1, start_column=i, end_row=2, end_column=i)
+
+    col = n_fixed2 + 1
+    prev_month_key = None
+    month_start_col = col
+    for (m, w) in week_cols:
+        key = (m.year, m.month)
+        if key != prev_month_key:
+            if prev_month_key is not None:
+                ws2.merge_cells(start_row=1, start_column=month_start_col, end_row=1, end_column=col - 1)
+            month_start_col = col
+            prev_month_key = key
+        start, end = _week_bounds(m, w)
+        title_cell = ws2.cell(row=1, column=col, value=f"{_RU_MONTHS_NOM[m.month - 1].capitalize()} {m.year}")
+        title_cell.font = FONT_HEADER
+        title_cell.alignment = WRAP_CENTER
+        sub = ws2.cell(row=2, column=col, value=f"{start.day:02d}–{end.day:02d}")
+        sub.font = FONT
+        sub.alignment = WRAP_CENTER
+        title_cell.border = BORDER_ALL
+        sub.border = BORDER_ALL
+        col += 1
+    if prev_month_key is not None:
+        ws2.merge_cells(start_row=1, start_column=month_start_col, end_row=1, end_column=col - 1)
+
+    notes_col2 = col
+    note_cell = ws2.cell(row=1, column=notes_col2, value="Примечания")
+    note_cell.font = FONT_HEADER
+    note_cell.alignment = WRAP_CENTER
+    ws2.merge_cells(start_row=1, start_column=notes_col2, end_row=2, end_column=notes_col2)
+    for r in (1, 2):
+        ws2.cell(row=r, column=notes_col2).border = BORDER_ALL
+
+    ws2.column_dimensions["A"].width = 14
+    ws2.column_dimensions["B"].width = 42
+    ws2.column_dimensions["C"].width = 16
+    ws2.column_dimensions["D"].width = 22
+    for c in range(n_fixed2 + 1, notes_col2):
+        ws2.column_dimensions[get_column_letter(c)].width = 8
+    ws2.column_dimensions[get_column_letter(notes_col2)].width = 60
+
+    row2 = 3
+    if not folders_grouped:
+        note = ws2.cell(row=row2, column=1,
+                         value="Ни одна папка не размечена по участку/категории на текущий момент "
+                               "(разделы всех папок не попали в id_row_report_meta) — "
+                               "см. docs/decisions_needed_grafik_id_export.md")
+        note.font = FONT
+        note.alignment = LEFT
+        ws2.merge_cells(start_row=row2, start_column=1, end_row=row2, end_column=total_cols2)
+        row2 += 1
+    else:
+        for category_group in sorted(folders_grouped.keys()):
+            cat_row = row2
+            cat_cell = ws2.cell(row=row2, column=1, value=category_group)
+            cat_cell.font = FONT_BOLD
+            for c in range(1, total_cols2 + 1):
+                ws2.cell(row=row2, column=c).border = Border(bottom=THIN)
+            row2 += 1
+            data_rows2 = []
+            for fld in folders_grouped[category_group]:
+                ws2.cell(row=row2, column=1, value=fld["name"]).font = FONT
+                comp_cell = ws2.cell(row=row2, column=2, value="; ".join(fld["section_labels"]))
+                comp_cell.font = FONT
+                comp_cell.alignment = LEFT
+                amount_cell = ws2.cell(row=row2, column=3,
+                                        value=float(fld["amount_rub"]) if fld["amount_rub"] is not None else None)
+                amount_cell.font = FONT
+                amount_cell.number_format = "#,##0.00"
+                status_text = "Передана в СДО" if fld["sdo_transfer_date"] else "Сформирована"
+                ws2.cell(row=row2, column=4, value=status_text).font = FONT
+
+                start_col_idx = _week_col_index(week_cols, fld["folder_date"])
+                if fld["sdo_transfer_date"]:
+                    end_col_idx = _week_col_index(week_cols, fld["sdo_transfer_date"])
+                else:
+                    end_col_idx = _week_col_index(week_cols, object_today())
+                for wi in range(start_col_idx, end_col_idx + 1):
+                    ws2.cell(row=row2, column=n_fixed2 + 1 + wi).fill = PatternFill(fgColor=GRAY, fill_type="solid")
+                if fld["sdo_transfer_date"]:
+                    for wi in range(end_col_idx + 1, n_week_cols):
+                        ws2.cell(row=row2, column=n_fixed2 + 1 + wi).fill = PatternFill(fgColor=GREEN, fill_type="solid")
+
+                for c in range(1, total_cols2 + 1):
+                    ws2.cell(row=row2, column=c).border = BORDER_ALL
+                data_rows2.append(row2)
+                row2 += 1
+            if data_rows2:
+                r0, r1 = data_rows2[0], data_rows2[-1]
+                sum_cell = ws2.cell(row=cat_row, column=3, value=f"=SUM(C{r0}:C{r1})")
+                sum_cell.font = FONT_BOLD
+                sum_cell.number_format = "#,##0.00"
+
+    ws2.freeze_panes = None
+
+    # ── Вкладка 3 «ИЗМЫ ПД» — реестр изменений ПД (таблица change).
+    # Обозначение/Стадия/Отдел оригинала не выведены — нет соответствия
+    # в схеме change, не выдумано. См. decisions_needed. ──
+    ws3 = wb.create_sheet("ИЗМЫ ПД")
+    headers3 = ["№ п/п", "Номер разрешения", "Дата внесения изменения",
+                "Наименование объекта (по титулу)", "Номер изменения", "ГИП"]
+    for i, text in enumerate(headers3, start=1):
+        cell = ws3.cell(row=1, column=i, value=text)
+        cell.font = FONT_HEADER
+        cell.alignment = WRAP_CENTER
+        cell.border = BORDER_ALL
+    ws3.column_dimensions["A"].width = 6
+    ws3.column_dimensions["B"].width = 18
+    ws3.column_dimensions["C"].width = 16
+    ws3.column_dimensions["D"].width = 44
+    ws3.column_dimensions["E"].width = 14
+    ws3.column_dimensions["F"].width = 22
+
+    OBJECT_TITLE = "Тепломагистраль № 35 от Хабаровской ТЭЦ-3 · г. Хабаровск"
+    for i, r in enumerate(_grafik_changes_rows(), start=1):
+        row_i = i + 1
+        ws3.cell(row=row_i, column=1, value=i).font = FONT
+        ws3.cell(row=row_i, column=2, value=r["code"]).font = FONT
+        date_val = r["actual_response_date"].strftime("%d.%m.%Y") if r["actual_response_date"] else ""
+        ws3.cell(row=row_i, column=3, value=date_val).font = FONT
+        ws3.cell(row=row_i, column=4, value=OBJECT_TITLE).font = FONT
+        ws3.cell(row=row_i, column=5, value=r["change_number"]).font = FONT
+        ws3.cell(row=row_i, column=6, value=r["designer_name"] or "").font = FONT
+        for c in range(1, 7):
+            ws3.cell(row=row_i, column=c).border = BORDER_ALL
+    ws3.freeze_panes = None
+
+    wb.active = 0
     return _xlsx_response("id_grafik.xlsx", wb)
 
 

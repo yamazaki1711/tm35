@@ -4,6 +4,7 @@
 <p class="subtitle">
   Вид, привычный части руководства Заказчика по книге «01.09.26 График ИД
   Хабаровск с комм. ред.» — данные из текущей базы, обновляются сами.
+  Книга Excel — 3 вкладки: «График ИД», «График ИД по папкам», «ИЗМЫ ПД».
   <a href="/export/id-grafik.xlsx">Скачать Excel</a>
 </p>
 
@@ -17,7 +18,28 @@
     <div class="kpi-label">Не размечено (не в этом отчёте)</div>
     <div class="kpi-sub">разбор — отдельно, см. tools/import_grafik_id_unmatched.csv</div>
   </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if folders_grouped|length == 0 and folders_total > 0 else '' }}">{{ folders_grouped.values()|map('length')|sum }}</div>
+    <div class="kpi-label">Папок с определённой категорией</div>
+    <div class="kpi-sub">из {{ folders_total }} папок всего — вкладка «По папкам»</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ changes_total }}</div>
+    <div class="kpi-label">Строк в реестре ИЗМ</div>
+    <div class="kpi-sub">вкладка «ИЗМЫ ПД»</div>
+  </div>
 </div>
+
+{% if folders_skipped %}
+<div class="empty-note" style="text-align:left">
+  <strong>Папки, пропущенные на вкладке «По папкам»</strong> — категория/участок не определились:
+  <ul style="margin:.5rem 0 0 1.2rem">
+    {% for s in folders_skipped %}
+    <li>{{ s.folder }} — {{ s.reason }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
 
 {% if not grouped %}
 <div class="empty-note">Ни один раздел ещё не размечен участком/категорией — отчёт пуст.</div>
