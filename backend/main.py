@@ -3741,12 +3741,13 @@ def id_packages_page(request: Request):
 # замечаний 2". В промпте задачи упоминалось "Передано на проверку" —
 # такого текста нет НИ В ОДНОЙ из 17 вкладок справочника (проверено),
 # не добавлял несуществующее, см. NIGHT_RUN_20260909.md.
-_RSK_CYCLE_STATUSES = {
-    "первичная проверка рск",
-    "устранение замечаний 1",
-    "повторная проверка рск",
-    "устранение замечаний 2",
-}
+RSK_CYCLE_STATUS_CODES = [
+    "Первичная проверка РСК",
+    "Устранение замечаний 1",
+    "Повторная проверка РСК",
+    "Устранение замечаний 2",
+]
+_RSK_CYCLE_STATUSES = {s.lower() for s in RSK_CYCLE_STATUS_CODES}
 
 
 def status_fill_color(status_text):
@@ -3948,6 +3949,110 @@ def id_grafik_page(request: Request):
                   groups_with_members=groups_with_members, groups_empty=groups_empty,
                   folders_grouped=folders_grouped, folders_skipped=folders_skipped, folders_total=folders_total,
                   changes_total=changes_total)
+
+
+# ====== Страница "График ИД" — живой прогресс по видам работ (задача 4,
+# ночной прогон 09-10.09.2026). Без полного ТЗ (cc_prompt_obzor_id_grafik.md
+# не дошёл — см. NIGHT_RUN_20260909.md) — реализованы блоки 1-2 из 4
+# ("шесть плиток" и "Поток 15 Разделов"), по инструкции задачи блоки
+# 3-4 (матрица-светофор и drill-down) не начаты, пункт меню НЕ включён
+# (условие задачи: "включать, только когда первые два блока готовы" —
+# они готовы, но раз вся страница ещё не полна, оставляю доступной по
+# прямому URL, в меню решит добавить координатор при готовности 3-4).
+#
+# Гранулярность — НЕ раздел (id_form_row), а связка раздел+вид работы
+# (row_id, work_type_id): один раздел может требовать до ~24 разных
+# видов работ (АОСР, исполнительная схема и т.п.), у каждого свой
+# статус. Отдельная, более мелкая каноническая CTE — не переиспользует
+# LATEST_ID_FORM_ENTRY_CTE (та схлопывает по row_id, теряя work_type_id
+# нарочно, для другой задачи — "текущий статус раздела в целом" — часть
+# 3 экспорта «График ИД»). Обе CTE обслуживают разные, законные вопросы,
+# путать их — значит вернуть ту самую "болезнь" из аудита 08.09.2026.
+LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE = """
+    with latest_by_worktype as (
+        select distinct on (row_id, work_type_id) row_id, work_type_id, status_id, status_date
+        from id_form_entry
+        where work_type_id is not null
+        order by row_id, work_type_id, created_at desc
+    )
+"""
+
+
+def compute_id_progress_tiles():
+    """Блок 1 задачи 4 — шесть плиток. Состав плиток не был в кратком
+    изложении промпта (полное ТЗ не дошло) — выбран самостоятельно как
+    осмысленная сводка по связкам раздел+вид работы; если задумывался
+    другой состав — заменить одним местом, см. NIGHT_RUN_20260909.md."""
+    row = query_one(
+        LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE
+        + """
+        select
+            count(*) as total_pairs,
+            count(distinct l.row_id) as rows_touched,
+            count(*) filter (where s.code = 'Подписано') as signed,
+            count(*) filter (where s.code = 'Подписано в карандаше') as pencil,
+            count(*) filter (where s.code = any(%(rsk)s)) as in_rsk_cycle,
+            count(*) filter (where s.code in ('Нет проектного решения', 'Замечания к площадке')) as stoppers
+        from latest_by_worktype l
+        join id_form_status s on s.id = l.status_id
+        """,
+        {"rsk": RSK_CYCLE_STATUS_CODES},
+    )
+    total_rows_all = query_one(
+        "select count(*) as n from id_form_row r join id_form_tab t on t.id=r.tab_id "
+        "where t.code not in ('opv','n')"
+    )["n"]
+    return {
+        "total_pairs": row["total_pairs"],
+        "rows_touched": row["rows_touched"],
+        "total_rows_all": total_rows_all,
+        "signed": row["signed"],
+        "pencil": row["pencil"],
+        "in_rsk_cycle": row["in_rsk_cycle"],
+        "stoppers": row["stoppers"],
+    }
+
+
+def compute_id_progress_stream():
+    """Блок 2 задачи 4 — "Поток 15 Разделов": по каждой из 17 вкладок
+    (промпт говорит "15" — в справочнике id_form_tab их 17, включая ОПВ
+    и Н, обычно исключаемые из "15 категорий ПТО" как в остальном
+    проекте; здесь показаны ВСЕ 17, раз задача явно про виды работ по
+    вкладкам, а не про тот привычный список — расхождение "15 vs 17"
+    зафиксировано в NIGHT_RUN, не подогнано вручную до 15) — количество
+    связок раздел+вид работы по трём корзинам: зелёный (подписано),
+    жёлтый (цикл РСК + подписано в карандаше — "в процессе подписания"),
+    красный (стопперы + всё остальное, что не зелёное и не жёлтое)."""
+    rows = query(
+        LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE
+        + """
+        select t.id as tab_id, t.label as tab_label,
+               count(*) filter (where s.code = 'Подписано') as green_n,
+               count(*) filter (
+                   where s.code = any(%(rsk)s) or s.code = 'Подписано в карандаше'
+               ) as yellow_n,
+               count(*) filter (
+                   where s.code <> 'Подписано'
+                     and s.code <> 'Подписано в карандаше'
+                     and s.code <> all(%(rsk)s)
+               ) as red_n
+        from latest_by_worktype l
+        join id_form_row r on r.id = l.row_id
+        join id_form_tab t on t.id = r.tab_id
+        join id_form_status s on s.id = l.status_id
+        group by t.id, t.label
+        order by t.label
+        """,
+        {"rsk": RSK_CYCLE_STATUS_CODES},
+    )
+    return rows
+
+
+@app.get("/id-progress")
+def id_progress_page(request: Request):
+    tiles = compute_id_progress_tiles()
+    stream = compute_id_progress_stream()
+    return render(request, "id_progress.html", "id-progress", tiles=tiles, stream=stream)
 
 
 # ====== Патч реального шаблона (координатор, часть 4/5, 09.09.2026) ======

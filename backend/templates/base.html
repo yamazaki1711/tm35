@@ -19,7 +19,7 @@
 </head>
 <body>
 {% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
-{% set id_active = active in ['id-packages', 'changes', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry', 'id-grafik'] %}
+{% set id_active = active in ['id-packages', 'changes', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry', 'id-grafik', 'id-progress'] %}
 {% set rsk_active = active in ['rsk-registry', 'rsk-dashboard', 'rsk-processing', 'rsk-import'] %}
 <nav>
 <div class="nav-inner">
@@ -117,6 +117,10 @@
         <a href="/id-grafik" role="menuitem" class="{{ 'active' if active=='id-grafik' }}" {{ 'aria-current="page"' if active=='id-grafik' }}>
           <svg class="icon" viewBox="0 0 24 24"><path d="M5 20V11M11 20V5M17 20v-8"/></svg>
           <span>График ИД (Excel)</span>
+        </a>
+        <a href="/id-progress" role="menuitem" class="{{ 'active' if active=='id-progress' }}" {{ 'aria-current="page"' if active=='id-progress' }}>
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 19h16M7 19V9M12 19V5M17 19v-7"/></svg>
+          <span>Прогресс по видам работ</span>
         </a>
         <a href="/changes" role="menuitem" class="{{ 'active' if active=='changes' }}" {{ 'aria-current="page"' if active=='changes' }}>
           <svg class="icon" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="3" rx="1"/><path d="M9 11h6M9 15h6M9 19h4"/></svg>

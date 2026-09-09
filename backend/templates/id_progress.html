@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>График ИД — прогресс по видам работ</h1>
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ tiles.total_pairs }}</div>
+    <div class="kpi-label">Связок раздел+вид работы с записью</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ tiles.rows_touched }}</div>
+    <div class="kpi-label">Разделов хотя бы с одной записью</div>
+    <div class="kpi-sub">из {{ tiles.total_rows_all }} разделов всего</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num ok">{{ tiles.signed }}</div>
+    <div class="kpi-label">Подписано</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.pencil }}</div>
+    <div class="kpi-label">Подписано в карандаше</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.in_rsk_cycle }}</div>
+    <div class="kpi-label">В цикле РСК</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'danger' if tiles.stoppers > 0 else '' }}">{{ tiles.stoppers }}</div>
+    <div class="kpi-label">Стопперы</div>
+  </div>
+</div>
+
+<h3>Поток по вкладкам</h3>
+<div class="bar-chart">
+  {% for r in stream %}
+  <div class="bar-row">
+    <div class="bar-label">{{ r.tab_label }}</div>
+    <div class="bar-track" style="display:flex; height:1.1rem;">
+      {% if r.green_n > 0 %}<div style="flex:{{ r.green_n }} 0 0; background:var(--c-success);" title="Подписано: {{ r.green_n }}"></div>{% endif %}
+      {% if r.yellow_n > 0 %}<div style="flex:{{ r.yellow_n }} 0 0; background:var(--c-warning);" title="В процессе подписания: {{ r.yellow_n }}"></div>{% endif %}
+      {% if r.red_n > 0 %}<div style="flex:{{ r.red_n }} 0 0; background:var(--c-danger);" title="Остальное: {{ r.red_n }}"></div>{% endif %}
+    </div>
+    <div class="bar-value nowrap">{{ r.green_n }} / {{ r.yellow_n }} / {{ r.red_n }}</div>
+  </div>
+  {% else %}
+  <div class="empty-note">Нет ни одной записи по видам работ.</div>
+  {% endfor %}
+</div>
+{% endblock %}
