@@ -3731,22 +3731,43 @@ def id_packages_page(request: Request):
 # (импортом размечено 17 из 133 строк исходника, см.
 # docs/decisions_needed_grafik_id_export.md), не считается ошибкой.
 
+# Ночной прогон 09-10.09.2026, задача 1: янтарным (FFFFC000) красится
+# весь цикл подготовки к подписи через РСК — "работа сделана, документ
+# ушёл на подпись, финальной подписи нет" (та же логика, что и у
+# "согласовано к подписанию"/"Подписаны сваи" из оригинала). Список — по
+# факту ЖИВОГО справочника id_form_status (все 17 вкладок, проверено
+# напрямую, 9 значений на вкладку): "Первичная проверка РСК",
+# "Устранение замечаний 1", "Повторная проверка РСК", "Устранение
+# замечаний 2". В промпте задачи упоминалось "Передано на проверку" —
+# такого текста нет НИ В ОДНОЙ из 17 вкладок справочника (проверено),
+# не добавлял несуществующее, см. NIGHT_RUN_20260909.md.
+_RSK_CYCLE_STATUSES = {
+    "первичная проверка рск",
+    "устранение замечаний 1",
+    "повторная проверка рск",
+    "устранение замечаний 2",
+}
+
+
 def status_fill_color(status_text):
     """Легенда цвета статуса — по фактической раскраске исходного листа
-    "График ИД" (разбор сделан заранее, не догадка). Единственное место,
-    где эта легенда описана — экспорт вызывает только эту функцию.
+    "График ИД" (разбор сделан заранее, не догадка), расширена ночным
+    прогоном 09.09.2026 (задача 1) на цикл РСК из живого справочника
+    статусов. Единственное место, где эта легенда описана — экспорт
+    вызывает только эту функцию.
 
-    Против ЖИВОГО словаря id_form_status.label (фиксированные 9 значений
-    на вкладку: "не приступали" → ... → "Подписано") реально сработает
-    почти всегда только первое правило — живой словарь беднее текста
-    исходного снимка на 01.09.2026, там не было отдельных состояний вида
-    "80%"/"согласовано к подписанию"/"КЭВ"/"КРВ". См. decisions_needed."""
+    Стопперы ("Нет проектного решения", "Замечания к площадке") —
+    сознательно БЕЗ заливки: красного цвета в оригинале нет вовсе,
+    вводить новый цвет в документ для Заказчика без решения ПТО не
+    стал (см. NIGHT_RUN_20260909.md, "Требует решения координатора")."""
     if not status_text:
         return None
     s = status_text.strip()
     sl = s.lower()
     if sl.startswith("подписано"):
         return "FF92D050"
+    if sl in _RSK_CYCLE_STATUSES:
+        return "FFFFC000"
     if sl in ("согласовано к подписанию", "подписаны сваи") or "на подпис" in sl:
         return "FFFFC000"
     if sl in ("да", "нет", "в работе"):
@@ -4204,7 +4225,6 @@ def export_id_grafik_xlsx():
         template_bytes = f.read()
     order, parts = _xlsx_read_parts(template_bytes)
 
-    out_bytes = template_bytes
     try:
         sheet_xml = parts[GRAFIK_ID_SHEET1_PART].decode("utf-8")
         styles_xml = parts["xl/styles.xml"].decode("utf-8")
@@ -4218,25 +4238,31 @@ def export_id_grafik_xlsx():
 
         _xlsx_verify_only_patched_changed(template_bytes, candidate_bytes, patched_coords)
 
-        out_bytes = candidate_bytes
         print(f"[id-grafik.xlsx] пропатчено {len(patched_coords)} ячеек: {sorted(patched_coords)}")
         if skipped_log:
             print("[id-grafik.xlsx] статус не понижен (оставлено значение шаблона):")
             for line in skipped_log:
                 print("  " + line)
-    except Exception:
-        # Патч не должен уронить экспорт — при любой ошибке (в т.ч. если
-        # самопроверка нашла незаявленное расхождение) отдаём
-        # немодифицированный шаблон (снимок на 01.09.2026), не 500.
+
+        return Response(
+            content=candidate_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="id_grafik.xlsx"'},
+        )
+    except Exception as e:
+        # Ночной прогон 09.09.2026, задача 1: НЕ отдавать немодифицированный
+        # шаблон молча при провале самопроверки — человек получил бы данные
+        # на 01.09.2026 и не узнал бы, что выгрузка не сработала (тот же
+        # класс ошибки, что разбирался в AUDIT_DATA_INTEGRITY_2026-09-08.md —
+        # устаревшее число неотличимо от верного на глаз). Файл не отдаём
+        # вообще, координаты расхождения — в лог.
         import traceback
         traceback.print_exc()
-        out_bytes = template_bytes
-
-    return Response(
-        content=out_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="id_grafik.xlsx"'},
-    )
+        print(f"[id-grafik.xlsx] ВЫГРУЗКА ОТКАЗАНА: {e!r}")
+        msg = urllib.parse.quote(
+            "Выгрузка не сформирована: проверка целостности не прошла, обратитесь к администратору."
+        )
+        return RedirectResponse(url=f"/id-grafik?err={msg}", status_code=303)
 
 
 # =======================================================================
