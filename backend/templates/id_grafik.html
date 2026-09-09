@@ -9,25 +9,12 @@
 <div class="flash flash-err">{{ request.query_params.get('err') }}</div>
 {% endif %}
 
-<p class="subtitle">
-  Скачиваемый файл — сама книга «01.09.26 График ИД Хабаровск с комм. ред.»
-  (все 6 вкладок, примечания и рисунки сохранены), в ней обновляется вживую
-  только колонка «Статус» вкладки «График ИД» — там, где для раздела/группы
-  есть данные в системе. Гант-сетка (F..O) не трогается вообще — это ручной
-  план закрытия КС-2 по полумесяцам, не факт подписания. Остальное (в т.ч.
-  вкладки «По папкам», «ИЗМЫ ПД») — снимок на 01.09.2026, не перестраивается.
-  <a href="/export/id-grafik.xlsx">Скачать Excel</a>
-</p>
-<p class="subtitle">
-  Таблица и плитки ниже на этой странице — предпросмотр по живым данным
-  (в т.ч. «По папкам»/ИЗМ), не то же самое, что вкладки в файле выше.
-</p>
+<p class="subtitle"><a href="/export/id-grafik.xlsx">Скачать Excel</a></p>
 
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ total_groups }}</div>
     <div class="kpi-label">Групп (строк исходного графика)</div>
-    <div class="kpi-sub">создаются все — из CSV, безусловно</div>
   </div>
   <div class="kpi">
     <div class="kpi-num ok">{{ groups_with_members }}</div>
@@ -36,7 +23,6 @@
   <div class="kpi">
     <div class="kpi-num {{ 'warn' if groups_empty > 0 else '' }}">{{ groups_empty }}</div>
     <div class="kpi-label">Групп без данных в системе</div>
-    <div class="kpi-sub">разбор — отдельно, см. tools/import_grafik_id_unmatched_v2.csv</div>
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'warn' if folders_grouped|length == 0 and folders_total > 0 else '' }}">{{ folders_grouped.values()|map('length')|sum }}</div>

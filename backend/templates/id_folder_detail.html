@@ -20,9 +20,6 @@
 {% endif %}
 
 <h3>Оценка ПТО при сборке</h3>
-<p class="kpi-hint">Предварительная оценка, не денежный показатель — в контрактные суммы
-(«Сумма подписанных папок», «Остаток в деньгах») с 09.09.2026 не входит. Источник денег —
-сметная стоимость ниже, вводится после подписания.</p>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/amount" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
   <label style="flex:1">Оценка, ₽
     <input type="number" name="amount_rub" min="0.01" step="0.01" value="{{ folder.amount_rub or '' }}" required>
@@ -83,7 +80,6 @@
 </div>
 
 <h3>Добавить разделы</h3>
-<p class="subtitle">Показаны только разделы со статусом «Подписано», ещё не входящие ни в одну папку.</p>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/rows" style="max-width:680px;">
   <label>Разделы (можно несколько, Ctrl/Cmd+клик)
     <select name="row_ids" multiple size="12" required>
@@ -176,8 +172,6 @@
 
 {% if folder.signed_date %}
 <h3>Сметная стоимость</h3>
-<p class="kpi-hint">Доступна с момента подписания папки — источник истины для денежных
-показателей («Сумма подписанных папок», «Остаток в деньгах»).</p>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/smeta" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
   <label style="flex:1">Сметная стоимость, ₽
     <input type="number" name="amount_smeta_rub" min="0.01" step="0.01" value="{{ folder.amount_smeta_rub or '' }}" required>

@@ -1,8 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Выполнение — сборка папок ИД</h1>
-<p class="subtitle">Единица работы и денег — папка, не отдельный раздел. Деньги считаются
-только за ПОДПИСАННУЮ папку (не за переданную в СДО и не по прикидке ПТО при сборке).</p>
 
 {% if request.query_params.get('ok') %}
 <div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>
@@ -124,8 +122,6 @@
 </div>
 
 <h3>Незакрытый / невыбираемый объём работ</h3>
-<p class="subtitle">Ручной инструмент для объёмов вне стандартного процесса сборки папок — список и сумма
-вводятся вручную, автоматически не считаются.</p>
 <form class="form-box" method="post" action="/api/manual-volume" style="max-width:600px;">
   <label>Описание
     <input type="text" name="description" required placeholder="например, разделы вне 15 категорий">
