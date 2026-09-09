@@ -4314,6 +4314,43 @@ ID_AVAILABLE_ROWS_SQL = """
 """
 
 
+# Ночной прогон 09-10.09.2026, задача 3 — «Обзор ИД» вокруг ПАПКИ, не
+# раздела: деньги платят за ПОДПИСАННУЮ папку, а модель до сих пор не
+# различала "передана в СДО" (отправлена на проверку) и "подписана"
+# (принята и подписана) — signed_folders_sum считался по
+# sdo_transfer_date, то есть фактически по дате отправки, не приёмки.
+#
+# Стадия папки НЕ хранится отдельным полем (та же дисциплина, что весь
+# проект — не дублировать вычислимое состояние в колонке, которая может
+# разойтись с фактом, см. AUDIT_DATA_INTEGRITY_2026-09-08.md) —
+# вычисляется здесь, в ЕДИНСТВЕННОМ месте, по тому, какая из дат
+# заполнена последней в цепочке. Каждая папка — ровно одна стадия
+# (нужно для воронки: сумма по стадиям обязана сходиться с count(*)).
+ID_FOLDER_STAGES = ["formed", "transferred", "checking", "signed", "ks2"]
+ID_FOLDER_STAGE_LABELS = {
+    "formed": "Сформирована",
+    "transferred": "Передана в СДО",
+    "checking": "Проверка",
+    "signed": "Подписана",
+    "ks2": "КС-2",
+}
+
+
+def id_folder_stage(folder):
+    """Единственное место, определяющее стадию папки — Сформирована →
+    Передана в СДО → Проверка → Подписана → КС-2. folder — dict/Row с
+    ключами sdo_transfer_date/check_start_date/signed_date/ks2_date."""
+    if folder.get("ks2_date"):
+        return "ks2"
+    if folder.get("signed_date"):
+        return "signed"
+    if folder.get("check_start_date"):
+        return "checking"
+    if folder.get("sdo_transfer_date"):
+        return "transferred"
+    return "formed"
+
+
 def query_id_folders(order="desc"):
     """Список всех папок с числом разделов — общий источник для
     /id-folders («Выполнение») и /id-folders/registry («Реестр папок»),
@@ -4321,12 +4358,56 @@ def query_id_folders(order="desc"):
     direction = "asc" if order == "asc" else "desc"
     return query(f"""
         select f.id, f.name, f.folder_date, f.sdo_transfer_date, f.sdo_signer_name,
-               f.amount_rub as amount_sum, count(fr.id) as row_count
+               f.check_start_date, f.signed_date, f.signed_by, f.ks2_date, f.ks2_no,
+               f.amount_rub as amount_sum, f.amount_smeta_rub, count(fr.id) as row_count
         from id_folder f
         left join id_folder_row fr on fr.folder_id = f.id
         group by f.id
         order by f.id {direction}
     """)
+
+
+def compute_id_folder_funnel():
+    """Воронка папок по 5 стадиям — количество и сумма (только там, где
+    она известна: amount_smeta_rub вводится с момента подписания, для
+    более ранних стадий его ещё нет). Сумма по count(*) стадий обязана
+    сходиться с count(*) from id_folder — каждая папка ровно в одной
+    стадии, стадии не пересекаются."""
+    folders = query("select id, sdo_transfer_date, check_start_date, signed_date, ks2_date, "
+                     "amount_smeta_rub from id_folder")
+    funnel = {s: {"count": 0, "sum": 0.0, "known_sum_count": 0} for s in ID_FOLDER_STAGES}
+    for f in folders:
+        stage = id_folder_stage(f)
+        funnel[stage]["count"] += 1
+        if f["amount_smeta_rub"] is not None:
+            funnel[stage]["sum"] += float(f["amount_smeta_rub"])
+            funnel[stage]["known_sum_count"] += 1
+    return funnel
+
+
+def compute_id_folder_transitions(limit=10):
+    """"Переходы" — последние по времени смены стадии по всем папкам
+    (строка 4 дашборда папок, задача 3). Каждая папка может дать до 4
+    переходов (передана/проверка/подписана/КС-2) — берём все, сортируем
+    по дате, показываем последние `limit`."""
+    folders = query(
+        "select id, name, sdo_transfer_date, check_start_date, signed_date, ks2_date "
+        "from id_folder"
+    )
+    events = []
+    field_labels = [
+        ("sdo_transfer_date", "Передана в СДО"),
+        ("check_start_date", "Начата проверка"),
+        ("signed_date", "Подписана"),
+        ("ks2_date", "Оформлен КС-2"),
+    ]
+    for f in folders:
+        for field, label in field_labels:
+            if f[field]:
+                events.append({"folder_name": f["name"], "folder_id": f["id"],
+                                "label": label, "date": f[field]})
+    events.sort(key=lambda e: e["date"], reverse=True)
+    return events[:limit]
 
 
 def compute_id_folder_stats():
@@ -4354,7 +4435,16 @@ def compute_id_folder_stats():
 
     folders_count = query_one("select count(*) as n from id_folder")["n"]
 
+    # Денежный источник истины — amount_smeta_rub ПОДПИСАННЫХ (signed_date
+    # заполнена) папок, не amount_rub (прикидка ПТО при сборке) и не по
+    # факту передачи в СДО (задача 3, ночной прогон 09-10.09.2026).
+    # Старое значение (по sdo_transfer_date/amount_rub) считается тоже —
+    # только для сравнения старое/новое в отчёте прогона, в денежных
+    # показателях интерфейса больше не участвует.
     signed_folders_sum = query_one(
+        "select coalesce(sum(amount_smeta_rub), 0) as s from id_folder where signed_date is not null"
+    )["s"]
+    signed_folders_sum_old_by_transfer_estimate = query_one(
         "select coalesce(sum(amount_rub), 0) as s from id_folder where sdo_transfer_date is not null"
     )["s"]
     manual_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_manual_volume")["s"]
@@ -4368,22 +4458,39 @@ def compute_id_folder_stats():
         "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
         "signed_folders_sum": signed_folders_sum, "money_remaining": money_remaining,
         "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
+        "signed_folders_sum_old_by_transfer_estimate": signed_folders_sum_old_by_transfer_estimate,
+        "funnel": compute_id_folder_funnel(),
     }
 
 
 @app.get("/id-folders")
 def id_folders_page(request: Request):
     folders = query_id_folders()
+    for f in folders:
+        f["stage"] = id_folder_stage(f)
+        f["stage_label"] = ID_FOLDER_STAGE_LABELS[f["stage"]]
     stats = compute_id_folder_stats()
     manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
+    transitions = compute_id_folder_transitions()
+    # "Активных ИЗМ (ДПР)" — строка 3 воронки (задача 3, ночной прогон):
+    # тот же признак "активная" (не завершена/не архивна), что и на
+    # /changes и в change_stats_row (home_v2) — не отдельное правило.
+    active_changes = query_one(
+        "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
+    )["n"]
 
     return render(request, "id_folders.html", "id-folders",
-                  folders=folders, stats=stats, manual_volumes=manual_volumes)
+                  folders=folders, stats=stats, manual_volumes=manual_volumes,
+                  transitions=transitions, active_changes=active_changes,
+                  stage_labels=ID_FOLDER_STAGE_LABELS, stages=ID_FOLDER_STAGES)
 
 
 @app.get("/id-folders/registry")
 def id_folders_registry_page(request: Request, status: str = "all", sort: str = "desc"):
     folders = query_id_folders(order=sort)
+    for f in folders:
+        f["stage"] = id_folder_stage(f)
+        f["stage_label"] = ID_FOLDER_STAGE_LABELS[f["stage"]]
 
     totals = {
         "folders_count": len(folders),
@@ -4391,8 +4498,12 @@ def id_folders_registry_page(request: Request, status: str = "all", sort: str = 
         "amount_total": sum(float(f["amount_sum"] or 0) for f in folders),
         # Та же сумма, что signed_folders_sum в compute_id_folder_stats()
         # (координатор, 08.09.2026) — раньше считалась второй раз, в
-        # Python, по тому же условию sdo_transfer_date is not null.
-        "amount_transferred": float(compute_id_folder_stats()["signed_folders_sum"]),
+        # Python. С задачи 3 (ночной прогон 09-10.09.2026) это сумма
+        # amount_smeta_rub ДЕЙСТВИТЕЛЬНО подписанных папок (signed_date),
+        # не оценка по факту передачи в СДО — ключ и подпись в шаблоне
+        # переименованы вместе с расчётом, чтобы название не разошлось со
+        # смыслом.
+        "amount_signed": float(compute_id_folder_stats()["signed_folders_sum"]),
     }
 
     if status == "formed":
@@ -4414,13 +4525,13 @@ def export_id_folders_csv(status: str = "all"):
     out = [
         (f["name"], _csv_dmy(f["folder_date"]), f["row_count"], f["amount_sum"] or 0,
          f["sdo_signer_name"] or "", _csv_dmy(f["sdo_transfer_date"]),
-         "Передана в СДО" if f["sdo_transfer_date"] else "Сформирована")
+         ID_FOLDER_STAGE_LABELS[id_folder_stage(f)], f["amount_smeta_rub"] or "")
         for f in folders
     ]
     return _csv_response(
         "id_folders.csv",
-        ["Номер папки", "Дата формирования", "Разделов", "Стоимость, ₽",
-         "Подписант реестра передачи", "Дата передачи в СДО", "Статус"],
+        ["Номер папки", "Дата формирования", "Разделов", "Стоимость (оценка), ₽",
+         "Подписант реестра передачи", "Дата передачи в СДО", "Стадия", "Сметная стоимость, ₽"],
         out,
     )
 
@@ -4498,7 +4609,8 @@ def id_folder_detail_page(request: Request, folder_id: int):
         available_by_tab.setdefault(r["tab_label"], []).append(r)
     return render(request, "id_folder_detail.html", "id-folders",
                   folder=folder, rows_in_folder=rows_in_folder,
-                  available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS)
+                  available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS,
+                  stage=id_folder_stage(folder), stage_label=ID_FOLDER_STAGE_LABELS[id_folder_stage(folder)])
 
 
 @app.post("/api/id-folder/{folder_id}/rows")
@@ -4622,6 +4734,109 @@ def api_id_folder_sdo(request: Request, folder_id: int,
     # в общем списке одним действием.
     ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» передана в СДО {_csv_dmy(date_val)}.")
     return RedirectResponse(url=f"/id-folders/registry?ok={ok_msg}", status_code=303)
+
+
+# ── Ночной прогон 09-10.09.2026, задача 3: переходы по стадиям папки
+# после "Передана в СДО" — Проверка → Подписана → КС-2. Даты
+# принимаются и задним числом, тот же принцип, что и у /sdo выше —
+# для папок, собираемых по уже прошедшим стадии разделам с начала
+# стройки. Строгий порядок стадий НЕ проверяется (можно проставить
+# дату подписания раньше, чем дату начала проверки, если так было в
+# жизни) — форма честно отражает, что человек ввёл, а не навязывает
+# последовательность, которой сама папка могла не следовать. ──
+
+@app.post("/api/id-folder/{folder_id}/check-start")
+def api_id_folder_check_start(request: Request, folder_id: int, check_start_date: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    date_val = _parse_date(check_start_date)
+    if not date_val:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата начала проверки указана некорректно."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set check_start_date=%s where id=%s", (date_val, folder_id),
+    ))
+    ok_msg = urllib.parse.quote(f"Проверка папки «{folder['name']}» начата {_csv_dmy(date_val)}.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
+
+
+@app.post("/api/id-folder/{folder_id}/sign")
+def api_id_folder_sign(request: Request, folder_id: int,
+                        signed_date: str = Form(...), signed_by: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    date_val = _parse_date(signed_date)
+    if not date_val:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата подписания указана некорректно."), status_code=303)
+    # Таблица решений ночного прогона: подписант папки — тот же список,
+    # что и подписант реестра передачи (RSK_SIGNERS).
+    if signed_by not in RSK_SIGNERS:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Недопустимый подписант."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set signed_date=%s, signed_by=%s where id=%s", (date_val, signed_by, folder_id),
+    ))
+    ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» подписана {_csv_dmy(date_val)}.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
+
+
+@app.post("/api/id-folder/{folder_id}/ks2")
+def api_id_folder_ks2(request: Request, folder_id: int,
+                       ks2_date: str = Form(...), ks2_no: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    date_val = _parse_date(ks2_date)
+    if not date_val:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата КС-2 указана некорректно."), status_code=303)
+    if not ks2_no.strip():
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Номер КС-2 обязателен."), status_code=303)
+    # Таблица решений ночного прогона: КС-2 в контуре ИД — только дата и
+    # номер на папке, связей с другими сущностями (акты КС-2 подрядчика
+    # и т.п.) не заводим.
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set ks2_date=%s, ks2_no=%s where id=%s", (date_val, ks2_no.strip(), folder_id),
+    ))
+    ok_msg = urllib.parse.quote(f"КС-2 №{ks2_no.strip()} по папке «{folder['name']}» оформлен {_csv_dmy(date_val)}.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
+
+
+@app.post("/api/id-folder/{folder_id}/smeta")
+def api_id_folder_smeta(request: Request, folder_id: int, amount_smeta_rub: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id, name, signed_date from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+    back_url = f"/id-folders/{folder_id}"
+    # "Доступен с момента подписания" (задача 3) — не только скрыт в
+    # форме, проверяется и на сервере, иначе прямой POST в обход формы
+    # мог бы занести сметную стоимость до подписания.
+    if not folder["signed_date"]:
+        return RedirectResponse(
+            url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость вводится только после подписания папки."),
+            status_code=303,
+        )
+    try:
+        amt = float(amount_smeta_rub.replace(",", "."))
+    except ValueError:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость указана некорректно."), status_code=303)
+    if amt <= 0:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость должна быть больше нуля."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set amount_smeta_rub=%s where id=%s", (amt, folder_id),
+    ))
+    ok_msg = urllib.parse.quote(f"Сметная стоимость папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
 @app.post("/api/manual-volume")

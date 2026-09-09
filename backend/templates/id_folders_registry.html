@@ -24,8 +24,8 @@
     <div class="kpi-label">Стоимость всех папок, ₽</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ totals.amount_transferred|ru_money }}</div>
-    <div class="kpi-label">Стоимость переданных в СДО, ₽</div>
+    <div class="kpi-num">{{ totals.amount_signed|ru_money }}</div>
+    <div class="kpi-label">Стоимость подписанных, ₽</div>
   </div>
 </div>
 
@@ -68,11 +68,7 @@
       <td>{{ f.sdo_signer_name or '—' }}</td>
       <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td>
-        {% if f.sdo_transfer_date %}
-        <span class="badge badge-ok">Передана в СДО</span>
-        {% else %}
-        <span class="badge badge-neutral">Сформирована</span>
-        {% endif %}
+        <span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span>
       </td>
     </tr>
     {% else %}

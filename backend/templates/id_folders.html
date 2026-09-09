@@ -1,36 +1,94 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Выполнение — сборка папок ИД</h1>
+<p class="subtitle">Единица работы и денег — папка, не отдельный раздел. Деньги считаются
+только за ПОДПИСАННУЮ папку (не за переданную в СДО и не по прикидке ПТО при сборке).</p>
 
-<div class="kpi-row kpi-small">
-  <div class="kpi">
-    <div class="kpi-num">{{ stats.folders_count }}</div>
-    <div class="kpi-label">Собрано папок</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'warn' if stats.unsigned_count > 0 else '' }}">{{ stats.unsigned_count }}</div>
-    <div class="kpi-label">Остаток неподписанных разделов</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ stats.signed_not_in_folder }}</div>
-    <div class="kpi-label">Подписано, ещё не в папке</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ stats.signed_folders_sum|ru_money }}</div>
-    <div class="kpi-label">Сумма подписанных папок, ₽</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
-    <div class="kpi-label">Остаток в деньгах, ₽</div>
-    <div class="kpi-sub">из {{ stats.contract_total|ru_money }} ₽ по контракту (с НДС)</div>
-  </div>
-</div>
-
+{% if request.query_params.get('ok') %}
+<div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>
+{% endif %}
 {% if request.query_params.get('err') %}
 <div class="flash flash-err">{{ request.query_params.get('err') }}</div>
 {% endif %}
 {% if request.query_params.get('warn') %}
 <div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
+{% endif %}
+
+<h3 style="margin-top:0">Воронка папок по стадиям</h3>
+<div class="kpi-row kpi-small">
+  {% for s in stages %}
+  <div class="kpi">
+    <div class="kpi-num {{ 'ok' if s in ('signed', 'ks2') else '' }}">{{ stats.funnel[s].count }}</div>
+    <div class="kpi-label">{{ stage_labels[s] }}</div>
+    <div class="kpi-sub">{{ stats.funnel[s].sum|ru_money if stats.funnel[s].known_sum_count > 0 else '—' }} ₽</div>
+  </div>
+  {% endfor %}
+</div>
+
+<h3>Деньги</h3>
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.contract_total|ru_money }}</div>
+    <div class="kpi-label">Контракт, ₽ (с НДС)</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.signed_folders_sum|ru_money }}</div>
+    <div class="kpi-label">Подписано, ₽</div>
+    <div class="kpi-sub">по сметной стоимости подписанных папок</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.manual_sum|ru_money }}</div>
+    <div class="kpi-label">Ручной объём, ₽</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
+    <div class="kpi-label">Остаток в деньгах, ₽</div>
+  </div>
+</div>
+
+<h3>Разделы</h3>
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.total_rows }}</div>
+    <div class="kpi-label">Всего разделов</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.signed_total }}</div>
+    <div class="kpi-label">Подписано разделов</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if stats.unsigned_count > 0 else '' }}">{{ stats.unsigned_count }}</div>
+    <div class="kpi-label">Остаток неподписанных</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.signed_not_in_folder }}</div>
+    <div class="kpi-label">Готово к сборке</div>
+    <div class="kpi-sub">подписано, ещё не в папке</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if active_changes > 0 else '' }}">{{ active_changes }}</div>
+    <div class="kpi-label">Активных ИЗМ (ДПР)</div>
+  </div>
+</div>
+
+<h3>Последние переходы</h3>
+{% if transitions %}
+<div class="table-wrap" style="margin-bottom:1.5rem;">
+<table class="data-table">
+  <thead><tr><th>Папка</th><th>Переход</th><th>Дата</th></tr></thead>
+  <tbody>
+    {% for t in transitions %}
+    <tr>
+      <td><a href="/id-folders/{{ t.folder_id }}">{{ t.folder_name }}</a></td>
+      <td>{{ t.label }}</td>
+      <td class="nowrap">{{ t.date|fmt_dmy }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-note">Переходов ещё не было.</div>
 {% endif %}
 
 <p class="subtitle"><a href="/id-folders/new">+ Сформировать новую папку</a></p>
@@ -43,9 +101,9 @@
       <th>Название</th>
       <th>Дата создания</th>
       <th>Разделов</th>
-      <th>Сумма, ₽</th>
-      <th>Передана в СДО</th>
-      <th>Подписант реестра</th>
+      <th>Оценка ПТО, ₽</th>
+      <th>Стадия</th>
+      <th>Сметная стоимость, ₽</th>
     </tr>
   </thead>
   <tbody>
@@ -55,8 +113,8 @@
       <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td>{{ f.row_count }}</td>
       <td>{{ (f.amount_sum or 0)|ru_money }}</td>
-      <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
-      <td>{{ f.sdo_signer_name or '—' }}</td>
+      <td><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
+      <td>{{ f.amount_smeta_rub|ru_money if f.amount_smeta_rub is not none else '—' }}</td>
     </tr>
     {% else %}
     <tr><td colspan="6" class="empty-note">Папок ещё нет.</td></tr>
