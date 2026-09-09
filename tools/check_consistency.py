@@ -161,7 +161,26 @@ def main_check():
         tolerance=0.01,
     )
 
-    # --- 6. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
+    # --- 6. "Активных ИЗМ": /id-folders (active_changes) vs /dashboard (change_stats_row) ---
+    # Оба места фильтруют одним и тем же текстом "status not in ('INCLUDED_IN_RD',
+    # 'ARCHIVED')", но каждое — своим независимым запросом (main.py:4584 и :5382) -
+    # ровно тот класс дублирования, что искал аудит 08.09.2026.
+    active_changes_folders = m.query_one(
+        "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
+    )["n"]
+    change_stats_row = m.query_one(f"""
+        select count(*) as total,
+               count(*) filter (where {m._change_overdue_expr()} is not null) as overdue
+        from change
+        where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
+    """)
+    check(
+        "Активных ИЗМ: /id-folders (active_changes) vs /dashboard (change_stats)",
+        "/id-folders", active_changes_folders,
+        "/dashboard", change_stats_row["total"],
+    )
+
+    # --- 7. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
     reg_folders = m.query_id_folders(order="desc")
     reg_amount_signed = float(m.compute_id_folder_stats()["signed_folders_sum"])
     check(
