@@ -3790,6 +3790,13 @@ def _grafik_id_month_range():
     return months
 
 
+# Модель "группа" (часть 3, 09.09.2026) — заменяет id_row_report_meta.
+# Строка Excel "Н1-4" — это ГРУППА из нескольких id_form_row (Н1, Н2,
+# Н2.1, Н3, Н4), не один раздел; id_row_report_meta (row_id unique)
+# технически не могла это принять — отсюда 17 из 133 в части 1. Статус
+# группы теперь СЧИТАЕТСЯ по разделам-участникам (id_report_group_row),
+# не читается текстом из одной записи id_form_entry. См.
+# docs/decisions_needed_grafik_id_export.md, часть 3.
 GRAFIK_ID_LIST_SQL = LATEST_ID_FORM_ENTRY_CTE + """
     , signed_date as (
         select e.row_id, min(e.status_date) as first_signed_date
@@ -3798,42 +3805,78 @@ GRAFIK_ID_LIST_SQL = LATEST_ID_FORM_ENTRY_CTE + """
         where s.code = 'Подписано'
         group by e.row_id
     )
-    select m.row_id, m.uchastok_no, m.uchastok_label, m.category_group,
-           m.type_label, m.executor_name, m.display_order, m.ks2_cost_mln,
-           r.section_label,
-           s.label as status_label, sd.first_signed_date
-    from id_row_report_meta m
-    join id_form_row r on r.id = m.row_id
-    left join latest_id_entry le on le.row_id = r.id
-    left join id_form_status s on s.id = le.status_id
-    left join signed_date sd on sd.row_id = r.id
-    order by m.uchastok_no, m.category_group, m.display_order
+    , member_status as (
+        select gr.group_id, gr.row_id,
+               s.code as status_code, s.label as status_label,
+               sd.first_signed_date
+        from id_report_group_row gr
+        left join latest_id_entry le on le.row_id = gr.row_id
+        left join id_form_status s on s.id = le.status_id
+        left join signed_date sd on sd.row_id = gr.row_id
+    )
+    select g.id as group_id, g.uchastok_no, g.uchastok_label, g.category_group,
+           g.group_label, g.type_label, g.executor_name, g.display_order, g.ks2_cost_mln,
+           count(ms.row_id) as n_members,
+           count(*) filter (where ms.status_code = 'Подписано') as n_signed,
+           max(ms.first_signed_date) as completed_date,
+           mode() within group (order by ms.status_label)
+               filter (where ms.status_label is not null) as mode_status_label
+    from id_report_group g
+    left join member_status ms on ms.group_id = g.id
+    group by g.id
+    order by g.uchastok_no, g.category_group, g.display_order
 """
+
+
+def _grafik_group_status_text(n_members, n_signed, mode_status_label):
+    """Текст статуса группы — считается по доле подписанных разделов-
+    участников, не сопоставляется по тексту с одной записью (координатор,
+    часть 3): 100% -> «Подписано» (совпадёт с легендой §3 части 1 как и
+    100%-раздел); 0<pct<100 -> «Подписано N%» (тоже совпадёт — легенда
+    красит по префиксу «Подписано», не по числу); 0% -> самый частый
+    статус участников группы, а если ни у кого нет ни одной записи —
+    «в работе»; группа без единого участника — явная пометка, не
+    пропускается молча."""
+    if n_members == 0:
+        return "— (нет данных в системе)"
+    if n_signed == n_members:
+        return "Подписано"
+    if n_signed > 0:
+        pct = round(100 * n_signed / n_members)
+        return f"Подписано {pct}%"
+    return mode_status_label or "в работе"
 
 
 def _grafik_id_rows():
     rows = query(GRAFIK_ID_LIST_SQL)
     grouped = {}
     for r in rows:
+        status_text = _grafik_group_status_text(r["n_members"], r["n_signed"], r["mode_status_label"])
+        completed_date = r["completed_date"] if r["n_members"] and r["n_signed"] == r["n_members"] else None
+        item = dict(r)
+        item["status_text"] = status_text
+        item["completed_date"] = completed_date
         key = (r["uchastok_no"], r["uchastok_label"])
         grouped.setdefault(key, {})
         cat_key = r["category_group"]
-        grouped[key].setdefault(cat_key, []).append(r)
+        grouped[key].setdefault(cat_key, []).append(item)
     return grouped
 
 
 # ====== Вкладка 2 «График ИД по папкам» — категория/участок папки не
-# хранятся отдельно, выводятся из id_row_report_meta через её разделы
-# (id_folder_row). Папка без ни одного размеченного раздела, или с
-# разделами, расходящимися по категории/участку, — пропускается, не
-# выбираем произвольно (координатор, часть 2, 09.09.2026). ======
+# хранятся отдельно, выводятся из группы (id_report_group) через её
+# участников (id_form_row -> id_report_group_row) -> id_folder_row.
+# Папка без ни одного размеченного раздела, или с разделами,
+# расходящимися по категории/участку, — пропускается, не выбираем
+# произвольно (координатор, часть 2/3, 09.09.2026). ======
 
 def _grafik_folders_by_category():
     folders = query_id_folders()
     meta_rows = query("""
-        select fr.folder_id, m.category_group, m.uchastok_no, m.uchastok_label
+        select fr.folder_id, g.category_group, g.uchastok_no, g.uchastok_label
         from id_folder_row fr
-        join id_row_report_meta m on m.row_id = fr.row_id
+        join id_report_group_row grr on grr.row_id = fr.row_id
+        join id_report_group g on g.id = grr.group_id
     """)
     combos_by_folder = {}
     for r in meta_rows:
@@ -3856,7 +3899,7 @@ def _grafik_folders_by_category():
     for f in folders:
         combos = combos_by_folder.get(f["id"])
         if not combos:
-            skipped.append({"folder": f["name"], "reason": "ни один раздел папки не размечен в id_row_report_meta"})
+            skipped.append({"folder": f["name"], "reason": "ни один раздел папки не входит ни в одну группу разметки"})
             continue
         if len(combos) > 1:
             skipped.append({"folder": f["name"],
@@ -3936,14 +3979,16 @@ def _grafik_changes_rows():
 @app.get("/id-grafik")
 def id_grafik_page(request: Request):
     grouped = _grafik_id_rows()
-    total_rows = sum(len(v) for cats in grouped.values() for v in cats.values())
-    total_matched_row_ids = {r["row_id"] for cats in grouped.values() for v in cats.values() for r in v}
-    unmatched_count = 133 - len(total_matched_row_ids)  # 133 — размер исходного экстракта на 01.09.2026
+    all_groups = [r for cats in grouped.values() for v in cats.values() for r in v]
+    total_groups = len(all_groups)  # всегда 133 — все строки CSV, группа создаётся безусловно
+    groups_with_members = sum(1 for r in all_groups if r["n_members"] > 0)
+    groups_empty = total_groups - groups_with_members
     folders_grouped, folders_skipped = _grafik_folders_by_category()
     folders_total = query_one("select count(*) as n from id_folder")["n"]
     changes_total = len(_grafik_changes_rows())
     return render(request, "id_grafik.html", "id-grafik",
-                  grouped=grouped, total_rows=total_rows, unmatched_count=unmatched_count,
+                  grouped=grouped, total_groups=total_groups,
+                  groups_with_members=groups_with_members, groups_empty=groups_empty,
                   folders_grouped=folders_grouped, folders_skipped=folders_skipped, folders_total=folders_total,
                   changes_total=changes_total)
 
@@ -4073,11 +4118,11 @@ def export_id_grafik_xlsx():
             row += 1
 
             for r in sorted(categories[category_group], key=lambda x: x["display_order"]):
-                ws.cell(row=row, column=1, value=r["section_label"]).font = FONT
+                ws.cell(row=row, column=1, value=r["group_label"]).font = FONT
                 ws.cell(row=row, column=2, value=r["type_label"] or "").font = FONT
-                status_cell = ws.cell(row=row, column=3, value=r["status_label"] or "нет записи")
+                status_cell = ws.cell(row=row, column=3, value=r["status_text"])
                 status_cell.font = FONT
-                fill_hex = status_fill_color(r["status_label"] or "")
+                fill_hex = status_fill_color(r["status_text"])
                 if fill_hex:
                     status_cell.fill = PatternFill(fgColor=fill_hex, fill_type="solid")
                 ws.cell(row=row, column=4, value=r["executor_name"] or "").font = FONT
@@ -4085,7 +4130,7 @@ def export_id_grafik_xlsx():
                 cost_cell.font = FONT
                 cost_cell.number_format = "0.00"
 
-                signed = r["first_signed_date"]
+                signed = r["completed_date"]
                 if signed and r["ks2_cost_mln"] is not None:
                     mcol = n_fixed_cols + 1
                     for m in months:
@@ -4205,7 +4250,7 @@ def export_id_grafik_xlsx():
     if not folders_grouped:
         note = ws2.cell(row=row2, column=1,
                          value="Ни одна папка не размечена по участку/категории на текущий момент "
-                               "(разделы всех папок не попали в id_row_report_meta) — "
+                               "(разделы всех папок не входят ни в одну группу разметки) — "
                                "см. docs/decisions_needed_grafik_id_export.md")
         note.font = FONT
         note.alignment = LEFT
