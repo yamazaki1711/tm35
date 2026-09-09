@@ -3719,6 +3719,316 @@ def id_packages_page(request: Request):
                   status_counts=status_counts)
 
 
+# ====== Экспорт "График ИД" — вид, привычный части руководства Заказчика
+# (лист "График ИД" их рабочей книги "01.09.26 График ИД Хабаровск с
+# комм. ред."). Разметка участок/категория/тип/исполнитель/КС2 — из
+# id_row_report_meta (миграция 029, разовый импорт, см.
+# tools/import_grafik_id_report_meta.py и docs/import/grafik_id_extract_20260901.csv).
+# "Текущий статус раздела" — тот же канонический источник, что и на
+# /id-packages (LATEST_ID_FORM_ENTRY_CTE), не отдельная копия логики.
+# Разделы без отчётной разметки в этот экспорт не попадают — ожидаемо
+# (импортом размечено 17 из 133 строк исходника, см.
+# docs/decisions_needed_grafik_id_export.md), не считается ошибкой.
+
+def status_fill_color(status_text):
+    """Легенда цвета статуса — по фактической раскраске исходного листа
+    "График ИД" (разбор сделан заранее, не догадка). Единственное место,
+    где эта легенда описана — экспорт вызывает только эту функцию.
+
+    Против ЖИВОГО словаря id_form_status.label (фиксированные 9 значений
+    на вкладку: "не приступали" → ... → "Подписано") реально сработает
+    почти всегда только первое правило — живой словарь беднее текста
+    исходного снимка на 01.09.2026, там не было отдельных состояний вида
+    "80%"/"согласовано к подписанию"/"КЭВ"/"КРВ". См. decisions_needed."""
+    if not status_text:
+        return None
+    s = status_text.strip()
+    sl = s.lower()
+    if sl.startswith("подписано"):
+        return "FF92D050"
+    if sl in ("согласовано к подписанию", "подписаны сваи") or "на подпис" in sl:
+        return "FFFFC000"
+    if sl in ("да", "нет", "в работе"):
+        return None
+    if s == "КЭВ":
+        return "FF3C1FCF"
+    if s == "КРВ":
+        # Оригинал красил не литеральным hex, а темой книги ("theme6") —
+        # самой книги (и её XML-темы) у нас нет, воспроизвести можно
+        # только приближением. Взят уже используемый на сайте синий
+        # (--c-primary-light), не выдуманный с нуля. См. decisions_needed.
+        return "FF2E75B6"
+    return None
+
+
+_RU_MONTHS_NOM = ["январь", "февраль", "март", "апрель", "май", "июнь",
+                  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+
+
+def _grafik_id_month_range():
+    """Диапазон месяцев Гант-сетки — от текущего месяца (по календарю
+    объекта) до месяца директивного срока включительно (app_setting).
+    Если директивный срок уже в прошлом (проект просрочен на момент
+    экспорта) — берём один текущий месяц, не гадаем дальше; см.
+    decisions_needed."""
+    start = object_today().replace(day=1)
+    row = query_one("select value from app_setting where key='directive_deadline'")
+    try:
+        deadline = date_cls.fromisoformat(row["value"]) if row and row["value"] else start
+    except ValueError:
+        deadline = start
+    if deadline < start:
+        deadline = start
+    months = []
+    cur = start
+    while (cur.year, cur.month) <= (deadline.year, deadline.month):
+        months.append(cur)
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year + 1, month=1)
+        else:
+            cur = cur.replace(month=cur.month + 1)
+    return months
+
+
+GRAFIK_ID_LIST_SQL = LATEST_ID_FORM_ENTRY_CTE + """
+    , signed_date as (
+        select e.row_id, min(e.status_date) as first_signed_date
+        from id_form_entry e
+        join id_form_status s on s.id = e.status_id
+        where s.code = 'Подписано'
+        group by e.row_id
+    )
+    select m.row_id, m.uchastok_no, m.uchastok_label, m.category_group,
+           m.type_label, m.executor_name, m.display_order, m.ks2_cost_mln,
+           r.section_label,
+           s.label as status_label, sd.first_signed_date
+    from id_row_report_meta m
+    join id_form_row r on r.id = m.row_id
+    left join latest_id_entry le on le.row_id = r.id
+    left join id_form_status s on s.id = le.status_id
+    left join signed_date sd on sd.row_id = r.id
+    order by m.uchastok_no, m.category_group, m.display_order
+"""
+
+
+def _grafik_id_rows():
+    rows = query(GRAFIK_ID_LIST_SQL)
+    grouped = {}
+    for r in rows:
+        key = (r["uchastok_no"], r["uchastok_label"])
+        grouped.setdefault(key, {})
+        cat_key = r["category_group"]
+        grouped[key].setdefault(cat_key, []).append(r)
+    return grouped
+
+
+@app.get("/id-grafik")
+def id_grafik_page(request: Request):
+    grouped = _grafik_id_rows()
+    total_rows = sum(len(v) for cats in grouped.values() for v in cats.values())
+    total_matched_row_ids = {r["row_id"] for cats in grouped.values() for v in cats.values() for r in v}
+    unmatched_count = 133 - len(total_matched_row_ids)  # 133 — размер исходного экстракта на 01.09.2026
+    return render(request, "id_grafik.html", "id-grafik",
+                  grouped=grouped, total_rows=total_rows, unmatched_count=unmatched_count)
+
+
+def _xlsx_response(filename, wb):
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/export/id-grafik.xlsx")
+def export_id_grafik_xlsx():
+    import calendar
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    grouped = _grafik_id_rows()
+    months = _grafik_id_month_range()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "График ИД"
+
+    FONT = Font(name="Calibri", size=11)
+    FONT_BOLD = Font(name="Calibri", size=11, bold=True)
+    FONT_HEADER = Font(name="Calibri", size=11, bold=True)
+    THIN = Side(style="thin", color="FFB0B0B0")
+    BORDER_ALL = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+    WRAP_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    n_fixed_cols = 5  # A..E: Наименование / Тип / Статус / Исполнитель / КС2
+    n_month_cols = len(months) * 2
+    n_rsk_cols = 4
+    n_problem_cols = 4
+    total_cols = n_fixed_cols + n_month_cols + n_rsk_cols + n_problem_cols
+
+    HEADER_ROW1 = 1
+    HEADER_ROW2 = 2
+
+    fixed_headers = ["Наименование участка", "Тип", "Статус", "Исполнитель",
+                      "Ожидаемая стоимость по КС-2, млн руб."]
+    for i, text in enumerate(fixed_headers, start=1):
+        cell = ws.cell(row=HEADER_ROW1, column=i, value=text)
+        cell.font = FONT_HEADER
+        cell.alignment = WRAP_CENTER
+        cell.border = BORDER_ALL
+        ws.merge_cells(start_row=HEADER_ROW1, start_column=i, end_row=HEADER_ROW2, end_column=i)
+
+    col = n_fixed_cols + 1
+    for m in months:
+        last_day = calendar.monthrange(m.year, m.month)[1]
+        title = f"{_RU_MONTHS_NOM[m.month - 1].capitalize()} {m.year}"
+        cell = ws.cell(row=HEADER_ROW1, column=col, value=title)
+        cell.font = FONT_HEADER
+        cell.alignment = WRAP_CENTER
+        ws.merge_cells(start_row=HEADER_ROW1, start_column=col, end_row=HEADER_ROW1, end_column=col + 1)
+        sub1 = ws.cell(row=HEADER_ROW2, column=col, value="01–15")
+        sub2 = ws.cell(row=HEADER_ROW2, column=col + 1, value=f"16–{last_day:02d}")
+        for c in (cell, ws.cell(row=HEADER_ROW1, column=col + 1), sub1, sub2):
+            c.font = FONT
+            c.alignment = WRAP_CENTER
+            c.border = BORDER_ALL
+        col += 2
+
+    rsk_col_start = col
+    cell = ws.cell(row=HEADER_ROW1, column=rsk_col_start, value="Замеч. РСК, препятствующие принятию ИД")
+    cell.font = FONT_BOLD
+    cell.alignment = WRAP_CENTER
+    ws.merge_cells(start_row=HEADER_ROW1, start_column=rsk_col_start,
+                    end_row=HEADER_ROW2, end_column=rsk_col_start + n_rsk_cols - 1)
+    for c in range(rsk_col_start, rsk_col_start + n_rsk_cols):
+        ws.cell(row=HEADER_ROW1, column=c).border = BORDER_ALL
+        ws.cell(row=HEADER_ROW2, column=c).border = BORDER_ALL
+    col = rsk_col_start + n_rsk_cols
+
+    problem_col_start = col
+    # Заголовок T/U/V/W дан в задаче только описательно ("проблемные
+    # вопросы") — буквального текста из исходника у нас нет (в CSV-
+    # экстракте эти колонки не выгружались, только упомянуты прозой).
+    # Не сочиняю 4 разных подписи — один заголовок на объединённые 4
+    # колонки. См. decisions_needed.
+    cell = ws.cell(row=HEADER_ROW1, column=problem_col_start, value="Проблемные вопросы")
+    cell.font = FONT_BOLD
+    cell.alignment = WRAP_CENTER
+    ws.merge_cells(start_row=HEADER_ROW1, start_column=problem_col_start,
+                    end_row=HEADER_ROW2, end_column=problem_col_start + n_problem_cols - 1)
+    for c in range(problem_col_start, problem_col_start + n_problem_cols):
+        ws.cell(row=HEADER_ROW1, column=c).border = BORDER_ALL
+        ws.cell(row=HEADER_ROW2, column=c).border = BORDER_ALL
+
+    # Ширины колонок — держаться исходных пропорций (координатор, §4a).
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 6
+    ws.column_dimensions["C"].width = 22
+    ws.column_dimensions["D"].width = 24
+    ws.column_dimensions["E"].width = 14
+    for c in range(n_fixed_cols + 1, rsk_col_start):
+        ws.column_dimensions[get_column_letter(c)].width = 10
+    for c in range(rsk_col_start, problem_col_start):
+        ws.column_dimensions[get_column_letter(c)].width = 16
+    for c in range(problem_col_start, problem_col_start + n_problem_cols):
+        ws.column_dimensions[get_column_letter(c)].width = 78
+
+    row = HEADER_ROW2 + 1
+    grand_data_rows = []
+
+    for (uchastok_no, uchastok_label), categories in sorted(grouped.items()):
+        cell = ws.cell(row=row, column=1, value=uchastok_label)
+        cell.font = FONT_BOLD
+        cell.alignment = LEFT
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
+        row += 1
+
+        uchastok_data_rows = []
+
+        for category_group in sorted(categories.keys()):
+            cat_cell = ws.cell(row=row, column=1, value=category_group)
+            cat_cell.font = FONT
+            cat_cell.alignment = LEFT
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=total_cols)
+            row += 1
+
+            for r in sorted(categories[category_group], key=lambda x: x["display_order"]):
+                ws.cell(row=row, column=1, value=r["section_label"]).font = FONT
+                ws.cell(row=row, column=2, value=r["type_label"] or "").font = FONT
+                status_cell = ws.cell(row=row, column=3, value=r["status_label"] or "нет записи")
+                status_cell.font = FONT
+                fill_hex = status_fill_color(r["status_label"] or "")
+                if fill_hex:
+                    status_cell.fill = PatternFill(fgColor=fill_hex, fill_type="solid")
+                ws.cell(row=row, column=4, value=r["executor_name"] or "").font = FONT
+                cost_cell = ws.cell(row=row, column=5, value=float(r["ks2_cost_mln"]) if r["ks2_cost_mln"] is not None else None)
+                cost_cell.font = FONT
+                cost_cell.number_format = "0.00"
+
+                signed = r["first_signed_date"]
+                if signed and r["ks2_cost_mln"] is not None:
+                    mcol = n_fixed_cols + 1
+                    for m in months:
+                        if signed.year == m.year and signed.month == m.month:
+                            target_col = mcol if signed.day <= 15 else mcol + 1
+                            gc = ws.cell(row=row, column=target_col, value=float(r["ks2_cost_mln"]))
+                            gc.font = FONT
+                            gc.number_format = "0.00"
+                            break
+                        mcol += 2
+
+                for c in range(1, total_cols + 1):
+                    ws.cell(row=row, column=c).border = BORDER_ALL
+
+                uchastok_data_rows.append(row)
+                grand_data_rows.append(row)
+                row += 1
+
+        if uchastok_data_rows:
+            r0, r1 = uchastok_data_rows[0], uchastok_data_rows[-1]
+            total_cell = ws.cell(row=row, column=1, value=f"Итого по участку №{uchastok_no}")
+            total_cell.font = FONT_BOLD
+            e_letter = "E"
+            ws.cell(row=row, column=5, value=f"=SUM({e_letter}{r0}:{e_letter}{r1})").font = FONT_BOLD
+            ws.cell(row=row, column=5).number_format = "0.00"
+            for mi in range(n_month_cols):
+                c = n_fixed_cols + 1 + mi
+                letter = get_column_letter(c)
+                tcell = ws.cell(row=row, column=c, value=f"=SUM({letter}{r0}:{letter}{r1})")
+                tcell.font = FONT_BOLD
+                tcell.number_format = "0.00"
+            for c in range(1, total_cols + 1):
+                ws.cell(row=row, column=c).border = BORDER_ALL
+            row += 1
+
+    if grand_data_rows:
+        row += 1
+        ws.cell(row=row, column=1, value="Итого по всем участкам").font = FONT_BOLD
+        # Диапазоны не смежные (между участками — заголовки/строки "Итого
+        # по участку") — суммируем по фактическому списку строк с данными,
+        # не по одному непрерывному диапазону.
+        e_terms = "+".join(f"E{r}" for r in grand_data_rows)
+        ws.cell(row=row, column=5, value=f"={e_terms}").font = FONT_BOLD
+        ws.cell(row=row, column=5).number_format = "0.00"
+        for mi in range(n_month_cols):
+            c = n_fixed_cols + 1 + mi
+            letter = get_column_letter(c)
+            terms = "+".join(f"{letter}{r}" for r in grand_data_rows)
+            gcell = ws.cell(row=row, column=c, value=f"={terms}")
+            gcell.font = FONT_BOLD
+            gcell.number_format = "0.00"
+        for c in range(1, total_cols + 1):
+            ws.cell(row=row, column=c).border = BORDER_ALL
+
+    ws.freeze_panes = None  # намеренно не закрепляем — в оригинале нет, см. §4a
+
+    return _xlsx_response("id_grafik.xlsx", wb)
+
+
 # =======================================================================
 # Форма «Выполнение» — сборка папок ИД (координатор, 04.09.2026, блок D).
 # Единица учёта папки — раздел id_form_row, отбираем только те, у кого

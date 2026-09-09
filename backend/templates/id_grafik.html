@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>График ИД</h1>
+<p class="subtitle">
+  Вид, привычный части руководства Заказчика по книге «01.09.26 График ИД
+  Хабаровск с комм. ред.» — данные из текущей базы, обновляются сами.
+  <a href="/export/id-grafik.xlsx">Скачать Excel</a>
+</p>
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ total_rows }}</div>
+    <div class="kpi-label">Разделов с разметкой участка</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'warn' if unmatched_count > 0 else '' }}">{{ unmatched_count }}</div>
+    <div class="kpi-label">Не размечено (не в этом отчёте)</div>
+    <div class="kpi-sub">разбор — отдельно, см. tools/import_grafik_id_unmatched.csv</div>
+  </div>
+</div>
+
+{% if not grouped %}
+<div class="empty-note">Ни один раздел ещё не размечен участком/категорией — отчёт пуст.</div>
+{% endif %}
+
+{% for (uchastok_no, uchastok_label), categories in grouped.items() %}
+<h3 style="margin-top:1.75rem">{{ uchastok_label }}</h3>
+{% for category_group, rows in categories.items() %}
+<div class="table-wrap" style="margin-bottom:1rem;">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th colspan="6">{{ category_group }}</th>
+    </tr>
+    <tr>
+      <th>Наименование участка</th>
+      <th>Тип</th>
+      <th>Статус</th>
+      <th>Исполнитель</th>
+      <th class="num">КС-2, млн руб.</th>
+      <th>Подписан</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows|sort(attribute='display_order') %}
+    <tr>
+      <td class="nowrap">{{ r.section_label }}</td>
+      <td class="nowrap">{{ r.type_label or '—' }}</td>
+      <td class="wrap">
+        {% if r.status_label %}
+          <span class="badge {{ 'badge-ok' if r.status_label.startswith('Подписано') else 'badge-neutral' }}">{{ r.status_label }}</span>
+        {% else %}
+          <span class="badge badge-neutral">нет записи</span>
+        {% endif %}
+      </td>
+      <td class="wrap">{{ r.executor_name or '—' }}</td>
+      <td class="num">{{ '%.2f'|format(r.ks2_cost_mln) if r.ks2_cost_mln is not none else '—' }}</td>
+      <td class="nowrap">{{ r.first_signed_date|dmy if r.first_signed_date else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endfor %}
+{% endfor %}
+
+{% endblock %}
