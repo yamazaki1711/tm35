@@ -46,4 +46,88 @@
   <div class="empty-note">Нет ни одной записи по видам работ.</div>
   {% endfor %}
 </div>
+
+<h3>Матрица «Раздел × Этап»</h3>
+<form class="filter-bar" method="get" action="/id-progress">
+  <label>Вкладка
+    <select name="tab_id" onchange="this.form.submit()">
+      {% for t in tabs %}
+      <option value="{{ t.id }}" {{ 'selected' if t.id==selected_tab_id }}>{{ t.label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+
+{% if matrix %}
+<div class="table-wrap" style="margin-top:1rem;">
+<table class="data-table id-matrix">
+  <thead>
+    <tr>
+      <th>Раздел</th>
+      {% for p in matrix.periods %}<th class="nowrap">{{ p.label }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in matrix.rows %}
+    <tr class="id-matrix-row" data-row-id="{{ r.row_id }}" style="cursor:pointer">
+      <td class="nowrap id-matrix-cell id-matrix-{{ r.color or 'none' }}">{{ r.label }}</td>
+      {% for n in r.cells %}
+      <td class="id-matrix-cell {{ 'id-matrix-yellow' if n > 0 else '' }}">{{ n if n > 0 else '' }}</td>
+      {% endfor %}
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ matrix.periods|length + 1 }}" class="empty-note">Разделов на этой вкладке нет.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty-note">Вкладка не найдена.</div>
+{% endif %}
+
+<div id="id-matrix-drilldown"></div>
+
+<style>
+.id-matrix th, .id-matrix td { text-align: center; }
+.id-matrix th:first-child, .id-matrix td:first-child { text-align: left; }
+.id-matrix-cell.id-matrix-red    { background: var(--c-danger-bg); color: var(--c-danger); font-weight: 600; }
+.id-matrix-cell.id-matrix-yellow { background: var(--c-warning-bg); color: var(--c-warning); }
+.id-matrix-cell.id-matrix-green  { background: var(--c-success-bg); color: var(--c-success); font-weight: 600; }
+.id-matrix-cell.id-matrix-blue   { background: var(--c-primary-bg); color: var(--c-primary-light); font-weight: 600; }
+.id-matrix-row:hover td { filter: brightness(.97); }
+</style>
+
+<script>
+(function () {
+  var container = document.getElementById('id-matrix-drilldown');
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  document.querySelectorAll('.id-matrix-row').forEach(function (tr) {
+    tr.addEventListener('click', function () {
+      var rowId = tr.getAttribute('data-row-id');
+      fetch('/api/id-progress/drilldown?row_id=' + encodeURIComponent(rowId))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.error) { container.innerHTML = '<div class="empty-note">' + esc(data.error) + '</div>'; return; }
+          var rows = data.work_types.map(function (wt) {
+            var cls = wt.color ? 'id-matrix-' + wt.color : '';
+            return '<tr><td>' + esc(data.label) + '</td><td>' + esc(wt.work_type_name) + '</td>' +
+                   '<td class="id-matrix-cell ' + cls + '">' + esc(wt.status_label) + '</td>' +
+                   '<td class="nowrap">' + esc(wt.status_date || '—') + '</td></tr>';
+          }).join('');
+          container.innerHTML =
+            '<h3>' + esc(data.tab_label) + ' — ' + esc(data.label) + '</h3>' +
+            '<div class="table-wrap"><table class="data-table">' +
+            '<thead><tr><th>Раздел</th><th>Вид работ</th><th>Статус</th><th>Дата статуса</th></tr></thead>' +
+            '<tbody>' + (rows || '<tr><td colspan="4" class="empty-note">Видов работ не найдено.</td></tr>') + '</tbody>' +
+            '</table></div>';
+          container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    });
+  });
+})();
+</script>
 {% endblock %}

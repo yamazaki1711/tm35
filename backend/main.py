@@ -1,3 +1,4 @@
+import calendar
 import contextvars
 import hashlib
 import json
@@ -3677,7 +3678,7 @@ def api_existing_entry(work_id: int, date: str):
 # будущее без общего текста).
 LATEST_ID_FORM_ENTRY_CTE = """
     with latest_id_entry as (
-        select distinct on (row_id) row_id, status_id, status_date, rsk_signer_name
+        select distinct on (row_id) row_id, status_id, status_date, rsk_signer_name, blocker_id
         from id_form_entry
         order by row_id, created_at desc
     )
@@ -3970,7 +3971,8 @@ def id_grafik_page(request: Request):
 # путать их — значит вернуть ту самую "болезнь" из аудита 08.09.2026.
 LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE = """
     with latest_by_worktype as (
-        select distinct on (row_id, work_type_id) row_id, work_type_id, status_id, status_date
+        select distinct on (row_id, work_type_id) row_id, work_type_id, status_id, status_date,
+               planned_rsk_date, blocker_id
         from id_form_entry
         where work_type_id is not null
         order by row_id, work_type_id, created_at desc
@@ -4048,11 +4050,227 @@ def compute_id_progress_stream():
     return rows
 
 
+# ====== Блок 3/4 задачи 4 — матрица-светофор «Раздел × Этап» и drill-down
+# (продолжение прогона, 10.09.2026, cc_prompt_obzor_id_grafik.md опять не
+# дошёл — реализовано по инлайн-спецификации самого промпта координатора).
+
+ID_MATRIX_PERIOD_START = date_cls(2026, 3, 10)
+ID_MATRIX_PERIOD_END = date_cls(2027, 6, 1)
+
+
+def _id_matrix_periods():
+    """Колонки матрицы — не недели по ISO, а фиксированные блоки дней
+    внутри месяца (1-7 / 8-14 / 15-21 / 22-конец месяца) — решение
+    координатора для этой задачи. Проверено прямым grep по main.py и
+    шаблонам: такой конвенции (блоки 1-7/8-14/15-21/22-...) в проекте
+    раньше НЕ было — единственное похожее место, полумесячный (2 блока,
+    не 4) план закрытия КС-2 в экспорте «График ИД», это другая, ранее
+    существовавшая схема. Задание само по себе полностью специфицирует
+    новую схему — реализовано как написано, расхождение с "уже
+    использовалось" зафиксировано в decisions, не блокирует работу.
+    Первый и последний блок обрезаются по границам периода — сам период
+    (10.03.2026-01.06.2027) не укорачивается."""
+    periods = []
+    y, mo = ID_MATRIX_PERIOD_START.year, ID_MATRIX_PERIOD_START.month
+    while True:
+        last_day = calendar.monthrange(y, mo)[1]
+        for b_start, b_end in ((1, 7), (8, 14), (15, 21), (22, last_day)):
+            p_start = date_cls(y, mo, b_start)
+            p_end = date_cls(y, mo, b_end)
+            if p_end < ID_MATRIX_PERIOD_START or p_start > ID_MATRIX_PERIOD_END:
+                continue
+            p_start = max(p_start, ID_MATRIX_PERIOD_START)
+            p_end = min(p_end, ID_MATRIX_PERIOD_END)
+            if p_start == p_end:
+                label = f"{p_start:%d.%m.%Y}"
+            elif p_start.month == p_end.month and p_start.year == p_end.year:
+                label = f"{p_start:%d}–{p_end:%d.%m.%Y}"
+            else:
+                label = f"{p_start:%d.%m}–{p_end:%d.%m.%Y}"
+            periods.append({"start": p_start, "end": p_end, "label": label})
+        if y == ID_MATRIX_PERIOD_END.year and mo == ID_MATRIX_PERIOD_END.month:
+            break
+        mo += 1
+        if mo > 12:
+            mo = 1
+            y += 1
+    return periods
+
+
+# Прецедент координатора (продолжение прогона, задача 2, 10.09.2026):
+# "нет проектного решения" существует ОДНОВРЕМЕННО как статус
+# id_form_status (is_stopper=true, точный текст "Нет проектного
+# решения") и как отдельная, независимая причина блокировки в
+# id_stop_factor/blocker (точный текст в БД — "нет проектного решения",
+# нижний регистр) — сравниваем без учёта регистра. Именно эта причина —
+# синяя, любая другая причина блокировки ИЛИ второй стоппер-статус
+# ("Замечания к площадке") — красная. Работает одинаково что для
+# раздела в целом (первый столбец), что для конкретного вида работ
+# (ячейка) — обе стороны получают на вход (status_code, is_stopper,
+# blocker_description) по одному и тому же протоколу.
+def _id_matrix_cell_color(status_code, is_stopper, blocker_description):
+    reason = None
+    if blocker_description:
+        reason = blocker_description
+    elif is_stopper:
+        reason = status_code
+    if reason is not None:
+        return "blue" if reason.strip().lower() == "нет проектного решения" else "red"
+    if status_code == "Первичная проверка РСК":
+        return "yellow"
+    if status_code == "Подписано":
+        return "green"
+    return None
+
+
+def compute_id_matrix(tab_id):
+    """Матрица «Раздел × Этап» для одной вкладки. Первый столбец —
+    статус РАЗДЕЛА В ЦЕЛОМ: переиспользует LATEST_ID_FORM_ENTRY_CTE (та
+    же "последняя запись по row_id", что везде в проекте отвечает на
+    вопрос "какой сейчас статус у раздела") — не изобретаем новое
+    правило агрегирования по видам работ для той же самой величины.
+    Значение ячейки (раздел × период) — число видов работ, переданных
+    на первичную проверку РСК в этом периоде: для прошедших периодов
+    считается по факту (status_date исторических записей id_form_entry,
+    статус которых на момент записи — «Первичная проверка РСК»), для
+    текущего и будущих периодов — по плану (planned_rsk_date последней
+    записи). Это осознанное сужение слова "передано на подпись" до
+    конкретного события "передано на первичную проверку РСК" (совпадает
+    с определением жёлтого цвета в этой же матрице) — если имелось в
+    виду более широкое понятие ("любой шаг цикла подписания"), нужно
+    отдельное решение координатора, записано в decisions."""
+    tab = query_one("select id, code, label from id_form_tab where id=%s", (tab_id,))
+    if not tab:
+        return None
+    rows = query(
+        "select id, section_label, construction_label from id_form_row where tab_id=%s order by source_row",
+        (tab_id,),
+    )
+    row_state = {
+        r["row_id"]: r for r in query(
+            LATEST_ID_FORM_ENTRY_CTE + """
+            select r.id as row_id, s.code as status_code, s.is_stopper, bl.description as blocker_description
+            from id_form_row r
+            left join latest_id_entry le on le.row_id = r.id
+            left join id_form_status s on s.id = le.status_id
+            left join blocker bl on bl.id = le.blocker_id
+            where r.tab_id = %(tab_id)s
+            """,
+            {"tab_id": tab_id},
+        )
+    }
+    periods = _id_matrix_periods()
+    today = object_today()
+
+    # Прошедшие периоды — по факту. Берём ВСЕ исторические записи
+    # id_form_entry (не только последнюю по паре) — иначе более поздняя
+    # правка того же вида работ стёрла бы событие "передали на РСК",
+    # которое реально произошло в своём периоде.
+    past_rows = query(
+        """
+        select e.row_id, e.work_type_id, e.status_date
+        from id_form_entry e
+        join id_form_status s on s.id = e.status_id
+        join id_form_row r on r.id = e.row_id
+        where r.tab_id = %(tab_id)s and s.code = 'Первичная проверка РСК'
+          and e.work_type_id is not null and e.status_date is not null
+        """,
+        {"tab_id": tab_id},
+    )
+    future_rows = query(
+        LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE + """
+        select l.row_id, l.work_type_id, l.planned_rsk_date
+        from latest_by_worktype l
+        join id_form_row r on r.id = l.row_id
+        where r.tab_id = %(tab_id)s and l.planned_rsk_date is not null
+        """,
+        {"tab_id": tab_id},
+    )
+
+    cell_sets = {}  # (row_id, period_index) -> set(work_type_id) — множество, не счётчик, чтобы не задвоить один и тот же вид работ
+    for p_idx, p in enumerate(periods):
+        is_past = p["end"] < today
+        source = past_rows if is_past else future_rows
+        date_field = "status_date" if is_past else "planned_rsk_date"
+        for r in source:
+            d = r[date_field]
+            if d is not None and p["start"] <= d <= p["end"]:
+                cell_sets.setdefault((r["row_id"], p_idx), set()).add(r["work_type_id"])
+
+    matrix_rows = []
+    for r in rows:
+        state = row_state.get(r["id"], {})
+        color = _id_matrix_cell_color(
+            state.get("status_code"), state.get("is_stopper"), state.get("blocker_description")
+        )
+        cells = []
+        for p_idx in range(len(periods)):
+            n = len(cell_sets.get((r["id"], p_idx), ()))
+            cells.append(n)
+        label = r["section_label"] or r["construction_label"] or f"#{r['id']}"
+        matrix_rows.append({"row_id": r["id"], "label": label, "color": color, "cells": cells})
+
+    return {"tab": tab, "periods": periods, "rows": matrix_rows}
+
+
+def compute_id_row_drilldown(row_id):
+    """Блок 4 — разбор одного раздела на виды работ (не привязан к
+    конкретному кликнутому периоду, показывает раздел целиком, как и
+    сказано в задании: "the breakdown of what that раздел consists
+    of"). Использует LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE — тот же
+    источник "текущий статус вида работ", что и остальная страница."""
+    row = query_one(
+        "select r.id, r.section_label, r.construction_label, t.label as tab_label "
+        "from id_form_row r join id_form_tab t on t.id=r.tab_id where r.id=%s",
+        (row_id,),
+    )
+    if not row:
+        return None
+    work_types = query(
+        LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE + """
+        select wt.id as work_type_id, wt.name as work_type_name,
+               s.code as status_code, coalesce(s.label, 'статус не задан') as status_label,
+               l.status_date, s.is_stopper, bl.description as blocker_description
+        from id_form_work_type wt
+        left join latest_by_worktype l on l.row_id = %(row_id)s and l.work_type_id = wt.id
+        left join id_form_status s on s.id = l.status_id
+        left join blocker bl on bl.id = l.blocker_id
+        where wt.tab_id = (select tab_id from id_form_row where id = %(row_id)s)
+        order by wt.display_order
+        """,
+        {"row_id": row_id},
+    )
+    for wt in work_types:
+        wt["color"] = _id_matrix_cell_color(wt["status_code"], wt["is_stopper"], wt["blocker_description"])
+        # ДД.ММ.ГГГГ здесь же, в Python, не полагаясь на Jinja-фильтр —
+        # это JSON-ответ, отдаётся напрямую в JS без прохода через
+        # шаблон (правило проекта: никаких ISO-дат в интерфейсе).
+        wt["status_date"] = _csv_dmy(wt["status_date"]) or None
+    label = row["section_label"] or row["construction_label"] or f"#{row['id']}"
+    return {"row_id": row["id"], "label": label, "tab_label": row["tab_label"], "work_types": work_types}
+
+
+@app.get("/api/id-progress/drilldown")
+def api_id_progress_drilldown(row_id: int):
+    data = compute_id_row_drilldown(row_id)
+    if not data:
+        return JSONResponse({"error": "Раздел не найден"}, status_code=404)
+    return data
+
+
 @app.get("/id-progress")
-def id_progress_page(request: Request):
+def id_progress_page(request: Request, tab_id: int = 0):
     tiles = compute_id_progress_tiles()
     stream = compute_id_progress_stream()
-    return render(request, "id_progress.html", "id-progress", tiles=tiles, stream=stream)
+    tabs = query(
+        "select id, label from id_form_tab where code not in ('opv', 'n') order by label"
+    )
+    selected_tab_id = tab_id or (tabs[0]["id"] if tabs else 0)
+    matrix = compute_id_matrix(selected_tab_id) if selected_tab_id else None
+    return render(
+        request, "id_progress.html", "id-progress",
+        tiles=tiles, stream=stream, tabs=tabs, selected_tab_id=selected_tab_id, matrix=matrix,
+    )
 
 
 # ====== Патч реального шаблона (координатор, часть 4/5, 09.09.2026) ======
