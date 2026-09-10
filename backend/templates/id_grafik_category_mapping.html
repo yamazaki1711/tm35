@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="subtitle"><a href="/id-grafik">← График ИД</a></p>
+<h1>Категории «Графика ИД» — какие вкладки к ним относятся</h1>
+
+{% if result %}
+<div class="flash {{ 'flash-ok' if result.gained else 'flash-err' }}">
+  «{{ result.category }}»: получили раздел(ы) {{ result.gained|length }} групп,
+  осталось без раздела {{ result.still_ambiguous|length }}, конфликтов {{ result.conflicts|length }}.
+</div>
+{% if result.gained %}
+<div class="table-wrap" style="margin-bottom:1rem;">
+<table class="data-table"><thead><tr><th>Получили раздел</th></tr></thead><tbody>
+  {% for line in result.gained %}<tr><td>{{ line }}</td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% endif %}
+{% if result.conflicts %}
+<div class="table-wrap" style="margin-bottom:1rem;">
+<table class="data-table"><thead><tr><th>Конфликты (раздел уже в другой группе)</th></tr></thead><tbody>
+  {% for line in result.conflicts %}<tr><td>{{ line }}</td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% endif %}
+{% if result.still_ambiguous %}
+<div class="table-wrap" style="margin-bottom:1rem;">
+<table class="data-table"><thead><tr><th>Остались без раздела</th></tr></thead><tbody>
+  {% for line in result.still_ambiguous %}<tr><td>{{ line }}</td></tr>{% endfor %}
+</tbody></table>
+</div>
+{% endif %}
+{% endif %}
+
+{% for row in matrix %}
+<form id="cat-{{ loop.index }}" method="post" action="/api/id-grafik/category-mapping">
+  <input type="hidden" name="category_group" value="{{ row.category }}">
+</form>
+{% endfor %}
+
+<div class="table-wrap">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Категория</th>
+      <th>Групп без раздела</th>
+      {% for t in tabs %}<th class="nowrap">{{ t.label }}</th>{% endfor %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in matrix %}
+    {% set row_form_id = "cat-" ~ loop.index %}
+    <tr>
+      <td>{{ row.category }}</td>
+      <td class="num">{{ row.empty_groups }}</td>
+      {% for t in tabs %}
+      {# 0 здесь — не "нет данных" (правило "—" не применяется): это
+         реально посчитанный факт "ни один код категории не нашёлся в
+         этой вкладке", по прямому решению координатора показывать явным
+         нулём, не скрывать строку/ячейку. row_form_id — снимок ВНЕШНЕГО
+         loop.index до входа в этот, вложенный, цикл по вкладкам: Jinja
+         привязывает голое "loop" к самому внутреннему циклу, поэтому
+         "loop.index" здесь означал бы номер вкладки, а не номер строки
+         категории, — нашёл на живой проверке (чекбоксы уходили не в ту
+         форму, чем строка на экране). #}
+      <td class="num">
+        {{ row.counts[t.id] }}
+        <br>
+        <input type="checkbox" name="tab_ids" value="{{ t.id }}" form="{{ row_form_id }}"
+               {{ 'checked' if t.id in row.checked_tab_ids }}>
+      </td>
+      {% endfor %}
+      <td><button type="submit" form="{{ row_form_id }}">Сохранить</button></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="18" class="empty-note">Все группы уже сопоставлены — категорий с пустыми группами нет.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

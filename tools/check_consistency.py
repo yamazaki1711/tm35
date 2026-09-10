@@ -308,6 +308,21 @@ def main_check():
             "/id-folders", folders_n,
         )
 
+    # --- 12. Заход 4, задача 1: ни один id_form_row не должен состоять в
+    # двух группах «Графика ИД» сразу. Уже гарантировано ограничением
+    # unique(row_id) в id_report_group_row (миграция 030) — вставка
+    # дубля физически невозможна — но проверка остаётся постоянной, не
+    # разовой: если кто-то когда-нибудь ослабит ограничение в схеме, эта
+    # строка должна поймать нарушение раньше, чем оно попадёт в отчёт.
+    duplicate_row_ids = m.query(
+        "select row_id, count(*) as n from id_report_group_row group by row_id having count(*) > 1"
+    )
+    check(
+        "id_report_group_row: ни один раздел не состоит в двух группах сразу",
+        "разделов с >1 группой", len(duplicate_row_ids),
+        "ожидается", 0,
+    )
+
 
 def print_report():
     name_w = max(len(c[0]) for c in CHECKS)

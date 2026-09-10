@@ -2,6 +2,7 @@ import calendar
 import contextvars
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -19,6 +20,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from db import query, query_one, execute, run_in_transaction
 from rsk_parser import parse_act
+from grafik_matching import (
+    build_row_index, resolve_group_tokens, resolve_tokens, tokenize_group_name,
+)
 from analytics import (
     compute_overdue, compute_project_forecast, compute_resource_deficit, DONE_STATUSES,
     compute_work_weight, compute_weighted_progress, compute_evm, compute_ppc,
@@ -4032,6 +4036,151 @@ GRAFIK_CHANGES_SQL = """
 
 def _grafik_changes_rows():
     return query(GRAFIK_CHANGES_SQL)
+
+
+# ====== Экран решения "категория группы -> какие вкладки к ней относятся"
+# (заход 4, 10.09.2026, задача 1). Причина 58 несопоставленных из 133 групп
+# установлена (decisions_needed п.18): физический код (УТ1, ОПн1, КР1) может
+# законно существовать как отдельный id_form_row сразу в нескольких вкладках,
+# потому что вкладка — дисциплина, не физическая зона. Разрешить это может
+# только человек, у которого есть основания знать, какие вкладки относятся
+# к какой категории — координатора просили решить по памяти, без цифр
+# перед глазами, поэтому решение не приходило. Здесь — доказательство
+# (сколько кодов категории нашлось бы в каждой вкладке), не готовое
+# решение: НИЧЕГО не предзаполняется по своим догадкам (см. decisions
+# этого захода).
+def compute_category_tab_evidence_matrix():
+    idx = build_row_index(query)
+    tabs = query("select id, label from id_form_tab where code not in ('opv', 'n') order by label")
+    empty_groups = query("""
+        select g.id, g.category_group, g.group_label
+        from id_report_group g
+        left join id_report_group_row gr on gr.group_id = g.id
+        where gr.group_id is null
+        order by g.category_group, g.id
+    """)
+    by_category = {}
+    for g in empty_groups:
+        by_category.setdefault(g["category_group"], []).append(g)
+
+    saved = {}
+    for r in query("select category_group, tab_id from id_report_category_tab"):
+        saved.setdefault(r["category_group"], set()).add(r["tab_id"])
+
+    matrix = []
+    for category in sorted(by_category):
+        groups = by_category[category]
+        # Только токены prefix+число (range/single) — литеральные коды
+        # ("У-1 (доп.)") сопоставляются по точному тексту, не по вкладке,
+        # для матрицы доказательств не применимы.
+        prefix_tokens = []
+        for g in groups:
+            for tok in resolve_tokens(tokenize_group_name(g["group_label"])):
+                if tok["kind"] in ("range", "single"):
+                    prefix_tokens.append(tok)
+
+        counts = {t["id"]: 0 for t in tabs}
+        for tok in prefix_tokens:
+            cands = idx["by_prefix"].get(tok["prefix"], [])
+            for t in tabs:
+                if tok["kind"] == "range":
+                    lo_i, hi_i = math.floor(tok["lo"]), math.floor(tok["hi"])
+                    hit = any(tab_id == t["id"] and lo_i <= math.floor(n) <= hi_i for (n, _rid, tab_id) in cands)
+                else:
+                    hit = any(tab_id == t["id"] and n == tok["num"] for (n, _rid, tab_id) in cands)
+                if hit:
+                    counts[t["id"]] += 1
+
+        matrix.append({
+            "category": category,
+            "empty_groups": len(groups),
+            "counts": counts,
+            "checked_tab_ids": saved.get(category, set()),
+        })
+    return {"tabs": tabs, "matrix": matrix}
+
+
+@app.get("/id-grafik/category-mapping")
+def id_grafik_category_mapping_page(request: Request):
+    data = compute_category_tab_evidence_matrix()
+    return render(request, "id_grafik_category_mapping.html", "id-grafik", result=None, **data)
+
+
+@app.post("/api/id-grafik/category-mapping")
+def api_id_grafik_category_mapping_save(
+    request: Request, category_group: str = Form(...), tab_ids: list[int] = Form(default=[]),
+):
+    back_url = "/id-grafik/category-mapping"
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Нет доступа."), status_code=303)
+
+    # Прямой рендер, не redirect — детальный список "что получилось/что
+    # осталось спорным" на итог одного клика нужен целиком, не помещается
+    # в query-строку redirect'а.
+
+    user_id = current_user_id_or_web_form()
+
+    def _save(cur):
+        cur.execute("delete from id_report_category_tab where category_group=%s", (category_group,))
+        for tab_id in tab_ids:
+            cur.execute(
+                "insert into id_report_category_tab (category_group, tab_id, created_by) values (%s, %s, %s)",
+                (category_group, tab_id, user_id),
+            )
+
+    run_in_transaction(_save)
+
+    # Пересчёт — ТОЛЬКО для этой категории, ТОЛЬКО среди групп, всё ещё
+    # без единого раздела, ТОЛЬКО в границах только что отмеченных
+    # вкладок (решение координатора: не гадать за пределы явно
+    # выбранного). Идемпотентно по построению — второй запуск видит уже
+    # заполненные группы как "не пустые" и не трогает их снова, ровно та
+    # же гарантия, что уже проверена у tools/match_groups_v3.py.
+    allowed_tabs = set(tab_ids)
+    empty_groups = query("""
+        select g.id, g.source_row, g.group_label
+        from id_report_group g
+        left join id_report_group_row gr on gr.group_id = g.id
+        where gr.group_id is null and g.category_group = %s
+        order by g.id
+    """, (category_group,))
+    already_claimed = {r["row_id"] for r in query("select row_id from id_report_group_row")}
+    idx = build_row_index(query)
+
+    gained = []
+    conflicts = []
+    still_ambiguous = []
+    for g in empty_groups:
+        raw_row_ids, reasons = resolve_group_tokens(idx, g["group_label"], category_group, allowed_tabs)
+        member_row_ids = set()
+        for rid in raw_row_ids:
+            if rid in already_claimed:
+                conflicts.append(f"строка {g['source_row']} «{g['group_label']}»: раздел id={rid} уже в другой группе")
+                continue
+            member_row_ids.add(rid)
+        if member_row_ids:
+            def _apply(cur, group_id=g["id"], row_ids=member_row_ids):
+                for rid in row_ids:
+                    cur.execute(
+                        "insert into id_report_group_row (group_id, row_id) values (%s, %s) on conflict do nothing",
+                        (group_id, rid),
+                    )
+            run_in_transaction(_apply)
+            already_claimed |= member_row_ids
+            note = f"строка {g['source_row']} «{g['group_label']}»: +{len(member_row_ids)} раздел(ов)"
+            if reasons:
+                note += f" (частично — не все коды разобрались: {'; '.join(reasons[:2])})"
+            gained.append(note)
+        else:
+            reason_text = "; ".join(reasons[:3]) if reasons else "коды раздела не распознаны вовсе"
+            still_ambiguous.append(f"строка {g['source_row']} «{g['group_label']}»: {reason_text}")
+
+    summary = {
+        "category": category_group, "gained": gained,
+        "still_ambiguous": still_ambiguous, "conflicts": conflicts,
+    }
+    data = compute_category_tab_evidence_matrix()
+    return render(request, "id_grafik_category_mapping.html", "id-grafik", result=summary, **data)
 
 
 @app.get("/id-grafik")
