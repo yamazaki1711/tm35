@@ -4106,37 +4106,18 @@ def id_grafik_category_mapping_page(request: Request):
     return render(request, "id_grafik_category_mapping.html", "id-grafik", result=None, **data)
 
 
-@app.post("/api/id-grafik/category-mapping")
-def api_id_grafik_category_mapping_save(
-    request: Request, category_group: str = Form(...), tab_ids: list[int] = Form(default=[]),
-):
-    back_url = "/id-grafik/category-mapping"
-    if not has_permission(request.state.user, "id-folders:submit"):
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Нет доступа."), status_code=303)
-
-    # Прямой рендер, не redirect — детальный список "что получилось/что
-    # осталось спорным" на итог одного клика нужен целиком, не помещается
-    # в query-строку redirect'а.
-
-    user_id = current_user_id_or_web_form()
-
-    def _save(cur):
-        cur.execute("delete from id_report_category_tab where category_group=%s", (category_group,))
-        for tab_id in tab_ids:
-            cur.execute(
-                "insert into id_report_category_tab (category_group, tab_id, created_by) values (%s, %s, %s)",
-                (category_group, tab_id, user_id),
-            )
-
-    run_in_transaction(_save)
-
-    # Пересчёт — ТОЛЬКО для этой категории, ТОЛЬКО среди групп, всё ещё
-    # без единого раздела, ТОЛЬКО в границах только что отмеченных
-    # вкладок (решение координатора: не гадать за пределы явно
-    # выбранного). Идемпотентно по построению — второй запуск видит уже
-    # заполненные группы как "не пустые" и не трогает их снова, ровно та
-    # же гарантия, что уже проверена у tools/match_groups_v3.py.
-    allowed_tabs = set(tab_ids)
+def rerun_category_mapping(category_group, allowed_tabs):
+    """Пересчёт сопоставления групп «Графика ИД» для ОДНОЙ категории, в
+    границах ТОЛЬКО переданных вкладок (решение координатора: не гадать
+    за пределы явно выбранного) — общая точка для веб-формы
+    (api_id_grafik_category_mapping_save) и для теста идемпотентности
+    (tools/test_category_mapping_rerun.py), чтобы тест проверял ровно
+    тот код, что реально исполняется по кнопке "Сохранить", а не его
+    копию. Идемпотентно по построению: перечитывает "пустые группы" из
+    БД при каждом вызове (не из кэша/аргумента), поэтому второй вызов
+    подряд с теми же аргументами видит уже заполненные группы как "не
+    пустые" и не трогает их снова — та же гарантия, что уже проверена
+    у tools/match_groups_v3.py."""
     empty_groups = query("""
         select g.id, g.source_row, g.group_label
         from id_report_group g
@@ -4175,10 +4156,34 @@ def api_id_grafik_category_mapping_save(
             reason_text = "; ".join(reasons[:3]) if reasons else "коды раздела не распознаны вовсе"
             still_ambiguous.append(f"строка {g['source_row']} «{g['group_label']}»: {reason_text}")
 
-    summary = {
-        "category": category_group, "gained": gained,
-        "still_ambiguous": still_ambiguous, "conflicts": conflicts,
-    }
+    return {"category": category_group, "gained": gained, "still_ambiguous": still_ambiguous, "conflicts": conflicts}
+
+
+@app.post("/api/id-grafik/category-mapping")
+def api_id_grafik_category_mapping_save(
+    request: Request, category_group: str = Form(...), tab_ids: list[int] = Form(default=[]),
+):
+    back_url = "/id-grafik/category-mapping"
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Нет доступа."), status_code=303)
+
+    # Прямой рендер, не redirect — детальный список "что получилось/что
+    # осталось спорным" на итог одного клика нужен целиком, не помещается
+    # в query-строку redirect'а.
+
+    user_id = current_user_id_or_web_form()
+
+    def _save(cur):
+        cur.execute("delete from id_report_category_tab where category_group=%s", (category_group,))
+        for tab_id in tab_ids:
+            cur.execute(
+                "insert into id_report_category_tab (category_group, tab_id, created_by) values (%s, %s, %s)",
+                (category_group, tab_id, user_id),
+            )
+
+    run_in_transaction(_save)
+
+    summary = rerun_category_mapping(category_group, set(tab_ids))
     data = compute_category_tab_evidence_matrix()
     return render(request, "id_grafik_category_mapping.html", "id-grafik", result=summary, **data)
 
