@@ -229,14 +229,15 @@ def main_check():
         "выпадающий список матрицы", dropdown_tab_ids,
     )
 
-    # --- 9. Матрица «Раздел × Этап»: цвет первого столбца vs независимый
-    # пересчёт по каждой вкладке (тот же LATEST_ID_FORM_ENTRY_CTE, но текст
-    # запроса здесь написан заново, а не переиспользован из compute_id_matrix,
-    # чтобы проверка ловила расхождение, а не подтверждала сама себя).
+    # --- 9. Матрица «Раздел × Этап»: цвет замороженного столбца (текущий
+    # статус раздела) vs независимый пересчёт по каждой вкладке (тот же
+    # LATEST_ID_FORM_ENTRY_CTE, но текст запроса здесь написан заново, а
+    # не переиспользован из compute_id_matrix, чтобы проверка ловила
+    # расхождение, а не подтверждала сама себя).
     tabs = m.query("select id, label from id_form_tab where code not in ('opv', 'n') order by label")
     for tab in tabs:
         mx = m.compute_id_matrix(tab["id"])
-        matrix_green = sum(1 for r in mx["rows"] if r["color"] == "green")
+        matrix_green = sum(1 for r in mx["rows"] if r["current_color"] == "green")
         direct_green = m.query_one(
             m.LATEST_ID_FORM_ENTRY_CTE + """
             select count(*) as n
@@ -248,9 +249,36 @@ def main_check():
             {"tab_id": tab["id"]},
         )["n"]
         check(
-            f"Матрица «{tab['label']}»: раздел зелёный (первый столбец) vs прямой count «Подписано»",
+            f"Матрица «{tab['label']}»: раздел зелёный (замороженный столбец) vs прямой count «Подписано»",
             "compute_id_matrix()", matrix_green,
             "прямой SQL", direct_green,
+        )
+
+    # --- 9b. Заход 6, задача 3, 11.09.2026 — обязательная по заданию сверка:
+    # числа в сетке /id-progress должны сходиться с плитками той же вкладки
+    # выше на странице. Берём последнюю (самую свежую) неделю ПОЛНОГО периода
+    # (show_all=True, а не окно по умолчанию — окно может не доходить до
+    # сегодняшнего дня при навигации, а тут нужен именно самый актуальный
+    # снимок) — "сколько разделов сейчас зелёные" по матрице обязано
+    # совпасть с тем же счётом по LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE,
+    # которым же независимо (см. compute_id_progress_stream) считается
+    # плитка "Поток по вкладкам" green_n. Обе величины — количество
+    # ПОДПИСАННЫХ связок раздел+вид работы на вкладке; путь к числу разный
+    # (одна взята из мгновенного count(*) по CTE, другая — из
+    # покомпонентной as-of-сегодня реконструкции истории), но ответ обязан
+    # быть один и тот же, иначе одна из двух реализаций считает не то же
+    # самое "сейчас".
+    stream_by_tab = {r["tab_id"]: r for r in stream}
+    for tab in tabs:
+        mx_full = m.compute_id_matrix(tab["id"], show_all=True)
+        # signed берём из ПОСЛЕДНЕЙ недели каждой строки по позиции в списке
+        # (последняя неделя полного периода — самая свежая доступная точка).
+        matrix_signed_now = sum(r["cells"][-1]["signed"] for r in mx_full["rows"] if not r["cells"][-1]["empty"])
+        tile_green = stream_by_tab.get(tab["id"], {}).get("green_n", 0)
+        check(
+            f"Матрица «{tab['label']}» (последняя неделя, всего подписано) vs плитка «Поток по вкладкам» green_n",
+            "compute_id_matrix(show_all=True), последняя неделя", matrix_signed_now,
+            "compute_id_progress_stream()", tile_green,
         )
 
     # --- 10. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---

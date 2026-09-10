@@ -1,4 +1,4 @@
-import calendar
+import bisect
 import contextvars
 import hashlib
 import json
@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import urllib.parse
+from collections import defaultdict
 
 import psycopg2.errors
 from datetime import date as date_cls, datetime as datetime_cls, timedelta
@@ -4314,43 +4315,33 @@ ID_MATRIX_PERIOD_START = date_cls(2026, 3, 10)
 ID_MATRIX_PERIOD_END = date_cls(2027, 6, 1)
 
 
-def _id_matrix_periods():
-    """Колонки матрицы — не недели по ISO, а фиксированные блоки дней
-    внутри месяца (1-7 / 8-14 / 15-21 / 22-конец месяца) — решение
-    координатора для этой задачи. Проверено прямым grep по main.py и
-    шаблонам: такой конвенции (блоки 1-7/8-14/15-21/22-...) в проекте
-    раньше НЕ было — единственное похожее место, полумесячный (2 блока,
-    не 4) план закрытия КС-2 в экспорте «График ИД», это другая, ранее
-    существовавшая схема. Задание само по себе полностью специфицирует
-    новую схему — реализовано как написано, расхождение с "уже
-    использовалось" зафиксировано в decisions, не блокирует работу.
-    Первый и последний блок обрезаются по границам периода — сам период
-    (10.03.2026-01.06.2027) не укорачивается."""
-    periods = []
-    y, mo = ID_MATRIX_PERIOD_START.year, ID_MATRIX_PERIOD_START.month
-    while True:
-        last_day = calendar.monthrange(y, mo)[1]
-        for b_start, b_end in ((1, 7), (8, 14), (15, 21), (22, last_day)):
-            p_start = date_cls(y, mo, b_start)
-            p_end = date_cls(y, mo, b_end)
-            if p_end < ID_MATRIX_PERIOD_START or p_start > ID_MATRIX_PERIOD_END:
-                continue
-            p_start = max(p_start, ID_MATRIX_PERIOD_START)
-            p_end = min(p_end, ID_MATRIX_PERIOD_END)
-            if p_start == p_end:
-                label = f"{p_start:%d.%m.%Y}"
-            elif p_start.month == p_end.month and p_start.year == p_end.year:
-                label = f"{p_start:%d}–{p_end:%d.%m.%Y}"
-            else:
-                label = f"{p_start:%d.%m}–{p_end:%d.%m.%Y}"
-            periods.append({"start": p_start, "end": p_end, "label": label})
-        if y == ID_MATRIX_PERIOD_END.year and mo == ID_MATRIX_PERIOD_END.month:
-            break
-        mo += 1
-        if mo > 12:
-            mo = 1
-            y += 1
-    return periods
+# Заход 6, задача 3, 11.09.2026 — координатор явно отменил прежнюю
+# разбивку на блоки 1-7/8-14/15-21/22-конец месяца: "это была моя
+# придумка и она была неправильной". Колонки — настоящие календарные
+# недели, понедельник-воскресенье. Каждая колонка ровно 7 дней, кроме
+# первой и последней — они обрезаются по границам периода
+# (ID_MATRIX_PERIOD_START/_END), если период начинается не в
+# понедельник или заканчивается не в воскресенье; сам период не
+# укорачивается и не растягивается до границ недели.
+ID_MATRIX_DEFAULT_WINDOW = 13  # текущая неделя + 4 назад + 8 вперёд, по заданию
+
+
+def _id_matrix_weeks():
+    weeks = []
+    monday = ID_MATRIX_PERIOD_START - timedelta(days=ID_MATRIX_PERIOD_START.weekday())
+    while monday <= ID_MATRIX_PERIOD_END:
+        w_end = monday + timedelta(days=6)
+        p_start = max(monday, ID_MATRIX_PERIOD_START)
+        p_end = min(w_end, ID_MATRIX_PERIOD_END)
+        if p_start == p_end:
+            label = f"{p_start:%d.%m.%Y}"
+        elif p_start.month == p_end.month and p_start.year == p_end.year:
+            label = f"{p_start:%d}–{p_end:%d.%m.%Y}"
+        else:
+            label = f"{p_start:%d.%m}–{p_end:%d.%m.%Y}"
+        weeks.append({"start": p_start, "end": p_end, "label": label})
+        monday += timedelta(days=7)
+    return weeks
 
 
 # Прецедент координатора (продолжение прогона, задача 2, 10.09.2026):
@@ -4379,94 +4370,159 @@ def _id_matrix_cell_color(status_code, is_stopper, blocker_description):
     return None
 
 
-def compute_id_matrix(tab_id):
-    """Матрица «Раздел × Этап» для одной вкладки. Первый столбец —
-    статус РАЗДЕЛА В ЦЕЛОМ: переиспользует LATEST_ID_FORM_ENTRY_CTE (та
-    же "последняя запись по row_id", что везде в проекте отвечает на
-    вопрос "какой сейчас статус у раздела") — не изобретаем новое
-    правило агрегирования по видам работ для той же самой величины.
-    Значение ячейки (раздел × период) — число видов работ, переданных
-    на первичную проверку РСК в этом периоде: для прошедших периодов
-    считается по факту (status_date исторических записей id_form_entry,
-    статус которых на момент записи — «Первичная проверка РСК»), для
-    текущего и будущих периодов — по плану (planned_rsk_date последней
-    записи). Это осознанное сужение слова "передано на подпись" до
-    конкретного события "передано на первичную проверку РСК" (совпадает
-    с определением жёлтого цвета в этой же матрице) — если имелось в
-    виду более широкое понятие ("любой шаг цикла подписания"), нужно
-    отдельное решение координатора, записано в decisions."""
+def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_WINDOW, show_all=False):
+    """Матрица «Раздел × Этап» для одной вкладки, заход 6/задача 3,
+    11.09.2026 — полная переработка семантики ячейки (координатор:
+    "функция возвращает строки" не было приёмкой, приёмка — что видно
+    на экране). Ячейка (раздел × неделя) — это уже не счётчик событий
+    "передано на РСК" (координатор проверил живую вкладку Траншеи и
+    убедился, что при таком определении сетка почти всегда пустая, даже
+    там, где реальная стройка идёт), а СОСТОЯНИЕ раздела на конец этой
+    недели: последняя запись id_form_entry этого раздела (по ЛЮБОМУ
+    work_type_id — тот же принцип, что LATEST_ID_FORM_ENTRY_CTE
+    использует для "текущего статуса раздела в целом"), датированная
+    (status_date) на конец недели или раньше. Если такой записи нет —
+    ячейка ПУСТАЯ (не ноль, не цвет) — "на этой неделе ещё ничего не
+    было" по прямому указанию задания. Внутри непустой ячейки — вторая
+    величина: сколько видов работ этого раздела уже подписаны на конец
+    недели, из скольких всего (id_form_work_type вкладки).
+
+    Полный период (ID_MATRIX_PERIOD_START..END) — обычно ~60+ недель,
+    нечитаемо целиком; по умолчанию отдаётся окно ID_MATRIX_DEFAULT_WINDOW
+    недель вокруг сегодняшней (4 назад + текущая + 8 вперёд), координатор
+    сам назвал это "разумной отправной точкой, не обязательно точной
+    цифрой". window_start/window_size — параметры окна (индексы в общем
+    списке недель), show_all — показать весь период (тогда допустима
+    горизонтальная прокрутка сетки — единственное разрешённое место по
+    CLAUDE.md)."""
     tab = query_one("select id, code, label from id_form_tab where id=%s", (tab_id,))
     if not tab:
         return None
+
     rows = query(
         "select id, section_label, construction_label from id_form_row where tab_id=%s order by source_row",
         (tab_id,),
     )
-    row_state = {
-        r["row_id"]: r for r in query(
-            LATEST_ID_FORM_ENTRY_CTE + """
-            select r.id as row_id, s.code as status_code, s.is_stopper, bl.description as blocker_description
-            from id_form_row r
-            left join latest_id_entry le on le.row_id = r.id
-            left join id_form_status s on s.id = le.status_id
-            left join blocker bl on bl.id = le.blocker_id
-            where r.tab_id = %(tab_id)s
-            """,
-            {"tab_id": tab_id},
-        )
-    }
-    periods = _id_matrix_periods()
-    today = object_today()
+    work_type_ids = [w["id"] for w in query(
+        "select id from id_form_work_type where tab_id=%s", (tab_id,)
+    )]
+    total_work_types = len(work_type_ids)
 
-    # Прошедшие периоды — по факту. Берём ВСЕ исторические записи
-    # id_form_entry (не только последнюю по паре) — иначе более поздняя
-    # правка того же вида работ стёрла бы событие "передали на РСК",
-    # которое реально произошло в своём периоде.
-    past_rows = query(
+    all_weeks = _id_matrix_weeks()
+    total_weeks = len(all_weeks)
+    today = object_today()
+    current_idx = next((i for i, w in enumerate(all_weeks) if w["start"] <= today <= w["end"]), None)
+    if current_idx is None:
+        current_idx = 0 if today < all_weeks[0]["start"] else total_weeks - 1
+
+    if show_all:
+        window_start, window_end = 0, total_weeks
+    else:
+        max_start = max(0, total_weeks - window_size)
+        if window_start is None:
+            window_start = max(0, min(current_idx - 4, max_start))
+        else:
+            window_start = max(0, min(window_start, max_start))
+        window_end = min(window_start + window_size, total_weeks)
+    weeks = all_weeks[window_start:window_end]
+
+    # История "раздел в целом" — ВСЕ записи по row_id (любой work_type_id),
+    # отсортированные по (status_date, created_at) — bisect по этому
+    # списку даёт "последнюю запись, датированную на дату X или раньше"
+    # за O(log n), без похода в БД на каждую неделю.
+    row_entries = query(
         """
-        select e.row_id, e.work_type_id, e.status_date
+        select e.row_id, e.status_date, e.created_at, s.code as status_code, s.is_stopper,
+               bl.description as blocker_description
+        from id_form_entry e
+        join id_form_status s on s.id = e.status_id
+        left join blocker bl on bl.id = e.blocker_id
+        join id_form_row r on r.id = e.row_id
+        where r.tab_id = %(tab_id)s
+        order by e.row_id, e.status_date, e.created_at
+        """,
+        {"tab_id": tab_id},
+    )
+    row_history = defaultdict(list)
+    for e in row_entries:
+        row_history[e["row_id"]].append(e)
+    row_dates = {rid: [e["status_date"] for e in lst] for rid, lst in row_history.items()}
+
+    # История по (раздел, вид работы) — та же логика, но для
+    # прогресс-дроби "N подписано из M" внутри ячейки.
+    wt_entries = query(
+        """
+        select e.row_id, e.work_type_id, e.status_date, e.created_at, s.code as status_code
         from id_form_entry e
         join id_form_status s on s.id = e.status_id
         join id_form_row r on r.id = e.row_id
-        where r.tab_id = %(tab_id)s and s.code = 'Первичная проверка РСК'
-          and e.work_type_id is not null and e.status_date is not null
+        where r.tab_id = %(tab_id)s and e.work_type_id is not null
+        order by e.row_id, e.work_type_id, e.status_date, e.created_at
         """,
         {"tab_id": tab_id},
     )
-    future_rows = query(
-        LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE + """
-        select l.row_id, l.work_type_id, l.planned_rsk_date
-        from latest_by_worktype l
-        join id_form_row r on r.id = l.row_id
-        where r.tab_id = %(tab_id)s and l.planned_rsk_date is not null
-        """,
-        {"tab_id": tab_id},
-    )
+    wt_history = defaultdict(list)
+    for e in wt_entries:
+        wt_history[(e["row_id"], e["work_type_id"])].append(e)
+    wt_dates = {k: [e["status_date"] for e in lst] for k, lst in wt_history.items()}
 
-    cell_sets = {}  # (row_id, period_index) -> set(work_type_id) — множество, не счётчик, чтобы не задвоить один и тот же вид работ
-    for p_idx, p in enumerate(periods):
-        is_past = p["end"] < today
-        source = past_rows if is_past else future_rows
-        date_field = "status_date" if is_past else "planned_rsk_date"
-        for r in source:
-            d = r[date_field]
-            if d is not None and p["start"] <= d <= p["end"]:
-                cell_sets.setdefault((r["row_id"], p_idx), set()).add(r["work_type_id"])
+    def state_asof(rid, cutoff):
+        dates = row_dates.get(rid)
+        if not dates:
+            return None
+        idx = bisect.bisect_right(dates, cutoff) - 1
+        return row_history[rid][idx] if idx >= 0 else None
+
+    def signed_count_asof(rid, cutoff):
+        n = 0
+        for wt_id in work_type_ids:
+            dates = wt_dates.get((rid, wt_id))
+            if not dates:
+                continue
+            idx = bisect.bisect_right(dates, cutoff) - 1
+            if idx >= 0 and wt_history[(rid, wt_id)][idx]["status_code"] == "Подписано":
+                n += 1
+        return n
 
     matrix_rows = []
     for r in rows:
-        state = row_state.get(r["id"], {})
-        color = _id_matrix_cell_color(
-            state.get("status_code"), state.get("is_stopper"), state.get("blocker_description")
-        )
-        cells = []
-        for p_idx in range(len(periods)):
-            n = len(cell_sets.get((r["id"], p_idx), ()))
-            cells.append(n)
         label = r["section_label"] or r["construction_label"] or f"#{r['id']}"
-        matrix_rows.append({"row_id": r["id"], "label": label, "color": color, "cells": cells})
+        # "Текущий" цвет замороженного столбца — НЕ "состояние на конец
+        # сегодняшней недели" (та же величина, что и любая другая ячейка),
+        # а тот же принцип, что LATEST_ID_FORM_ENTRY_CTE использует везде
+        # в проекте для "текущего статуса раздела": последняя ОТПРАВЛЕННАЯ
+        # запись (max created_at), а не последняя по дате события — те же
+        # два понятия, что и раньше в этой матрице, просто теперь явно
+        # разведены по имени (current_color vs cells[].color).
+        row_hist = row_history.get(r["id"])
+        current_state = max(row_hist, key=lambda e: e["created_at"]) if row_hist else None
+        current_color = _id_matrix_cell_color(
+            current_state["status_code"] if current_state else None,
+            current_state["is_stopper"] if current_state else None,
+            current_state["blocker_description"] if current_state else None,
+        ) if current_state else None
+        cells = []
+        for w in weeks:
+            state = state_asof(r["id"], w["end"])
+            if state is None:
+                cells.append({"empty": True})
+                continue
+            color = _id_matrix_cell_color(state["status_code"], state["is_stopper"], state["blocker_description"])
+            signed = signed_count_asof(r["id"], w["end"])
+            cells.append({"empty": False, "color": color, "signed": signed, "total": total_work_types})
+        matrix_rows.append({"row_id": r["id"], "label": label, "current_color": current_color, "cells": cells})
 
-    return {"tab": tab, "periods": periods, "rows": matrix_rows}
+    return {
+        "tab": tab,
+        "weeks": weeks,
+        "rows": matrix_rows,
+        "window_start": window_start,
+        "window_size": window_end - window_start,
+        "total_weeks": total_weeks,
+        "has_prev": window_start > 0,
+        "has_next": window_end < total_weeks,
+        "show_all": show_all,
+    }
 
 
 def compute_id_row_drilldown(row_id):
@@ -4515,14 +4571,17 @@ def api_id_progress_drilldown(row_id: int):
 
 
 @app.get("/id-progress")
-def id_progress_page(request: Request, tab_id: int = 0):
+def id_progress_page(request: Request, tab_id: int = 0, week_offset: int = None, show_all: int = 0):
     tiles = compute_id_progress_tiles()
     stream = compute_id_progress_stream()
     tabs = query(
         "select id, label from id_form_tab where code not in ('opv', 'n') order by label"
     )
     selected_tab_id = tab_id or (tabs[0]["id"] if tabs else 0)
-    matrix = compute_id_matrix(selected_tab_id) if selected_tab_id else None
+    matrix = (
+        compute_id_matrix(selected_tab_id, window_start=week_offset, show_all=bool(show_all))
+        if selected_tab_id else None
+    )
     return render(
         request, "id_progress.html", "id-progress",
         tiles=tiles, stream=stream, tabs=tabs, selected_tab_id=selected_tab_id, matrix=matrix,

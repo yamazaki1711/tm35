@@ -58,25 +58,57 @@
   </label>
 </form>
 
+<div class="id-matrix-legend">
+  <span><i class="id-matrix-swatch id-matrix-green"></i>Подписано</span>
+  <span><i class="id-matrix-swatch id-matrix-yellow"></i>Первичная проверка РСК</span>
+  <span><i class="id-matrix-swatch id-matrix-blue"></i>Нет проектного решения</span>
+  <span><i class="id-matrix-swatch id-matrix-red"></i>Другая блокирующая причина</span>
+  <span><i class="id-matrix-swatch id-matrix-swatch-empty"></i>Данных ещё нет</span>
+</div>
+
 {% if matrix %}
-<div class="table-wrap" style="margin-top:1rem;">
+<div class="matrix-nav">
+  {% if not matrix.show_all %}
+    {% if matrix.has_prev %}
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;week_offset={{ matrix.window_start - 4 }}">← Раньше</a>
+    {% else %}
+    <span class="btn-nav btn-nav-disabled">← Раньше</span>
+    {% endif %}
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}">Текущая неделя</a>
+    {% if matrix.has_next %}
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;week_offset={{ matrix.window_start + 4 }}">Позже →</a>
+    {% else %}
+    <span class="btn-nav btn-nav-disabled">Позже →</span>
+    {% endif %}
+    <a class="btn-nav btn-nav-secondary" href="/id-progress?tab_id={{ selected_tab_id }}&amp;show_all=1">Показать весь период ({{ matrix.total_weeks }} нед.)</a>
+  {% else %}
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}">Свернуть до окна недель</a>
+    <span class="matrix-nav-note">Весь период — {{ matrix.total_weeks }} недель, доступна прокрутка сетки вбок.</span>
+  {% endif %}
+</div>
+
+<div class="id-matrix-wrap">
 <table class="data-table id-matrix">
   <thead>
     <tr>
-      <th>Раздел</th>
-      {% for p in matrix.periods %}<th class="nowrap">{{ p.label }}</th>{% endfor %}
+      <th class="sticky-col">Раздел</th>
+      {% for w in matrix.weeks %}<th class="nowrap">{{ w.label }}</th>{% endfor %}
     </tr>
   </thead>
   <tbody>
     {% for r in matrix.rows %}
-    <tr class="id-matrix-row" data-row-id="{{ r.row_id }}" style="cursor:pointer">
-      <td class="nowrap id-matrix-cell id-matrix-{{ r.color or 'none' }}">{{ r.label }}</td>
-      {% for n in r.cells %}
-      <td class="id-matrix-cell {{ 'id-matrix-yellow' if n > 0 else '' }}">{{ n if n > 0 else '' }}</td>
+    <tr class="id-matrix-row" data-row-id="{{ r.row_id }}">
+      <td class="sticky-col nowrap id-matrix-cell {{ 'id-matrix-' ~ r.current_color if r.current_color else '' }}">{{ r.label }}</td>
+      {% for c in r.cells %}
+      {% if c.empty %}
+      <td class="id-matrix-cell id-matrix-empty"></td>
+      {% else %}
+      <td class="id-matrix-cell {{ 'id-matrix-' ~ c.color if c.color else '' }}">{{ c.signed }}/{{ c.total }}</td>
+      {% endif %}
       {% endfor %}
     </tr>
     {% else %}
-    <tr><td colspan="{{ matrix.periods|length + 1 }}" class="empty-note">Разделов на этой вкладке нет.</td></tr>
+    <tr><td colspan="{{ matrix.weeks|length + 1 }}" class="empty-note">Разделов на этой вкладке нет.</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -88,13 +120,40 @@
 <div id="id-matrix-drilldown"></div>
 
 <style>
-.id-matrix th, .id-matrix td { text-align: center; }
-.id-matrix th:first-child, .id-matrix td:first-child { text-align: left; }
+.id-matrix-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; font-size: 14px; color: var(--muted); margin: .5rem 0 .75rem; }
+.id-matrix-legend span { display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; }
+.id-matrix-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; }
+.id-matrix-swatch.id-matrix-red    { background: var(--c-danger); }
+.id-matrix-swatch.id-matrix-yellow { background: var(--c-warning); }
+.id-matrix-swatch.id-matrix-green  { background: var(--c-success); }
+.id-matrix-swatch.id-matrix-blue   { background: var(--c-primary-light); }
+.id-matrix-swatch-empty { background: var(--c-surface-alt); border: 1px solid var(--c-border-strong); }
+
+.matrix-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .75rem; }
+.btn-nav {
+  display: inline-block; height: 36px; line-height: 36px; padding: 0 .8rem; border-radius: .4rem;
+  border: 1px solid var(--c-border-strong); background: var(--c-surface); color: var(--c-text);
+  font-size: 14px; text-decoration: none; white-space: nowrap;
+}
+.btn-nav:hover { background: var(--c-surface-alt); }
+.btn-nav-disabled { color: var(--muted); opacity: .5; }
+.btn-nav-secondary { margin-left: .5rem; color: var(--accent); border-color: transparent; background: none; }
+.matrix-nav-note { font-size: 14px; color: var(--muted); }
+
+.id-matrix-wrap { overflow-x: auto; max-height: 78vh; overflow-y: auto; border: 1px solid var(--c-border); border-radius: var(--r-md); }
+.id-matrix { border-collapse: separate; border-spacing: 0; }
+.id-matrix th, .id-matrix td { text-align: center; white-space: nowrap; }
+.id-matrix thead th { position: sticky; top: 0; background: var(--c-surface-alt); z-index: 3; }
+.id-matrix .sticky-col { position: sticky; left: 0; text-align: left; min-width: 12rem; background: var(--c-surface); z-index: 2; }
+.id-matrix thead .sticky-col { z-index: 4; background: var(--c-surface-alt); }
+.id-matrix-row:hover td { background: var(--c-surface-alt); }
+.id-matrix-row:hover td.sticky-col { background: var(--c-surface-alt); }
+.id-matrix-row { cursor: pointer; }
 .id-matrix-cell.id-matrix-red    { background: var(--c-danger-bg); color: var(--c-danger); font-weight: 600; }
 .id-matrix-cell.id-matrix-yellow { background: var(--c-warning-bg); color: var(--c-warning); }
 .id-matrix-cell.id-matrix-green  { background: var(--c-success-bg); color: var(--c-success); font-weight: 600; }
 .id-matrix-cell.id-matrix-blue   { background: var(--c-primary-bg); color: var(--c-primary-light); font-weight: 600; }
-.id-matrix-row:hover td { filter: brightness(.97); }
+.id-matrix-cell.id-matrix-empty  { color: var(--muted); }
 </style>
 
 <script>
