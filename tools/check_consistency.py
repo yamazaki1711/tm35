@@ -323,6 +323,19 @@ def main_check():
         "ожидается", 0,
     )
 
+    # --- 13. Заход 6, задача 2: номера папок ИД — гапless ТМ-001..N в
+    # порядке создания, без дублей. Не гарантировано схемой (name без
+    # unique) — держим проверкой, раз рассчитываем на этот порядок при
+    # выдаче следующего номера (api_id_folder_create).
+    id_folders_ordered = m.query("select id, name, created_at from id_folder order by created_at, id")
+    expected_names = [f"ТМ-{i:03d}" for i in range(1, len(id_folders_ordered) + 1)]
+    actual_names = [f["name"] for f in id_folders_ordered]
+    check(
+        "Номера папок ИД: ТМ-001..N без дыр и дублей, строго по порядку создания",
+        "фактический порядок", actual_names,
+        "ожидаемый порядок", expected_names,
+    )
+
 
 def print_report():
     name_w = max(len(c[0]) for c in CHECKS)

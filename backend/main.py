@@ -5249,15 +5249,26 @@ def api_id_folder_create(request: Request, folder_date: str = Form(...), row_ids
     user_id = current_user_id_or_web_form()
 
     def _do(cur):
+        # Заход 6, 11.09.2026, задача 2: номер папки — независимая метка,
+        # не производная от id_folder.id. Раньше номер брался прямо из
+        # только что сгенерированного id (f"ТМ-{folder_id:03d}") — это
+        # ровно то смешение "метка = идентификатор", которое ломается
+        # при любой перенумерации (перенумеровка меняет name, id не
+        # трогает; следующая папка после неё получила бы дыру или
+        # столкновение, если бы номер по-прежнему брался из id). Теперь
+        # номер — max(текущих реальных "ТМ-NNN") + 1, читается в той же
+        # транзакции, что и вставка, чтобы не разъехаться при двух
+        # одновременных сохранениях.
+        cur.execute(r"select name from id_folder where name ~ '^ТМ-\d+$'")
+        existing_nums = [int(r["name"].split("-", 1)[1]) for r in cur.fetchall()]
+        next_num = (max(existing_nums) if existing_nums else 0) + 1
+        folder_name = f"ТМ-{next_num:03d}"
+
         cur.execute(
-            "insert into id_folder (name, folder_date, created_by) values ('', %s, %s) returning id",
-            (date_val, user_id),
+            "insert into id_folder (name, folder_date, created_by) values (%s, %s, %s) returning id",
+            (folder_name, date_val, user_id),
         )
         folder_id = cur.fetchone()["id"]
-        cur.execute(
-            "update id_folder set name=%s where id=%s",
-            (f"ТМ-{folder_id:03d}", folder_id),
-        )
         errors = []
         for row_id in row_ids:
             cur.execute("select id from id_folder_row where row_id=%s", (row_id,))
@@ -5268,9 +5279,9 @@ def api_id_folder_create(request: Request, folder_date: str = Form(...), row_ids
                 "insert into id_folder_row (folder_id, row_id) values (%s, %s)",
                 (folder_id, row_id),
             )
-        return folder_id, errors
-    folder_id, errors = run_in_transaction(_do)
-    ok_msg = urllib.parse.quote(f"Папка «ТМ-{folder_id:03d}» сформирована.")
+        return folder_id, folder_name, errors
+    folder_id, folder_name, errors = run_in_transaction(_do)
+    ok_msg = urllib.parse.quote(f"Папка «{folder_name}» сформирована.")
     return RedirectResponse(
         url=f"/id-folders/{folder_id}?ok={ok_msg}" + ("&warn=1" if errors else ""), status_code=303
     )
