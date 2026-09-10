@@ -247,6 +247,30 @@ def main_check():
         tolerance=0.01,
     )
 
+    # --- 11a. Заход 3, задача 5: инвариант rsk_violation.is_active <=>
+    # closed_in_act_id is null — оба поля выставляются вместе одним
+    # UPDATE в /rsk/import/confirm, но это два независимых столбца,
+    # которые в будущем кто-то может обновить порознь. Расхождение = 0
+    # сейчас, но проверка должна остаться постоянной, не разовой.
+    rsk_invariant_mismatch = m.query_one(
+        "select count(*) as n from rsk_violation where (is_active = false) != (closed_in_act_id is not null)"
+    )["n"]
+    check(
+        "rsk_violation: is_active=false согласовано с closed_in_act_id (структурный инвариант)",
+        "количество расхождений", rsk_invariant_mismatch,
+        "ожидается", 0,
+    )
+
+    # --- 11b. "Активных нарушений": /rsk/dashboard (compute_rsk_dashboard_stats)
+    # vs прямой SQL по is_active — независимая проверка того же числа.
+    rsk_dash_stats = m.compute_rsk_dashboard_stats()
+    direct_active = m.query_one("select count(*) as n from rsk_violation where is_active")["n"]
+    check(
+        "Активных нарушений РСК: /rsk/dashboard vs прямой SQL",
+        "/rsk/dashboard", rsk_dash_stats["tiles"]["total_active"],
+        "прямой SQL", direct_active,
+    )
+
     # --- 11. Воронка папок на /dashboard vs /id-folders — не текст кода, а то,
     # что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
     # экран, не на код"). Обе страницы включают один и тот же шаблон
