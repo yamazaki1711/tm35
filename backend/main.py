@@ -4885,6 +4885,18 @@ def _grafik_group_rsk_remarks(group_ids):
 
 @app.get("/export/id-grafik.xlsx")
 def export_id_grafik_xlsx():
+    # Заход 6, 11.09.2026, задача 1: направление поставлено на паузу
+    # координатором как техдолг (KNOWN_ISSUES.md) — сам маршрут, шаблон-
+    # патчер, модель групп и экран сопоставления категорий остаются в
+    # коде рабочими и никуда не делись, просто выгрузка больше не отдаёт
+    # файл. Раскомментировать одну эту проверку — единственное, что
+    # понадобится, когда направление вернётся в работу.
+    return RedirectResponse(
+        url="/id-grafik?err=" + urllib.parse.quote(
+            "Выгрузка временно приостановлена — направление на паузе, см. KNOWN_ISSUES.md."
+        ),
+        status_code=303,
+    )
     grouped = _grafik_id_rows()
     all_groups = [r for cats in grouped.values() for v in cats.values() for r in v]
     rsk_remarks_by_group = _grafik_group_rsk_remarks([g["group_id"] for g in all_groups])
