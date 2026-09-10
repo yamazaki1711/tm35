@@ -4115,32 +4115,35 @@ def compute_id_progress_tiles():
 
 
 def compute_id_progress_stream():
-    """Блок 2 задачи 4 — "Поток 15 Разделов": по каждой из 17 вкладок
-    (промпт говорит "15" — в справочнике id_form_tab их 17, включая ОПВ
-    и Н, обычно исключаемые из "15 категорий ПТО" как в остальном
-    проекте; здесь показаны ВСЕ 17, раз задача явно про виды работ по
-    вкладкам, а не про тот привычный список — расхождение "15 vs 17"
-    зафиксировано в NIGHT_RUN, не подогнано вручную до 15) — количество
-    связок раздел+вид работы по трём корзинам: зелёный (подписано),
-    жёлтый (цикл РСК + подписано в карандаше — "в процессе подписания"),
-    красный (стопперы + всё остальное, что не зелёное и не жёлтое)."""
+    """Блок 2 задачи 4 — "Поток по вкладкам": по каждой из 15 вкладок
+    ИД (тот же справочник и тот же фильтр `code not in ('opv','n')`,
+    что и в выпадающем списке матрицы ниже на этой же странице — раньше
+    вкладка считалась через INNER JOIN от уже введённых записей, из-за
+    чего вкладка без единой записи по виду работ пропадала из списка
+    ВООБЩЕ, а не показывалась нулём; исправлено 10.09.2026 — LEFT JOIN
+    от справочника вкладок, отсутствие записей превращается в честный
+    ноль по всем трём корзинам, не в исчезновение строки). Корзины:
+    зелёный (подписано), жёлтый (цикл РСК + подписано в карандаше — "в
+    процессе подписания"), красный (стопперы + всё остальное, что не
+    зелёное и не жёлтое)."""
     rows = query(
         LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE
         + """
         select t.id as tab_id, t.label as tab_label,
-               count(*) filter (where s.code = 'Подписано') as green_n,
-               count(*) filter (
+               coalesce(count(*) filter (where s.code = 'Подписано'), 0) as green_n,
+               coalesce(count(*) filter (
                    where s.code = any(%(rsk)s) or s.code = 'Подписано в карандаше'
-               ) as yellow_n,
-               count(*) filter (
+               ), 0) as yellow_n,
+               coalesce(count(*) filter (
                    where s.code <> 'Подписано'
                      and s.code <> 'Подписано в карандаше'
                      and s.code <> all(%(rsk)s)
-               ) as red_n
-        from latest_by_worktype l
-        join id_form_row r on r.id = l.row_id
-        join id_form_tab t on t.id = r.tab_id
-        join id_form_status s on s.id = l.status_id
+               ), 0) as red_n
+        from id_form_tab t
+        left join id_form_row r on r.tab_id = t.id
+        left join latest_by_worktype l on l.row_id = r.id
+        left join id_form_status s on s.id = l.status_id
+        where t.code not in ('opv', 'n')
         group by t.id, t.label
         order by t.label
         """,
