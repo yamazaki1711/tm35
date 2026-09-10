@@ -13,15 +13,7 @@
 {% endif %}
 
 <h3 style="margin-top:0">Воронка папок по стадиям</h3>
-<div class="kpi-row kpi-small">
-  {% for s in stages %}
-  <div class="kpi">
-    <div class="kpi-num {{ 'ok' if s in ('signed', 'ks2') else '' }}">{{ stats.funnel[s].count }}</div>
-    <div class="kpi-label">{{ stage_labels[s] }}</div>
-    <div class="kpi-sub">{{ stats.funnel[s].sum|ru_money if stats.funnel[s].known_sum_count > 0 else '—' }} ₽</div>
-  </div>
-  {% endfor %}
-</div>
+{% with funnel=stats.funnel %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
 <h3>Деньги</h3>
 <div class="kpi-row kpi-small">
@@ -97,7 +89,8 @@
 <div class="empty-note">Переходов ещё не было.</div>
 {% endif %}
 
-<p class="subtitle"><a href="/id-folders/new">+ Сформировать новую папку</a></p>
+<p class="subtitle"><a href="/id-folders/new">+ Сформировать новую папку</a> ·
+<a href="/id-folders/bulk-entry">Массовый ввод данных по всем папкам →</a></p>
 
 <h3>Список папок</h3>
 <div class="table-wrap">

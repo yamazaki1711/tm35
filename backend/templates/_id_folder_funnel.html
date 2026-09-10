@@ -1,0 +1,13 @@
+{# Воронка папок по стадиям — единственная разметка, используется и на
+   /id-folders, и в блоке "Обзор ИД" на /dashboard (заход 3, 10.09.2026):
+   вызывающий шаблон передаёт funnel/stages/stage_labels через {% with %},
+   вторая независимая копия этой вёрстки не заводится. #}
+<div class="kpi-row kpi-small">
+  {% for s in stages %}
+  <div class="kpi">
+    <div class="kpi-num {{ 'ok' if s in ('signed', 'ks2') else '' }}">{{ funnel[s].count }}</div>
+    <div class="kpi-label">{{ stage_labels[s] }}</div>
+    <div class="kpi-sub">{{ funnel[s].sum|ru_money if funnel[s].known_sum_count > 0 else '—' }} ₽</div>
+  </div>
+  {% endfor %}
+</div>

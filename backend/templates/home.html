@@ -151,45 +151,29 @@
       <h2>Обзор ИД</h2>
     </div>
   </div>
-  <div class="kpi-row">
-    <div class="kpi">
-      <div class="kpi-num">{{ id_stats.total or 0 }}</div>
-      <div class="kpi-label">Разделов ИД</div>
-      <div class="kpi-sub">{{ id_stats.signed or 0 }} подписано</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if (change_stats.overdue or 0) > 0 else '' }}">{{ change_stats.total or 0 }}</div>
-      <div class="kpi-label">Активных ИЗМ</div>
-      {% if (change_stats.overdue or 0) > 0 %}
-      <div class="kpi-sub" style="color:var(--c-warning)">{{ change_stats.overdue }} просрочено</div>
-      {% else %}
-      <div class="kpi-sub">{{ change_stats.overdue or 0 }} просрочено</div>
-      {% endif %}
-    </div>
-  </div>
+  {# ── Строка 1 — воронка папок по стадиям, самый заметный элемент блока
+     (обычный .kpi-row, не .kpi-small — тот же приём, что уже используется
+     на сайте для ключевой цифры). Единица работы и денег — папка, не
+     раздел: воронка папок стоит первой и крупнее, чем раздел ниже. ── #}
+  {% with funnel=folder_stats.funnel, stages=folder_stages, stage_labels=folder_stage_labels %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
-  {# ── Выполнение (сборка папок ИД) ── #}
-  <h3 style="margin-top:1.25rem">Выполнение <a href="/id-folders" style="font-size:.8rem;font-weight:500">все папки →</a></h3>
+  {# ── Строка 2 — деньги ── #}
   <div class="kpi-row kpi-small">
     <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.folders_count }}</div>
-      <div class="kpi-label">Собрано папок</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if folder_stats.unsigned_count > 0 else '' }}">{{ folder_stats.unsigned_count }}</div>
-      <div class="kpi-label">Остаток неподписанных разделов</div>
+      <div class="kpi-num">{{ folder_stats.contract_total|ru_money }}</div>
+      <div class="kpi-label">Всего по контракту, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.signed_folders_sum|ru_money }}</div>
-      <div class="kpi-label">Сумма подписанных папок, ₽</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'danger' if folder_stats.money_remaining < 0 else '' }}">{{ folder_stats.money_remaining|ru_money }}</div>
-      <div class="kpi-label">Остаток в деньгах, ₽</div>
+      <div class="kpi-label">Подписано, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.manual_sum|ru_money }}</div>
       <div class="kpi-label">Незакрытый объём (ручной), ₽</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'danger' if folder_stats.money_remaining < 0 else '' }}">{{ folder_stats.money_remaining|ru_money }}</div>
+      <div class="kpi-label">Остаток в деньгах, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num {{ 'warn' if folder_stats.awaiting_smeta_count > 0 else '' }}">{{ folder_stats.awaiting_smeta_count }}</div>
@@ -201,7 +185,37 @@
     </div>
   </div>
 
-  {# ── Кнопки блока ИД ── #}
+  {# ── Строка 3 — разделы, подчинена строкам 1-2 (тот же .kpi-small) ── #}
+  <div class="kpi-row kpi-small">
+    <div class="kpi">
+      <div class="kpi-num">{{ id_stats.total or 0 }}</div>
+      <div class="kpi-label">Всего разделов ИД</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ id_stats.signed or 0 }}</div>
+      <div class="kpi-label">Подписано</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'warn' if folder_stats.unsigned_count > 0 else '' }}">{{ folder_stats.unsigned_count }}</div>
+      <div class="kpi-label">Остаток неподписанных разделов</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num {{ 'warn' if (change_stats.overdue or 0) > 0 else '' }}">{{ change_stats.total or 0 }}</div>
+      <div class="kpi-label">Активных ИЗМ (ДПР)</div>
+      {% if (change_stats.overdue or 0) > 0 %}
+      <div class="kpi-sub" style="color:var(--c-warning)">{{ change_stats.overdue }} просрочено</div>
+      {% else %}
+      <div class="kpi-sub">{{ change_stats.overdue or 0 }} просрочено</div>
+      {% endif %}
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ folder_stats.signed_not_in_folder }}</div>
+      <div class="kpi-label">Готово к сборке</div>
+      <div class="kpi-sub">подписано, ещё не в папке</div>
+    </div>
+  </div>
+
+  {# ── Строка 4 — кнопки блока ИД ── #}
   <div class="quick-nav" style="margin-top:1.25rem">
     <a href="/id-packages" class="qn-item">
       <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></span>
@@ -214,6 +228,10 @@
     <a href="/id-folders" class="qn-item">
       <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l2-3h5l2 3"/></svg></span>
       <span class="qn-text">Выполнение</span>
+    </a>
+    <a href="/id-progress" class="qn-item">
+      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 19h16M7 19V9M12 19V5M17 19v-7"/></svg></span>
+      <span class="qn-text">График ИД</span>
     </a>
   </div>
 </div>

@@ -4933,6 +4933,17 @@ def api_id_folder_create(request: Request, folder_date: str = Form(...), row_ids
     )
 
 
+# Заход 3, 10.09.2026, задача 1: массовый ввод денег по папкам ИД —
+# ОБЯЗАН стоять раньше "/id-folders/{folder_id}" ниже, иначе Starlette
+# матчит первый зарегистрированный шаблон, "bulk-entry" пытается
+# распарситься как int folder_id и падает 422 (найдено и исправлено
+# в этой же сессии при первой проверке).
+@app.get("/id-folders/bulk-entry")
+def id_folders_bulk_entry_page(request: Request):
+    folders = query_id_folders(order="asc")
+    return render(request, "id_folders_bulk_entry.html", "id-folders", folders=folders, rsk_signers=RSK_SIGNERS)
+
+
 @app.get("/id-folders/{folder_id}")
 def id_folder_detail_page(request: Request, folder_id: int):
     folder = query_one("select * from id_folder where id=%s", (folder_id,))
@@ -5177,6 +5188,91 @@ def api_id_folder_smeta(request: Request, folder_id: int, amount_smeta_rub: str 
         "update id_folder set amount_smeta_rub=%s where id=%s", (amt, folder_id),
     ))
     ok_msg = urllib.parse.quote(f"Сметная стоимость папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽.")
+    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
+
+
+# ====== Массовый ввод денег по папкам ИД (заход 3, 10.09.2026, задача 1) ======
+# Одна карточка за раз — это трение, из-за которого дашборд остаётся
+# пустым (0,00 ₽ подписано при 9 реальных папках). Одна страница,
+# редактируемая построчно, обычными POST-формами (form="row-N" на
+# полях — не вложенный <form> внутри <tr>, невалидный HTML5) — те же
+# правила, что и у одиночных форм на /id-folders/{id}: даты принимаются
+# любые (задним числом — папки вводятся ретроспективно), сметная
+# стоимость отклоняется явным сообщением, если после этого же
+# сохранения дата подписания всё ещё не заполнена (свою же submitted
+# дату подписания в этом сохранении — тоже считаем действительной, не
+# только уже сохранённую раньше).
+@app.post("/api/id-folder/{folder_id}/bulk")
+def api_id_folder_bulk_update(
+    request: Request, folder_id: int,
+    check_start_date: str = Form(""), signed_date: str = Form(""), signed_by: str = Form(""),
+    ks2_date: str = Form(""), ks2_no: str = Form(""), amount_smeta_rub: str = Form(""),
+):
+    back_url = "/id-folders/bulk-entry"
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    folder = query_one("select id, name, signed_date, signed_by from id_folder where id=%s", (folder_id,))
+    if not folder:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
+
+    errors = []
+    prefix = f"«{folder['name']}»: "
+
+    check_start_val = None
+    if check_start_date.strip():
+        check_start_val = _parse_date(check_start_date)
+        if not check_start_val:
+            errors.append(prefix + "дата начала проверки указана некорректно.")
+
+    signed_val = None
+    if signed_date.strip():
+        signed_val = _parse_date(signed_date)
+        if not signed_val:
+            errors.append(prefix + "дата подписания указана некорректно.")
+
+    signed_by_val = signed_by.strip() or None
+    if signed_by_val and signed_by_val not in RSK_SIGNERS:
+        errors.append(prefix + "недопустимый подписант.")
+    effective_signed_by = signed_by_val or folder["signed_by"]
+    effective_signed_date_for_by_check = signed_val or folder["signed_date"]
+    if signed_val and not effective_signed_by:
+        errors.append(prefix + "указана дата подписания без подписанта.")
+    if signed_by_val and not effective_signed_date_for_by_check:
+        errors.append(prefix + "указан подписант без даты подписания.")
+
+    ks2_val = None
+    if ks2_date.strip():
+        ks2_val = _parse_date(ks2_date)
+        if not ks2_val:
+            errors.append(prefix + "дата КС-2 указана некорректно.")
+    ks2_no_val = ks2_no.strip() or None
+    if bool(ks2_val) != bool(ks2_no_val):
+        errors.append(prefix + "дата КС-2 и номер КС-2 заполняются вместе.")
+
+    amount_val = None
+    if amount_smeta_rub.strip():
+        try:
+            amount_val = float(amount_smeta_rub.replace(",", "."))
+        except ValueError:
+            errors.append(prefix + "сметная стоимость указана некорректно.")
+        else:
+            if amount_val <= 0:
+                errors.append(prefix + "сметная стоимость должна быть больше нуля.")
+    # Действует дата подписания ПОСЛЕ этого сохранения — если её заполняют
+    # в этой же строке одновременно со сметной стоимостью, это разрешено.
+    effective_signed = signed_val or folder["signed_date"]
+    if amount_val is not None and not effective_signed:
+        errors.append(prefix + "сметная стоимость вводится только после подписания папки.")
+
+    if errors:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote(" ".join(errors)), status_code=303)
+
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_folder set check_start_date=%s, signed_date=%s, signed_by=%s, "
+        "ks2_date=%s, ks2_no=%s, amount_smeta_rub=%s where id=%s",
+        (check_start_val, signed_val, signed_by_val, ks2_val, ks2_no_val, amount_val, folder_id),
+    ))
+    ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» сохранена.")
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
@@ -5650,6 +5746,7 @@ def home_v2(request: Request):
         change_stats=change_stats_row,
         rsk_dash=rsk_dash,
         folder_stats=compute_id_folder_stats(),
+        folder_stages=ID_FOLDER_STAGES, folder_stage_labels=ID_FOLDER_STAGE_LABELS,
     )
 
 

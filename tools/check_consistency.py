@@ -20,7 +20,9 @@ LATEST_ID_FORM_ENTRY_CTE в main.py — там же прямо написано:
 Печатает таблицу "показатель / источник A / источник B / сходится ли",
 возвращает ненулевой код при любом расхождении.
 """
+import re
 import sys
+import urllib.request
 
 sys.path.insert(0, "/app")
 import main as m  # noqa: E402
@@ -244,6 +246,27 @@ def main_check():
         "compute_id_folder_stats()", float(folder_stats["signed_folders_sum"]),
         tolerance=0.01,
     )
+
+    # --- 11. Воронка папок на /dashboard vs /id-folders — не текст кода, а то,
+    # что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
+    # экран, не на код"). Обе страницы включают один и тот же шаблон
+    # _id_folder_funnel.html — здесь сверяются числа из ОТРЕНДЕРЕННОГО HTML
+    # обеих страниц, не повторный вызов той же Python-функции.
+    dashboard_html = urllib.request.urlopen("http://localhost:8000/dashboard", timeout=15).read().decode("utf-8")
+    id_folders_html = urllib.request.urlopen("http://localhost:8000/id-folders", timeout=15).read().decode("utf-8")
+    for stage, label in m.ID_FOLDER_STAGE_LABELS.items():
+        pattern = re.compile(
+            r'<div class="kpi-num[^"]*">(\d+)</div>\s*<div class="kpi-label">' + re.escape(label) + r"</div>"
+        )
+        dash_match = pattern.search(dashboard_html)
+        folders_match = pattern.search(id_folders_html)
+        dash_n = int(dash_match.group(1)) if dash_match else None
+        folders_n = int(folders_match.group(1)) if folders_match else None
+        check(
+            f"Воронка папок (отрендеренный HTML), стадия «{label}»: /dashboard vs /id-folders",
+            "/dashboard", dash_n,
+            "/id-folders", folders_n,
+        )
 
 
 def print_report():
