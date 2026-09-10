@@ -3716,9 +3716,108 @@ def id_packages_page(request: Request):
     for r in rows:
         if r["status_label"]:
             status_counts[r["status_label"]] = status_counts.get(r["status_label"], 0) + 1
+    # Заход 3, 10.09.2026, задача 4: счётчик прикреплённых замечаний РСК —
+    # чтобы попасть на экран прикрепления, не гадая id раздела руками.
+    rsk_counts = {r["row_id"]: r["n"] for r in query(
+        "select row_id, count(*) as n from id_row_rsk_link group by row_id"
+    )}
+    for r in rows:
+        r["rsk_count"] = rsk_counts.get(r["id"], 0)
     return render(request, "id_packages.html", "id-packages",
                   rows=rows, total=total, with_entry=with_entry, no_entry=no_entry,
                   status_counts=status_counts)
+
+
+# ====== Связь раздела ИД с замечанием РСК (заход 3, 10.09.2026, задача 4)
+# Экран прикрепления/открепления. Никакого автосопоставления по тексту
+# или коду раздела — только руками, по прямому указанию координатора:
+# ошибочная автосвязь в документе для Заказчика хуже пустой колонки.
+LATEST_RSK_ACT_ITEM_CTE = """
+    with latest_act_item as (
+        select distinct on (violation_id) violation_id, item_no, content
+        from rsk_act_item
+        order by violation_id, act_id desc
+    )
+"""
+
+
+def compute_id_row_rsk_link_data(row_id, q=""):
+    row = query_one(
+        "select r.id, r.section_label, r.construction_label, t.label as tab_label "
+        "from id_form_row r join id_form_tab t on t.id=r.tab_id where r.id=%s",
+        (row_id,),
+    )
+    if not row:
+        return None
+    attached = query(
+        LATEST_RSK_ACT_ITEM_CTE + """
+        select lk.id as link_id, v.sys_no, li.content
+        from id_row_rsk_link lk
+        join rsk_violation v on v.id = lk.violation_id
+        left join latest_act_item li on li.violation_id = v.id
+        where lk.row_id = %(row_id)s
+        order by v.sys_no
+        """,
+        {"row_id": row_id},
+    )
+    q_val = q.strip()
+    candidates = query(
+        LATEST_RSK_ACT_ITEM_CTE + """
+        select v.id as violation_id, v.sys_no, li.content
+        from rsk_violation v
+        left join latest_act_item li on li.violation_id = v.id
+        where v.is_active
+          and v.id not in (select violation_id from id_row_rsk_link where row_id = %(row_id)s)
+          and (%(q)s = '' or li.content ilike %(qlike)s or v.sys_no::text = %(q)s)
+        order by v.sys_no desc
+        limit 100
+        """,
+        {"row_id": row_id, "q": q_val, "qlike": f"%{q_val}%"},
+    )
+    label = row["section_label"] or row["construction_label"] or f"#{row['id']}"
+    return {"row_id": row["id"], "label": label, "tab_label": row["tab_label"],
+            "attached": attached, "candidates": candidates, "q": q_val}
+
+
+@app.get("/id-rsk-link")
+def id_rsk_link_page(request: Request, row_id: int, q: str = ""):
+    data = compute_id_row_rsk_link_data(row_id, q)
+    if not data:
+        return RedirectResponse(url="/id-packages?err=" + urllib.parse.quote("Раздел не найден."), status_code=303)
+    return render(request, "id_rsk_link.html", "id-packages", **data)
+
+
+@app.post("/api/id-row-rsk/{row_id}/attach")
+def api_id_row_rsk_attach(request: Request, row_id: int, violation_id: int = Form(...)):
+    back_url = f"/id-rsk-link?row_id={row_id}"
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url=back_url + "&err=" + urllib.parse.quote("Нет доступа."), status_code=303)
+    row = query_one("select id from id_form_row where id=%s", (row_id,))
+    violation = query_one("select id, sys_no from rsk_violation where id=%s", (violation_id,))
+    if not row or not violation:
+        return RedirectResponse(url=back_url + "&err=" + urllib.parse.quote("Раздел или нарушение не найдены."), status_code=303)
+    user_id = current_user_id_or_web_form()
+    try:
+        run_in_transaction(lambda cur: cur.execute(
+            "insert into id_row_rsk_link (row_id, violation_id, created_by) values (%s, %s, %s)",
+            (row_id, violation_id, user_id),
+        ))
+    except psycopg2.errors.UniqueViolation:
+        pass  # уже прикреплено — не дублируем, не ошибка
+    ok_msg = urllib.parse.quote(f"Замечание №{violation['sys_no']} прикреплено.")
+    return RedirectResponse(url=f"{back_url}&ok={ok_msg}", status_code=303)
+
+
+@app.post("/api/id-row-rsk-link/{link_id}/detach")
+def api_id_row_rsk_detach(request: Request, link_id: int):
+    link = query_one("select row_id from id_row_rsk_link where id=%s", (link_id,))
+    back_url = f"/id-rsk-link?row_id={link['row_id']}" if link else "/id-packages"
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url=back_url + "&err=" + urllib.parse.quote("Нет доступа."), status_code=303)
+    if not link:
+        return RedirectResponse(url=back_url + "&err=" + urllib.parse.quote("Связь не найдена."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute("delete from id_row_rsk_link where id=%s", (link_id,)))
+    return RedirectResponse(url=f"{back_url}&ok=" + urllib.parse.quote("Замечание откреплено."), status_code=303)
 
 
 # ====== Экспорт "График ИД" — вид, привычный части руководства Заказчика
@@ -4312,9 +4411,16 @@ def id_progress_page(request: Request, tab_id: int = 0):
 # Самопроверка (часть 5, п.2) — не только "части архива не потерялись"
 # (это не поймало бы правку Ганта в части 4), а полный инвариант: после
 # патча ЛЮБАЯ ячейка листа "График ИД", кроме заявленного множества
-# патченных C{row}, обязана совпасть со значением в шаблоне — сверяется
+# патченных ячеек, обязана совпасть со значением в шаблоне — сверяется
 # через openpyxl (только чтение) над обеими книгами. Расхождение —
 # отказ отдавать файл, откат на немодифицированный шаблон.
+#
+# Заявленное множество патченных ячеек — не только C{row} (статус):
+# заход 3, 10.09.2026, задача 4 добавила P{row} ("Замеч. РСК,
+# препятствующие принятию ИД") для групп с вручную прикреплёнными
+# нарушениями РСК (id_row_rsk_link) — инвариант РАСШИРЕН явным
+# добавлением координаты в тот же набор patched_coords, а не обойдён:
+# любая третья, незаявленная ячейка по-прежнему ловится тем же кодом.
 
 GRAFIK_ID_TEMPLATE_PATH = "/app/docs_import/grafik_id_template_20260901.xlsx"
 GRAFIK_ID_SHEET1_PART = "xl/worksheets/sheet1.xml"  # "График ИД" — сверено через xl/_rels/workbook.xml.rels
@@ -4475,15 +4581,27 @@ def _status_is_full(text):
     return s.lower().startswith("подписано") and "%" not in s
 
 
-def _patch_grafik_id_sheet1(sheet_xml, styles_xml, shared_strings, groups):
-    """Патчит ТОЛЬКО колонку "Статус" (C{source_row}) для групп с
-    n_members>0 — координатор, часть 5: колонки Гант-сетки не трогаются
-    вообще (см. комментарий блока выше). Статус не понижается: если в
-    шаблоне уже стоит состояние не менее полное, чем наш расчёт, —
-    ячейка не трогается, расхождение идёт в лог. Возвращает
-    (sheet_xml, {патченные координаты}, [строки лога о пропусках])."""
+GRAFIK_ID_RSK_COLUMN = "P"  # "Замеч. РСК, препятствующие принятию ИД" — sharedStrings, ячейка P9
+
+
+def _patch_grafik_id_sheet1(sheet_xml, styles_xml, shared_strings, groups, rsk_remarks_by_group=None):
+    """Патчит колонку "Статус" (C{source_row}) для групп с n_members>0 —
+    координатор, часть 5: колонки Гант-сетки не трогаются вообще (см.
+    комментарий блока выше). Статус не понижается: если в шаблоне уже
+    стоит состояние не менее полное, чем наш расчёт, — ячейка не
+    трогается, расхождение идёт в лог.
+
+    Заход 3, 10.09.2026, задача 4: тем же проходом патчит колонку
+    "Замеч. РСК" (P{source_row}) — ТОЛЬКО когда для группы есть
+    прикреплённые вручную замечания И ячейка в шаблоне сейчас пуста.
+    Непустую ячейку не трогаем — это может быть человеческая пометка
+    (например "Снято 17.06.26"), у нас нет способа судить, устарела она
+    или нет, тот же принцип осторожности, что и у "не понижать статус".
+    Возвращает (sheet_xml, {патченные координаты}, [строки лога])."""
+    rsk_remarks_by_group = rsk_remarks_by_group or {}
     by_colour = _xlsx_harvest_style_by_colour(styles_xml)
     plain_style = _xlsx_style_of(_xlsx_find_cell(sheet_xml, "C26").group("attrs"))
+    rsk_plain_style = _xlsx_style_of(_xlsx_find_cell(sheet_xml, f"{GRAFIK_ID_RSK_COLUMN}26").group("attrs"))
 
     patched = set()
     skipped = []
@@ -4518,12 +4636,29 @@ def _patch_grafik_id_sheet1(sheet_xml, styles_xml, shared_strings, groups):
             skipped.append(
                 f"стр.{row}: шаблон {template_text!r}, система {computed_text!r} — оставлено значение шаблона"
             )
-            continue
+        else:
+            fill_hex = status_fill_color(computed_text)
+            style = by_colour.get(fill_hex, [plain_style])[0] if fill_hex else plain_style
+            sheet_xml = _xlsx_set_text(sheet_xml, coord, computed_text, style=style)
+            patched.add(coord)
 
-        fill_hex = status_fill_color(computed_text)
-        style = by_colour.get(fill_hex, [plain_style])[0] if fill_hex else plain_style
-        sheet_xml = _xlsx_set_text(sheet_xml, coord, computed_text, style=style)
-        patched.add(coord)
+        remarks = rsk_remarks_by_group.get(g["group_id"])
+        if remarks:
+            rsk_coord = f"{GRAFIK_ID_RSK_COLUMN}{row}"
+            try:
+                _xlsx_find_cell(sheet_xml, rsk_coord)
+            except KeyError:
+                continue
+            rsk_template_text = (_xlsx_get_cell_text(sheet_xml, rsk_coord, shared_strings) or "").strip()
+            if rsk_template_text:
+                skipped.append(
+                    f"стр.{row}: колонка «Замеч. РСК» уже содержит текст шаблона {rsk_template_text!r} — "
+                    f"не заменена вычисленным списком {remarks!r}"
+                )
+                continue
+            rsk_text = "; ".join(remarks)
+            sheet_xml = _xlsx_set_text(sheet_xml, rsk_coord, rsk_text, style=rsk_plain_style)
+            patched.add(rsk_coord)
 
     return sheet_xml, patched, skipped
 
@@ -4553,10 +4688,49 @@ def _xlsx_verify_only_patched_changed(template_bytes, candidate_bytes, patched_c
         raise AssertionError(f"патч изменил незаявленные ячейки: {mismatches[:20]}")
 
 
+def _grafik_group_rsk_remarks(group_ids):
+    """Задача 4, заход 3: замечания РСК, прикреплённые вручную к разделам
+    группы — короткая форма "№{sys_no}-{обрезанное содержание}", та же
+    форма, что уже используется в живых ячейках шаблона (проверено на
+    примерах "42-пробные сваи", "175-обр.засыпка" перед реализацией).
+    Полный текст замечания не переносим — он на порядок длиннее, чем
+    когда-либо вписывал человек в эту колонку, а домысливать "короткое
+    название" вместо человека (перефразировать смысл) — риск исказить
+    документ для Заказчика; берём префикс исходного текста, честно."""
+    if not group_ids:
+        return {}
+    rows = query(
+        LATEST_RSK_ACT_ITEM_CTE + """
+        select grr.group_id, v.sys_no, li.content
+        from id_report_group_row grr
+        join id_row_rsk_link lk on lk.row_id = grr.row_id
+        join rsk_violation v on v.id = lk.violation_id
+        left join latest_act_item li on li.violation_id = v.id
+        where grr.group_id = any(%(gids)s)
+        order by grr.group_id, v.sys_no
+        """,
+        {"gids": list(group_ids)},
+    )
+    out = {}
+    seen = set()
+    for r in rows:
+        key = (r["group_id"], r["sys_no"])
+        if key in seen:
+            continue
+        seen.add(key)
+        short = (r["content"] or "").strip()
+        if len(short) > 60:
+            short = short[:60].rstrip() + "…"
+        text = f"{r['sys_no']}-{short}" if short else str(r["sys_no"])
+        out.setdefault(r["group_id"], []).append(text)
+    return out
+
+
 @app.get("/export/id-grafik.xlsx")
 def export_id_grafik_xlsx():
     grouped = _grafik_id_rows()
     all_groups = [r for cats in grouped.values() for v in cats.values() for r in v]
+    rsk_remarks_by_group = _grafik_group_rsk_remarks([g["group_id"] for g in all_groups])
 
     with open(GRAFIK_ID_TEMPLATE_PATH, "rb") as f:
         template_bytes = f.read()
@@ -4567,7 +4741,7 @@ def export_id_grafik_xlsx():
         styles_xml = parts["xl/styles.xml"].decode("utf-8")
         shared_strings = _xlsx_parse_shared_strings(parts["xl/sharedStrings.xml"].decode("utf-8"))
         sheet_xml, patched_coords, skipped_log = _patch_grafik_id_sheet1(
-            sheet_xml, styles_xml, shared_strings, all_groups)
+            sheet_xml, styles_xml, shared_strings, all_groups, rsk_remarks_by_group)
         parts[GRAFIK_ID_SHEET1_PART] = sheet_xml.encode("utf-8")
         parts["xl/workbook.xml"] = _xlsx_force_full_recalc(
             parts["xl/workbook.xml"].decode("utf-8")).encode("utf-8")
