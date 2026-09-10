@@ -6915,9 +6915,7 @@ def rsk_import_confirm(request: Request, token: str = Form(...)):
         )
         act_id = cur.fetchone()["id"]
 
-        new_sysnos = set()
         for rec in parsed["records"]:
-            new_sysnos.add(rec["sys_no"])
             cur.execute(
                 """
                 insert into rsk_violation (sys_no, first_act_no, first_detected_date, is_active, closed_in_act_id)
@@ -6944,14 +6942,20 @@ def rsk_import_confirm(request: Request, token: str = Form(...)):
                 {**rec, "act_id": act_id, "violation_id": violation_id},
             )
 
-        # Диф — снятие: активные нарушения, отсутствующие в новом акте.
-        cur.execute("select id, sys_no from rsk_violation where is_active")
-        for row in cur.fetchall():
-            if row["sys_no"] not in new_sysnos:
-                cur.execute(
-                    "update rsk_violation set is_active=false, closed_in_act_id=%s where id=%s",
-                    (act_id, row["id"]),
-                )
+        # Диф — снятие: структурно, по множеству sys_no, никогда не по
+        # разбору человеческого текста. Заход 3, 10.09.2026, задача 5:
+        # закрываем РОВНО те sys_no, что уже показаны пользователю в
+        # diff["removed"] на предпросмотре (main.py:6890) — раньше здесь
+        # был отдельный, второй запрос активных нарушений, который мог
+        # разойтись с "removed" предпросмотра, если между предпросмотром
+        # и подтверждением что-то в rsk_violation изменилось (та же
+        # болезнь, что искал аудит 08.09.2026, — то же число, посчитанное
+        # дважды). Один источник: закрывается то, что показано.
+        if diff["removed"]:
+            cur.execute(
+                "update rsk_violation set is_active=false, closed_in_act_id=%s where sys_no = any(%s)",
+                (act_id, diff["removed"]),
+            )
 
         cur.execute(
             "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
