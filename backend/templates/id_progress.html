@@ -64,6 +64,7 @@
   <span><i class="id-matrix-swatch id-matrix-blue"></i>Нет проектного решения</span>
   <span><i class="id-matrix-swatch id-matrix-red"></i>Другая блокирующая причина</span>
   <span><i class="id-matrix-swatch id-matrix-swatch-empty"></i>Данных ещё нет</span>
+  <span class="id-matrix-legend-fraction">3/7 — подписано видов работ / всего видов работ</span>
 </div>
 
 {% if matrix %}
@@ -101,9 +102,10 @@
       <td class="sticky-col nowrap id-matrix-cell {{ 'id-matrix-' ~ r.current_color if r.current_color else '' }}">{{ r.label }}</td>
       {% for c in r.cells %}
       {% if c.empty %}
-      <td class="id-matrix-cell id-matrix-empty"></td>
+      <td class="id-matrix-cell id-matrix-empty" title="{{ matrix.weeks[loop.index0].label }}: данных ещё нет"></td>
       {% else %}
-      <td class="id-matrix-cell {{ 'id-matrix-' ~ c.color if c.color else '' }}">{{ c.signed }}/{{ c.total }}</td>
+      <td class="id-matrix-cell {{ 'id-matrix-' ~ c.color if c.color else '' }}"
+          title="{{ matrix.weeks[loop.index0].label }}: подписано {{ c.signed }} из {{ c.total }} видов работ">{{ c.signed }}/{{ c.total }}</td>
       {% endif %}
       {% endfor %}
     </tr>
@@ -128,6 +130,7 @@
 .id-matrix-swatch.id-matrix-green  { background: var(--c-success); }
 .id-matrix-swatch.id-matrix-blue   { background: var(--c-primary-light); }
 .id-matrix-swatch-empty { background: var(--c-surface-alt); border: 1px solid var(--c-border-strong); }
+.id-matrix-legend-fraction { font-variant-numeric: tabular-nums; color: var(--c-text); }
 
 .matrix-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .75rem; }
 .btn-nav {
