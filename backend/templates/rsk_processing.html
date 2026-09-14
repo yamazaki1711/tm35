@@ -10,6 +10,25 @@
   .rsk-checkbox-row { display: flex; flex-wrap: wrap; gap: .8rem; }
   .rsk-checkbox-row label { flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; }
   tr.rsk-row-selected td { background: var(--c-primary-bg); }
+
+  /* "Содержание" — та же подсказка при наведении, что в реестре РСК
+     (/rsk, .rsk-content-cell/.rsk-tooltip), для единообразия. Видимый
+     текст здесь обрезается иначе — по первым двум предложениям, а не
+     2-строчным CSS-клампом, — поэтому white-space:normal берём из
+     общего .wrap (см. style.css), а не переопределяем td/th локально:
+     именно такое локальное переопределение уже дважды ловили как баг. */
+  .rsk-content-cell { max-width: 420px; }
+  .rsk-tooltip {
+    position: fixed; z-index: 50; pointer-events: none;
+    max-width: min(600px, calc(100vw - 32px)); max-height: 70vh; overflow-y: auto;
+    background: var(--c-text); color: #fff; font-size: .82rem; line-height: 1.5;
+    padding: .65rem .85rem; border-radius: var(--r-sm); box-shadow: var(--shadow-md);
+  }
+  .rsk-tooltip p { margin: 0 0 .5rem; }
+  .rsk-tooltip p:last-child { margin-bottom: 0; }
+  .rsk-tooltip ul { margin: 0; padding-left: 1.1rem; }
+  .rsk-tooltip li { margin-bottom: .3rem; }
+  .rsk-tooltip li:last-child { margin-bottom: 0; }
 </style>
 
 <h1>Отработка предписаний РСК</h1>
@@ -136,7 +155,7 @@
     <tr class="{{ 'rsk-row-selected' if v and v.sys_no==r.sys_no }}" style="cursor:pointer"
         onclick="location.href='/rsk/processing?sys_no={{ r.sys_no }}'">
       <td class="mono">{{ r.sys_no }}</td>
-      <td style="max-width:380px">{{ r.content[:120] }}{{ '…' if r.content and r.content|length > 120 }}</td>
+      <td class="wrap rsk-content-cell" data-full="{{ r.content or '' }}"><span class="rsk-sentence-clip">{{ r.content }}</span></td>
       <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
       <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
       <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
@@ -147,4 +166,126 @@
   </tbody>
 </table>
 </div>
+
+<div id="rsk-tooltip" class="rsk-tooltip" hidden></div>
+<script>
+(function() {
+  // Видимый текст "Содержание" — первые два предложения (разбивка по
+  // ". "/"! "/"? "), остальное скрыто; полный текст — по наведению.
+  // Точка/!/? не считается концом предложения, если цифра стоит прямо
+  // перед ней (позиционные коды и номера вида "УТ15.2.", "2020.069.3000")
+  // или прямо после следующего за ней пробела (маркер пункта "1. ", "2. ") —
+  // координатор, 08.09.2026, кейс "Участок КР2.1-УТ15.2. 1. Между
+  // закладными..." давал бессмысленное превью "2. 1.…" без этого правила.
+  function truncateTwoSentences(text) {
+    if (!text) return '';
+    var sentences = [];
+    var start = 0;
+    var re = /[.!?]+/g;
+    var m;
+    while ((m = re.exec(text))) {
+      var puncStart = m.index, puncEnd = re.lastIndex;
+      if (/\d/.test(text[puncStart - 1] || '')) continue;
+      var wsEnd = puncEnd;
+      while (wsEnd < text.length && /\s/.test(text[wsEnd])) wsEnd++;
+      if (wsEnd > puncEnd && /\d/.test(text[wsEnd] || '')) continue;
+      sentences.push(text.slice(start, wsEnd));
+      start = wsEnd;
+    }
+    if (start < text.length) sentences.push(text.slice(start));
+    sentences = sentences.filter(function(s) { return s.trim().length > 0; });
+    if (sentences.length <= 2) return text;
+    return sentences.slice(0, 2).join('').replace(/\s+$/, '') + '…';
+  }
+  document.querySelectorAll('.rsk-content-cell').forEach(function(td) {
+    var span = td.querySelector('.rsk-sentence-clip');
+    if (span) span.textContent = truncateTwoSentences(td.getAttribute('data-full') || '');
+  });
+
+  // Подсказка с полным текстом при наведении — тот же компонент, что в
+  // реестре РСК (/rsk, templates/rsk_registry.html), один в один.
+  var tip = document.getElementById('rsk-tooltip');
+  var body = document.querySelector('.data-table tbody');
+  if (!tip || !body) return;
+
+  var SHOW_DELAY = 300;
+  var showTimer = null;
+  var hoverCell = null;
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderContent(text) {
+    var html = '';
+    text.split(/\n+/).forEach(function(para) {
+      var parts = para.split(/\s-\s/).map(function(p) { return p.trim(); }).filter(Boolean);
+      if (parts.length > 1) {
+        html += '<p>' + escapeHtml(parts[0]) + '</p><ul>';
+        for (var i = 1; i < parts.length; i++) {
+          html += '<li>' + escapeHtml(parts[i]) + '</li>';
+        }
+        html += '</ul>';
+      } else if (para.trim()) {
+        html += '<p>' + escapeHtml(para.trim()) + '</p>';
+      }
+    });
+    return html;
+  }
+
+  function positionTip(cell) {
+    var r = cell.getBoundingClientRect();
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    tip.hidden = false;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = Math.min(r.left, vw - tw - 8);
+    left = Math.max(8, left);
+    var top = r.bottom + 6;
+    if (top + th > vh - 8) top = r.top - th - 6;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+
+  function showTip(cell) {
+    tip.innerHTML = renderContent(cell.getAttribute('data-full') || '');
+    positionTip(cell);
+  }
+
+  function hideTip() {
+    clearTimeout(showTimer);
+    tip.hidden = true;
+    hoverCell = null;
+  }
+
+  body.addEventListener('mouseover', function(e) {
+    var cell = e.target.closest('.rsk-content-cell');
+    if (!cell || cell === hoverCell || cell.classList.contains('expanded')) return;
+    hoverCell = cell;
+    clearTimeout(showTimer);
+    showTimer = setTimeout(function() {
+      if (hoverCell === cell) showTip(cell);
+    }, SHOW_DELAY);
+  });
+
+  body.addEventListener('mouseout', function(e) {
+    var cell = e.target.closest('.rsk-content-cell');
+    if (!cell || cell !== hoverCell) return;
+    if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+    hideTip();
+  });
+
+  body.addEventListener('click', function(e) {
+    if (e.target.closest('.rsk-content-cell')) hideTip();
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideTip();
+  });
+
+  window.addEventListener('scroll', hideTip, true);
+})();
+</script>
 {% endblock %}

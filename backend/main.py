@@ -5110,6 +5110,73 @@ def compute_id_folder_funnel():
     return funnel
 
 
+# Заход 7, 11.09.2026 — «труба» вместо пяти плоских плиток (координатор,
+# по образцу «Поток шифров по этапам» на дашборде Левашово): блок на
+# стадию, высота ∝ числу папок, соединены сужающимися лентами. Эта
+# функция только раскладывает УЖЕ ГОТОВЫЕ числа funnel в пиксели —
+# не пересчитывает count/sum, второго источника чисел не заводим.
+# Единственный партиал `_id_folder_funnel.html` рисует то, что здесь
+# посчитано, на /dashboard и на /id-folders — вызывающие шаблоны
+# передают один и тот же `pipe` через {% with %}.
+ID_FOLDER_PIPE_VIEW_W = 900
+ID_FOLDER_PIPE_VIEW_H = 210
+_PIPE_Y_MID = 97
+_PIPE_MAX_HALF = 68
+_PIPE_MIN_HALF = 8
+_PIPE_ZERO_HALF = 2
+_PIPE_BLOCK_W = 70
+
+
+def compute_id_folder_pipe(funnel):
+    """Геометрия трубы папок ИД. Ширина блока стадии с count=0 —
+    тонкая линия (обе половины по 2px, число «0» всё равно печатается
+    над ней — прямое требование задания, не пропускать нулевые стадии).
+    Стадия с count>=1 никогда не схлопывается — минимум 16px по высоте
+    даже при одной папке, максимум ~136px для самой крупной стадии."""
+    stages = ID_FOLDER_STAGES
+    counts = [funnel[s]["count"] for s in stages]
+    max_count = max(counts) or 1
+    n = len(stages)
+    seg_w = ID_FOLDER_PIPE_VIEW_W / n
+
+    def half_height(count):
+        if count == 0:
+            return _PIPE_ZERO_HALF
+        return max(_PIPE_MIN_HALF, (count / max_count) * _PIPE_MAX_HALF)
+
+    blocks = []
+    for i, s in enumerate(stages):
+        cx = seg_w * i + seg_w / 2
+        half = half_height(counts[i])
+        y0, y1 = _PIPE_Y_MID - half, _PIPE_Y_MID + half
+        blocks.append({
+            "stage": s,
+            "label": ID_FOLDER_STAGE_LABELS[s],
+            "count": counts[i],
+            "sum": funnel[s]["sum"],
+            "known_sum_count": funnel[s]["known_sum_count"],
+            "emphasis": s == "signed",
+            "x0": cx - _PIPE_BLOCK_W / 2, "x1": cx + _PIPE_BLOCK_W / 2, "w": _PIPE_BLOCK_W,
+            "y0": y0, "y1": y1, "h": y1 - y0,
+            "left_pct": 100 * i / n, "width_pct": 100 / n,
+            "y0_pct": 100 * y0 / ID_FOLDER_PIPE_VIEW_H, "y1_pct": 100 * y1 / ID_FOLDER_PIPE_VIEW_H,
+        })
+
+    ribbons = []
+    for i in range(n - 1):
+        a, b = blocks[i], blocks[i + 1]
+        midx = (a["x1"] + b["x0"]) / 2
+        ribbons.append({"path": (
+            f"M{a['x1']:.1f},{a['y0']:.1f} "
+            f"C{midx:.1f},{a['y0']:.1f} {midx:.1f},{b['y0']:.1f} {b['x0']:.1f},{b['y0']:.1f} "
+            f"L{b['x0']:.1f},{b['y1']:.1f} "
+            f"C{midx:.1f},{b['y1']:.1f} {midx:.1f},{a['y1']:.1f} {a['x1']:.1f},{a['y1']:.1f} Z"
+        )})
+
+    return {"view_w": ID_FOLDER_PIPE_VIEW_W, "view_h": ID_FOLDER_PIPE_VIEW_H,
+            "blocks": blocks, "ribbons": ribbons}
+
+
 def compute_id_folder_transitions(limit=10):
     """"Переходы" — последние по времени смены стадии по всем папкам
     (строка 4 дашборда папок, задача 3). Каждая папка может дать до 4
@@ -5191,13 +5258,15 @@ def compute_id_folder_stats():
         "select count(*) as n from id_folder where signed_date is null"
     )["n"]
 
+    funnel = compute_id_folder_funnel()
     return {
         "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,
         "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
         "signed_folders_sum": signed_folders_sum, "money_remaining": money_remaining,
         "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
         "signed_folders_sum_old_by_transfer_estimate": signed_folders_sum_old_by_transfer_estimate,
-        "funnel": compute_id_folder_funnel(),
+        "funnel": funnel,
+        "pipe": compute_id_folder_pipe(funnel),
         "awaiting_smeta_count": awaiting_smeta_count, "not_signed_count": not_signed_count,
     }
 
@@ -5220,8 +5289,7 @@ def id_folders_page(request: Request):
 
     return render(request, "id_folders.html", "id-folders",
                   folders=folders, stats=stats, manual_volumes=manual_volumes,
-                  transitions=transitions, active_changes=active_changes,
-                  stage_labels=ID_FOLDER_STAGE_LABELS, stages=ID_FOLDER_STAGES)
+                  transitions=transitions, active_changes=active_changes)
 
 
 @app.get("/id-folders/registry")
@@ -5245,10 +5313,17 @@ def id_folders_registry_page(request: Request, status: str = "all", sort: str = 
         "amount_signed": float(compute_id_folder_stats()["signed_folders_sum"]),
     }
 
-    if status == "formed":
-        folders = [f for f in folders if not f["sdo_transfer_date"]]
-    elif status == "transferred":
-        folders = [f for f in folders if f["sdo_transfer_date"]]
+    # Заход 7, 11.09.2026: было `formed`/`transferred` как две отдельные
+    # ad-hoc проверки (не sdo_transfer_date / sdo_transfer_date задан) —
+    # "transferred" на деле означало "дошла минимум до передачи",
+    # пересекаясь с checking/signed/ks2, а фильтров на сами эти три
+    # стадии не было вовсе. Заменено на точное совпадение с
+    # id_folder_stage() (уже вычислен в f["stage"] строкой выше) — нужно,
+    # чтобы клик по стадии трубы на /dashboard и /id-folders вёл сюда на
+    # РОВНО ту же стадию, что показана в трубе, а не на более широкое
+    # множество.
+    if status in ID_FOLDER_STAGES:
+        folders = [f for f in folders if f["stage"] == status]
     elif status == "awaiting_smeta":
         folders = [f for f in folders if f["signed_date"] and not f["amount_smeta_rub"]]
     elif status == "not_signed":
@@ -6159,7 +6234,6 @@ def home_v2(request: Request):
         change_stats=change_stats_row,
         rsk_dash=rsk_dash,
         folder_stats=compute_id_folder_stats(),
-        folder_stages=ID_FOLDER_STAGES, folder_stage_labels=ID_FOLDER_STAGE_LABELS,
     )
 
 

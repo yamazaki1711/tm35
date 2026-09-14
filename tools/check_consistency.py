@@ -315,23 +315,27 @@ def main_check():
         "прямой SQL", direct_active,
     )
 
-    # --- 11. Воронка папок на /dashboard vs /id-folders — не текст кода, а то,
-    # что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
+    # --- 11. Труба папок ИД на /dashboard vs /id-folders — не текст кода, а
+    # то, что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
     # экран, не на код"). Обе страницы включают один и тот же шаблон
     # _id_folder_funnel.html — здесь сверяются числа из ОТРЕНДЕРЕННОГО HTML
-    # обеих страниц, не повторный вызов той же Python-функции.
+    # обеих страниц, не повторный вызов той же Python-функции. Заход 7,
+    # 11.09.2026: разметка сменилась с плоских плиток (.kpi-num/.kpi-label)
+    # на трубу (.id-pipe-count/.id-pipe-label) — обновлён селектор, сама
+    # проверка (числа стадий сходятся между двумя страницами) не менялась.
     dashboard_html = urllib.request.urlopen("http://localhost:8000/dashboard", timeout=15).read().decode("utf-8")
     id_folders_html = urllib.request.urlopen("http://localhost:8000/id-folders", timeout=15).read().decode("utf-8")
     for stage, label in m.ID_FOLDER_STAGE_LABELS.items():
         pattern = re.compile(
-            r'<div class="kpi-num[^"]*">(\d+)</div>\s*<div class="kpi-label">' + re.escape(label) + r"</div>"
+            r'<span class="id-pipe-count[^"]*"[^>]*>(\d+)</span>\s*'
+            r'<span class="id-pipe-label"[^>]*>' + re.escape(label) + r"</span>"
         )
         dash_match = pattern.search(dashboard_html)
         folders_match = pattern.search(id_folders_html)
         dash_n = int(dash_match.group(1)) if dash_match else None
         folders_n = int(folders_match.group(1)) if folders_match else None
         check(
-            f"Воронка папок (отрендеренный HTML), стадия «{label}»: /dashboard vs /id-folders",
+            f"Труба папок ИД (отрендеренный HTML), стадия «{label}»: /dashboard vs /id-folders",
             "/dashboard", dash_n,
             "/id-folders", folders_n,
         )

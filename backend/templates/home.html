@@ -155,7 +155,7 @@
      (обычный .kpi-row, не .kpi-small — тот же приём, что уже используется
      на сайте для ключевой цифры). Единица работы и денег — папка, не
      раздел: воронка папок стоит первой и крупнее, чем раздел ниже. ── #}
-  {% with funnel=folder_stats.funnel, stages=folder_stages, stage_labels=folder_stage_labels %}{% include "_id_folder_funnel.html" %}{% endwith %}
+  {% with pipe=folder_stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
   {# ── Строка 2 — деньги ── #}
   <div class="kpi-row kpi-small">
