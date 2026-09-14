@@ -368,6 +368,129 @@ def main_check():
         "ожидаемый порядок", expected_names,
     )
 
+    # --- 15. Заход 8, 14.09.2026 — развод "Обзор — Заказчику, разделы —
+    # ПТО" (см. home.html): Обзор больше не единственное место с этими
+    # цифрами, каждая обязана буквально совпасть с тем же числом на
+    # странице своего раздела. Сверка на РЕНДЕРЕННОМ HTML (как в проверке
+    # 11), а не повторным вызовом той же функции — иначе проверка ловит
+    # только "функция вернула то же самое себе", а не "два разных
+    # шаблона согласны" (тот же довод, что в докстринге проверки 11).
+    status_html = urllib.request.urlopen("http://localhost:8000/status", timeout=15).read().decode("utf-8")
+    rsk_dashboard_html = urllib.request.urlopen("http://localhost:8000/rsk/dashboard", timeout=15).read().decode("utf-8")
+
+    # СМР: "% выполнено" — /dashboard (hero-ring-num) vs /status (kpi-num,
+    # подпись "Прогресс, взвешенный по трудоёмкости").
+    dash_pct_m = re.search(r'<div class="hero-ring-num">(\d+(?:[.,]\d+)?)%</div>', dashboard_html)
+    status_pct_m = re.search(
+        r'<div class="kpi-num">([^<]*?)%</div>\s*<div class="kpi-label">Прогресс, взвешенный по трудоёмкости</div>',
+        status_html,
+    )
+    check(
+        "% выполнено работ: /dashboard (hero-ring) vs /status",
+        "/dashboard", dash_pct_m.group(1) if dash_pct_m else None,
+        "/status", status_pct_m.group(1).strip() if status_pct_m else None,
+    )
+
+    # СМР: прогноз завершения — /dashboard (hero-stat "Срок") vs /status
+    # (kpi-num, подпись "Прогноз завершения по фактическому темпу"). Тот
+    # же forecast_pace_date = crit["forecast_date"] (см. докстринг
+    # get_scurve_data) — здесь сверяется не формула, а то, что оба
+    # шаблона рисуют одну и ту же дату на экране.
+    dash_forecast_m = re.search(
+        r'<span class="hero-stat-label">Срок</span>\s*<span class="hero-stat-value[^"]*">([\d.]+)',
+        dashboard_html,
+    )
+    status_forecast_m = re.search(
+        r'<div class="kpi-num" style="font-size:1\.4rem">([\d.]+)</div>\s*<div class="kpi-label">Прогноз завершения по фактическому темпу</div>',
+        status_html,
+    )
+    check(
+        "Прогноз завершения: /dashboard (Срок) vs /status",
+        "/dashboard", dash_forecast_m.group(1) if dash_forecast_m else None,
+        "/status", status_forecast_m.group(1) if status_forecast_m else None,
+    )
+
+    # ИД: деньги — /dashboard ("Всего по контракту"/"Остаток") vs
+    # /id-folders ("Контракт, ₽ (с НДС)"/"Остаток в деньгах, ₽") — разные
+    # подписи, то же самое compute_id_folder_stats(), число обязано
+    # совпасть буквально в отрендеренном виде (включая форматирование
+    # ru_money — если бы кто-то поменял разделитель разрядов в одном
+    # шаблоне и не в другом, это тоже расхождение).
+    dash_contract_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Всего по контракту, ₽</div>', dashboard_html)
+    folders_contract_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Контракт, ₽ \(с НДС\)</div>', id_folders_html)
+    check(
+        "Контракт по ИД, ₽: /dashboard vs /id-folders",
+        "/dashboard", dash_contract_m.group(1).strip() if dash_contract_m else None,
+        "/id-folders", folders_contract_m.group(1).strip() if folders_contract_m else None,
+    )
+
+    dash_remaining_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток, ₽</div>', dashboard_html)
+    folders_remaining_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток в деньгах, ₽</div>', id_folders_html)
+    check(
+        "Остаток по ИД, ₽: /dashboard vs /id-folders",
+        "/dashboard", dash_remaining_m.group(1).strip() if dash_remaining_m else None,
+        "/id-folders", folders_remaining_m.group(1).strip() if folders_remaining_m else None,
+    )
+
+    # ИД: заголовок блока — "N из M папок с КС-2" (/dashboard) сверяется
+    # с числом папок стадии «КС-2» в трубе (уже проверено проверкой 11
+    # между /dashboard и /id-folders) и с общим количеством папок
+    # (folders_count = сумма всех стадий, уже проверено проверкой 4) —
+    # здесь только сверка, что headline не разошёлся С САМОЙ трубой на
+    # той же странице (headline и труба — из одного and того же
+    # compute_id_folder_stats(), но верстка заголовка не переиспользует
+    # трубу текстуально, поэтому регресс здесь возможен независимо).
+    dash_ks2_headline_m = re.search(r'<div class="kpi-num ok">(\d+) из (\d+)</div>\s*<div class="kpi-label">папок с подписанным КС-2</div>', dashboard_html)
+    dash_ks2_pipe_m = re.search(
+        r'<span class="id-pipe-count[^"]*"[^>]*>(\d+)</span>\s*<span class="id-pipe-label"[^>]*>' + re.escape(m.ID_FOLDER_STAGE_LABELS["ks2"]) + r"</span>",
+        dashboard_html,
+    )
+    check(
+        "ИД, заголовок «N из M папок с КС-2»: N vs труба на той же странице",
+        "заголовок", int(dash_ks2_headline_m.group(1)) if dash_ks2_headline_m else None,
+        "труба", int(dash_ks2_pipe_m.group(1)) if dash_ks2_pipe_m else None,
+    )
+    check(
+        "ИД, заголовок «N из M папок с КС-2»: M vs compute_id_folder_stats()['folders_count']",
+        "заголовок", int(dash_ks2_headline_m.group(2)) if dash_ks2_headline_m else None,
+        "compute_id_folder_stats()", folder_stats["folders_count"],
+    )
+
+    # РСК: /dashboard ("Активных замечаний"/"Готово к снятию") vs
+    # /rsk/dashboard (tiles.total_active/ready_to_close) — разные
+    # подписи, тот же compute_rsk_dashboard_stats(). "Заблокировано" на
+    # Обзоре — сумма blocked_by_id+needs_rd, сверяем с суммой тех же
+    # двух чисел на /rsk/dashboard, а не с одним из них.
+    dash_active_m = re.search(r'<div class="kpi-num">(\d+)</div>\s*<div class="kpi-label">Активных замечаний</div>', dashboard_html)
+    rsk_active_m = re.search(r'<div class="kpi-num">(\d+)</div>\s*<div class="kpi-label">Всего активных</div>', rsk_dashboard_html)
+    check(
+        "РСК, активных замечаний: /dashboard vs /rsk/dashboard",
+        "/dashboard", int(dash_active_m.group(1)) if dash_active_m else None,
+        "/rsk/dashboard", int(rsk_active_m.group(1)) if rsk_active_m else None,
+    )
+
+    dash_ready_m = re.search(r'<div class="kpi-num ok">(\d+)</div>\s*<div class="kpi-label">Готово к снятию</div>', dashboard_html)
+    rsk_ready_m = re.search(r'<div class="kpi-num ok">(\d+)</div>\s*<div class="kpi-label">Готово к снятию</div>', rsk_dashboard_html)
+    check(
+        "РСК, готово к снятию: /dashboard vs /rsk/dashboard",
+        "/dashboard", int(dash_ready_m.group(1)) if dash_ready_m else None,
+        "/rsk/dashboard", int(rsk_ready_m.group(1)) if rsk_ready_m else None,
+    )
+
+    dash_blocked_m = re.search(r'<div class="kpi-label">Заблокировано</div>\s*<div class="kpi-sub">(\d+) ждёт ИД · (\d+) ждёт корректировки РД</div>', dashboard_html)
+    rsk_blocked_id_m = re.search(r'<div class="kpi-num warn">(\d+)</div>\s*<div class="kpi-label">Заблокировано ожиданием ИД</div>', rsk_dashboard_html)
+    rsk_needs_rd_m = re.search(r'<div class="kpi-num warn">(\d+)</div>\s*<div class="kpi-label">Ждёт корректировки РД</div>', rsk_dashboard_html)
+    dash_blocked_sum = (int(dash_blocked_m.group(1)) + int(dash_blocked_m.group(2))) if dash_blocked_m else None
+    rsk_blocked_sum = (
+        (int(rsk_blocked_id_m.group(1)) + int(rsk_needs_rd_m.group(1)))
+        if rsk_blocked_id_m and rsk_needs_rd_m else None
+    )
+    check(
+        "РСК, заблокировано (ожиданием ИД + корректировкой РД): /dashboard (сумма) vs /rsk/dashboard (сумма)",
+        "/dashboard", dash_blocked_sum,
+        "/rsk/dashboard", rsk_blocked_sum,
+    )
+
 
 def print_report():
     name_w = max(len(c[0]) for c in CHECKS)

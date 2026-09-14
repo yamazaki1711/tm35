@@ -6094,146 +6094,23 @@ def change_detail_post(
 # ====== Обновлённый GET /dashboard (home) с передачей статистики новых разделов ======
 @app.get("/dashboard")
 def home_v2(request: Request):
-    works_total = query_one("select count(*) as n from work")["n"]
-    # Статус — вычисляется из fact_pct (_work_status_expr), не читает
-    # столбец work.status: тот не обновлялся неделями, хотя факт вводится
-    # регулярно (координатор, 08.09.2026).
-    by_status = query(
-        f"select {_work_status_expr(None)} as status, count(*) as n from work group by 1 order by n desc"
-    )
-    needs_review = query_one(
-        "select count(*) as n from work where data_quality_flag='needs_review'"
-    )["n"]
-    unresolved = query_one("select count(*) as n from import_unresolved_cell")["n"]
-
-    avg_pct = query_one(
-        "select round(avg(fact_pct)::numeric, 1) as v, count(fact_pct) as n "
-        "from work where fact_pct is not null"
-    )
-
-    last_actual_date = query_one(
-        "select max(date) as d from daily_progress where actual_crew is not null"
-    )["d"]
-
-    today_totals = None
-    people_deficit = None
-    people_surplus = None
-    if last_actual_date:
-        today_totals = query_one(
-            LATEST_DP_CTE + """
-            select sum(planned_crew) as planned, sum(actual_crew) as actual
-            from latest_dp where date=%s
-            """,
-            (last_actual_date,),
-        )
-        # Знак "Дефицита" (координатор, 31.08.2026): раньше карточка
-        # печатала голую разность план-факт, включая отрицательные
-        # значения под подписью "Дефицит" — при факте больше плана это
-        # читалось как "не хватает -3 человек", хотя на деле был избыток.
-        # Теперь дефицит никогда не отрицательный (max(0, ...)), избыток
-        # показывается отдельной плиткой и только когда он реально есть,
-        # при точном равенстве обе величины отсутствуют — шаблон рисует
-        # "-" вместо нуля.
-        if today_totals and today_totals.get("planned") is not None:
-            diff = (today_totals["planned"] or 0) - (today_totals["actual"] or 0)
-            if diff > 0:
-                people_deficit = diff
-            elif diff < 0:
-                people_surplus = -diff
-
-    top_comments = query(
-        LATEST_DP_CTE + """
-        select comment, count(*) as n
-        from latest_dp
-        where comment is not null and comment <> ''
-        group by comment
-        order by n desc
-        limit 5
-        """
-    )
-
-    blockers_total = query_one("select count(*) as n from blocker")["n"]
-    subcontractors_total = query_one("select count(*) as n from subcontractor")["n"]
-
-    # СМР-задание 29.08.2026 (п.4б, Якименко А.И.): "blockers_total" уже
-    # считался, но ни разу не выводился в home.html — стоп-факторы были
-    # невидимы на дашборде. Отдельно считаем "активно" (blocker.status,
-    # не "resolved") — это то, что реально мешает сейчас, не вся история.
-    blockers_active_total = query_one(
-        "select count(*) as n from blocker where status='active'"
-    )["n"]
-    blockers_active = query(
-        "select b.id, b.blocker_type, b.description, b.created_at::date as since, "
-        "b.expected_resolution_date, w.code as work_code, w.name as work_name "
-        "from blocker b left join work w on w.id=b.work_id "
-        "where b.status='active' order by b.created_at asc limit 5"
-    )
-
-    # Новые статистики для карточек навигации. Источник — id_form_row
-    # (актуальные 15 категорий ПТО, без ОПВ/Н), не устаревший id_package
-    # (координатор, 04.09.2026 — тот же перевод, что на странице /id-packages).
-    # "Подписано" — по последней записи id_form_entry этого раздела, статус
-    # с кодом id_form_status.code='Подписано'; "заблокировано" — активная
-    # (unblocked_at is null) блокировка ИЗМ через id_form_block.
-    id_stats_row = query_one(LATEST_ID_FORM_ENTRY_CTE + """
-        select
-            count(*) as total,
-            count(*) filter (
-                where s.code = 'Подписано'
-            ) as signed,
-            count(*) filter (
-                where exists (
-                    select 1 from id_form_block b
-                    where b.row_id = r.id and b.unblocked_at is null
-                )
-            ) as blocked
-        from id_form_row r
-        join id_form_tab t on t.id = r.tab_id
-        left join latest_id_entry le on le.row_id = r.id
-        left join id_form_status s on s.id = le.status_id
-        where t.code not in ('opv', 'n')
-    """) or {"total": 0, "signed": 0, "blocked": 0}
-
-    change_stats_row = query_one(f"""
-        select
-            count(*) as total,
-            count(*) filter (where {_change_overdue_expr()} is not null) as overdue
-        from change
-        where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
-    """) or {"total": 0, "overdue": 0}
-
-    # Свой блок "Обзор РСК" (координатор, 06.09.2026) — РСК теперь
-    # равноправный раздел меню рядом с СМР/ИД, не подраздел ИД. Те же
-    # цифры, что на /rsk/dashboard (компактная функция, не дублируем SQL).
-    rsk_dash = compute_rsk_dashboard_stats()
-
+    # Обзор — экран Заказчика, три блока (координатор, 14.09.2026: развод
+    # Обзор/разделы меню). Раньше здесь считались ещё ~15 показателей
+    # (работы по статусам, люди на сегодня, стоп-факторы, разделы ИД,
+    # ИЗМ и т.д.) для секций, которые теперь не часть Обзора — эти цифры
+    # не пропали, они считаются на своих страницах (/status, /blockers,
+    # /id-folders, /changes, /rsk/dashboard) теми же функциями, что и
+    # раньше; здесь не дублируются.
     crit = get_criticality_data()
     evm = get_evm_data()
-    # "Отставание от графика" — раньше считалось инлайн в Jinja
-    # (home.html), показатель без функции-владельца (координатор,
-    # 08.09.2026, аудит целостности). Формула не изменилась, только
-    # переехала в Python рядом с остальными расчётами этой страницы.
-    schedule_lag_ratio = (
-        crit["elapsed_pct"] / evm["weighted_pct"]
-        if crit.get("elapsed_pct") is not None and evm.get("weighted_pct")
-        else None
-    )
+    rsk_dash = compute_rsk_dashboard_stats()
+    folder_stats = compute_id_folder_stats()
 
     return render(
         request, "home.html", "dashboard",
-        works_total=works_total, by_status=by_status,
-        schedule_lag_ratio=schedule_lag_ratio,
-        needs_review=needs_review, unresolved=unresolved,
-        avg_pct=avg_pct, last_actual_date=last_actual_date,
-        today_totals=today_totals, top_comments=top_comments,
-        people_deficit=people_deficit, people_surplus=people_surplus,
-        blockers_total=blockers_total, subcontractors_total=subcontractors_total,
-        blockers_active_total=blockers_active_total, blockers_active=blockers_active,
         crit=crit, evm=evm,
-        id_stats=id_stats_row,
-        change_stats=change_stats_row,
         rsk_dash=rsk_dash,
-        folder_stats=compute_id_folder_stats(),
+        folder_stats=folder_stats,
     )
 
 

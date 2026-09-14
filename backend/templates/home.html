@@ -6,38 +6,23 @@
   <p class="subtitle" style="margin-bottom:0">Тепломагистраль № 35 от Хабаровской ТЭЦ-3 · г. Хабаровск</p>
 </div>
 
-{# ── Обзор СМР — вся верхняя часть страницы до "Обзор ИД".
-   Координатор, 04.09.2026 (второе исправление): разделение СМР/ИД —
-   строго верх/низ страницы, без чередования секций. "Внести факт за
-   сегодня" (раньше — нейтральный хедер страницы) — тоже СМР (ведёт на
-   /shift, форму смены целиком), перенесено внутрь этого блока, не
-   оставлено снаружи. Люди/Работы по статусам/Сроки (раньше — отдельные
-   секции ниже "Обзор ИД", разрывали разделение) — переставлены сюда же,
-   до начала блока ИД, ничего СМР-шного ниже "Обзор ИД" не осталось.
-   "Стоп-факторы" (таблица "с какой даты/тип/работа/описание") убрана
-   со страницы целиком по прямому указанию — данные не удалены, смотреть
-   на /blockers. #}
+{# Обзор — экран Заказчика (три представителя, ранее считали объект в
+   Excel), не экран ПТО. Правило (координатор, 14.09.2026): здесь только
+   то, что отвечает "как идёт работа" — ровно три блока, один вопрос на
+   блок. Детализация, полнота внесения данных и раздел-уровневые цифры —
+   в разделах меню СМР/ИД/РСК, не здесь. Заголовок блока — ссылка в его
+   раздел. Труба папок ИД (_id_folder_funnel.html) не переделывается —
+   уже сделана заходом 7, 11.09.2026, используется как есть. #}
+
+{# ── СМР — выполнение ── #}
 <div class="dash-section contour-panel contour-panel--smr">
   <div class="contour-panel-head">
     <div class="contour-panel-head-main">
       <span class="contour-panel-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.7-3.7a5 5 0 0 1-6.7 6.7L5.3 21.7a2 2 0 0 1-2.8-2.8L11.7 9.5a5 5 0 0 1 6.7-6.7l-3.7 3.7z"/></svg></span>
-      <h2>Обзор СМР</h2>
-    </div>
-    <a href="/shift" class="cta-button">
-      <svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
-      Внести факт за сегодня
-    </a>
-  </div>
-  <div class="kpi-row" style="margin-top:1.25rem">
-    <div class="kpi">
-      <div class="kpi-num">{{ works_total }}</div>
-      <div class="kpi-label">Работ в справочнике</div>
+      <h2><a href="/status">Обзор СМР</a></h2>
     </div>
   </div>
-
-  {# ── Прогресс выполнения ── #}
   {% if evm.available %}
-  <h3 style="margin-top:1.25rem">Прогресс выполнения</h3>
   {% set ring_color = 'var(--c-warning)' if evm.weighted_pct|int < 50 else ('var(--c-success)' if evm.weighted_pct|int >= 80 else 'var(--c-primary)') %}
   <div class="hero-progress">
     <div class="hero-ring" style="--ring-pct:{{ evm.weighted_pct }}; --ring-color:{{ ring_color }};">
@@ -48,245 +33,80 @@
     </div>
     <div class="hero-stats">
       <div class="hero-stat">
-        <span class="hero-stat-label">Прошло срока</span>
-        <span class="hero-stat-value">{{ crit.elapsed_pct if crit.elapsed_pct is not none else '—' }}%{% if crit.elapsed_days is not none %}<span class="hero-stat-sub">{{ crit.elapsed_days }} из {{ crit.total_days }} дн.</span>{% else %}<span class="hero-stat-sub">нет планового срока</span>{% endif %}</span>
-      </div>
-      <div class="hero-stat">
-        <span class="hero-stat-label">Отставание от графика</span>
-        <span class="hero-stat-value {% if schedule_lag_ratio and schedule_lag_ratio > 1.5 %}danger{% elif schedule_lag_ratio and schedule_lag_ratio > 1.1 %}warn{% elif schedule_lag_ratio and schedule_lag_ratio <= 1.0 %}ok{% endif %}">{{ '×%.1f'|format(schedule_lag_ratio) if schedule_lag_ratio is not none else '—' }}</span>
-      </div>
-      <div class="hero-stat">
-        <span class="hero-stat-label">Прогноз окончания</span>
+        <span class="hero-stat-label">Срок</span>
         <span class="hero-stat-value {% if crit.forecast_date and crit.overdue_count > 0 %}warn{% endif %}">{{ crit.forecast_date|dmy if crit.forecast_date else '—' }}<span class="hero-stat-sub">план — {{ crit.baseline_date|dmy if crit.baseline_date else '—' }}</span></span>
       </div>
+      <div class="hero-stat">
+        <span class="hero-stat-label">Просрочено работ</span>
+        <span class="hero-stat-value {% if crit.overdue_count and crit.overdue_count > 0 %}danger{% endif %}">{{ crit.overdue_count if crit.overdue_count is not none else '—' }}</span>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="kpi-num">—</div>
+      <div class="kpi-label">выполнено работ — недостаточно данных</div>
     </div>
   </div>
   {% endif %}
-
-  {# ── Люди ── #}
-  {% if today_totals and today_totals.planned is not none %}
-  <h3 style="margin-top:1.25rem">Люди на {{ last_actual_date|dmy if last_actual_date else 'последний день' }}</h3>
-  <div class="kpi-row kpi-small">
-    <div class="kpi">
-      <div class="kpi-num">{{ today_totals.planned or 0 }}</div>
-      <div class="kpi-label">План, чел.</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num">{{ today_totals.actual or 0 }}</div>
-      <div class="kpi-label">Факт, чел.</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {% if people_deficit %}warn{% endif %}">{{ people_deficit if people_deficit is not none else '—' }}</div>
-      <div class="kpi-label">Дефицит</div>
-    </div>
-    {% if people_surplus is not none %}
-    <div class="kpi">
-      <div class="kpi-num ok">{{ people_surplus }}</div>
-      <div class="kpi-label">Избыток</div>
-    </div>
-    {% endif %}
-  </div>
-  {% endif %}
-
-  {# ── Работы по статусам ── #}
-  {% if by_status %}
-  <h3 style="margin-top:1.25rem">Работы по статусам</h3>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Статус</th><th class="num">Кол-во</th></tr></thead>
-    <tbody>
-    {% for r in by_status %}
-    <tr><td>{{ r.status|ru_status }}</td><td class="num">{{ r.n }}</td></tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% endif %}
-
-  {# ── Сроки ── #}
-  {% if crit.baseline_date %}
-  <h3 style="margin-top:1.25rem">Сроки</h3>
-  <div class="kpi-row kpi-small">
-    <div class="kpi">
-      <div class="kpi-num {% if crit.overdue_count > 0 %}danger{% endif %}">{{ crit.overdue_count }}</div>
-      <div class="kpi-label">Просрочено работ</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num" style="font-size:1.2rem">{{ crit.baseline_date|dmy }}</div>
-      <div class="kpi-label">Плановый срок объекта</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {% if crit.forecast_date and crit.overdue_count > 0 %}warn{% endif %}" style="font-size:1.2rem">{{ crit.forecast_date|dmy if crit.forecast_date else '—' }}</div>
-      <div class="kpi-label">Прогноз окончания</div>
-    </div>
-  </div>
-  {% endif %}
-
-  {# ── Кнопки блока СМР ── #}
-  <div class="quick-nav" style="margin-top:1.25rem">
-    <a href="/form" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
-      <span class="qn-text">Ввод факта</span>
-    </a>
-    <a href="/gantt" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M5 20V11M11 20V5M17 20v-8"/></svg></span>
-      <span class="qn-text">График</span>
-    </a>
-    <a href="/report" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></span>
-      <span class="qn-text">Рапорт</span>
-    </a>
-    <a href="/blockers" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/></svg></span>
-      <span class="qn-text">Блокеры</span>
-    </a>
-  </div>
 </div>
 
-{# ── Обзор ИД — вся нижняя часть страницы, ничего СМР-шного здесь и ниже. ── #}
+{# ── ИД — формирование и подписание папок ── #}
 <div class="dash-section contour-panel contour-panel--id">
   <div class="contour-panel-head">
     <div class="contour-panel-head-main">
       <span class="contour-panel-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M9 13h6M9 17h6"/></svg></span>
-      <h2>Обзор ИД</h2>
+      <h2><a href="/id-folders">Обзор ИД</a></h2>
     </div>
   </div>
-  {# ── Строка 1 — воронка папок по стадиям, самый заметный элемент блока
-     (обычный .kpi-row, не .kpi-small — тот же приём, что уже используется
-     на сайте для ключевой цифры). Единица работы и денег — папка, не
-     раздел: воронка папок стоит первой и крупнее, чем раздел ниже. ── #}
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="kpi-num ok">{{ folder_stats.funnel['ks2'].count }} из {{ folder_stats.folders_count }}</div>
+      <div class="kpi-label">папок с подписанным КС-2</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ folder_stats.funnel['ks2'].sum|ru_money if folder_stats.funnel['ks2'].known_sum_count > 0 else '—' }} ₽</div>
+      <div class="kpi-label">закрыто по КС-2</div>
+    </div>
+  </div>
+
   {% with pipe=folder_stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
-  {# ── Строка 2 — деньги ── #}
   <div class="kpi-row kpi-small">
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.contract_total|ru_money }}</div>
       <div class="kpi-label">Всего по контракту, ₽</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.signed_folders_sum|ru_money }}</div>
-      <div class="kpi-label">Подписано, ₽</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.manual_sum|ru_money }}</div>
-      <div class="kpi-label">Незакрытый объём (ручной), ₽</div>
-    </div>
-    <div class="kpi">
       <div class="kpi-num {{ 'danger' if folder_stats.money_remaining < 0 else '' }}">{{ folder_stats.money_remaining|ru_money }}</div>
-      <div class="kpi-label">Остаток в деньгах, ₽</div>
+      <div class="kpi-label">Остаток, ₽</div>
     </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if folder_stats.awaiting_smeta_count > 0 else '' }}">{{ folder_stats.awaiting_smeta_count }}</div>
-      <div class="kpi-label">Подписано, ждёт сметной стоимости</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if folder_stats.not_signed_count > 0 else '' }}">{{ folder_stats.not_signed_count }}</div>
-      <div class="kpi-label">Ещё не подписано</div>
-    </div>
-  </div>
-
-  {# ── Строка 3 — разделы, подчинена строкам 1-2 (тот же .kpi-small) ── #}
-  <div class="kpi-row kpi-small">
-    <div class="kpi">
-      <div class="kpi-num">{{ id_stats.total or 0 }}</div>
-      <div class="kpi-label">Всего разделов ИД</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num">{{ id_stats.signed or 0 }}</div>
-      <div class="kpi-label">Подписано</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if folder_stats.unsigned_count > 0 else '' }}">{{ folder_stats.unsigned_count }}</div>
-      <div class="kpi-label">Остаток неподписанных разделов</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if (change_stats.overdue or 0) > 0 else '' }}">{{ change_stats.total or 0 }}</div>
-      <div class="kpi-label">Активных ИЗМ (ДПР)</div>
-      {% if (change_stats.overdue or 0) > 0 %}
-      <div class="kpi-sub" style="color:var(--c-warning)">{{ change_stats.overdue }} просрочено</div>
-      {% else %}
-      <div class="kpi-sub">{{ change_stats.overdue or 0 }} просрочено</div>
-      {% endif %}
-    </div>
-    <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.signed_not_in_folder }}</div>
-      <div class="kpi-label">Готово к сборке</div>
-      <div class="kpi-sub">подписано, ещё не в папке</div>
-    </div>
-  </div>
-
-  {# ── Строка 4 — кнопки блока ИД ── #}
-  <div class="quick-nav" style="margin-top:1.25rem">
-    <a href="/id-packages" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg></span>
-      <span class="qn-text">Разделы ИД</span>
-    </a>
-    <a href="/changes" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2"/><rect x="9" y="2" width="6" height="3" rx="1"/><path d="M9 11h6M9 15h6M9 19h4"/></svg></span>
-      <span class="qn-text">Изменения</span>
-    </a>
-    <a href="/id-folders" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l2-3h5l2 3"/></svg></span>
-      <span class="qn-text">Выполнение</span>
-    </a>
-    <a href="/id-progress" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 19h16M7 19V9M12 19V5M17 19v-7"/></svg></span>
-      <span class="qn-text">График ИД</span>
-    </a>
   </div>
 </div>
 
-{# ── Обзор РСК — свой блок: с появлением ветки меню РСК равноправна
-   СМР/ИД, одной плитки внутри блока ИД стало недостаточно (координатор,
-   06.09.2026). Те же цифры, что на /rsk/dashboard. ── #}
+{# ── РСК — замечания и их устранение ── #}
 <div class="dash-section contour-panel contour-panel--rsk">
   <div class="contour-panel-head">
     <div class="contour-panel-head-main">
       <span class="contour-panel-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>
-      <h2>Обзор РСК</h2>
+      <h2><a href="/rsk/dashboard">Обзор РСК</a></h2>
     </div>
   </div>
-  <div class="kpi-row kpi-small">
+  <div class="kpi-row">
     <div class="kpi">
       <div class="kpi-num">{{ rsk_dash.tiles.total_active or 0 }}</div>
-      <div class="kpi-label">Всего активных</div>
+      <div class="kpi-label">Активных замечаний</div>
     </div>
     <div class="kpi">
       <div class="kpi-num ok">{{ rsk_dash.tiles.ready_to_close or 0 }}</div>
       <div class="kpi-label">Готово к снятию</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num {{ 'warn' if (rsk_dash.tiles.blocked_by_id or 0) > 0 else '' }}">{{ rsk_dash.tiles.blocked_by_id or 0 }}</div>
-      <div class="kpi-label">Заблокировано ожиданием ИД</div>
+      <div class="kpi-num {{ 'warn' if (rsk_dash.tiles.blocked_by_id or 0) + (rsk_dash.tiles.needs_rd or 0) > 0 else '' }}">{{ (rsk_dash.tiles.blocked_by_id or 0) + (rsk_dash.tiles.needs_rd or 0) }}</div>
+      <div class="kpi-label">Заблокировано</div>
+      <div class="kpi-sub">{{ rsk_dash.tiles.blocked_by_id or 0 }} ждёт ИД · {{ rsk_dash.tiles.needs_rd or 0 }} ждёт корректировки РД</div>
     </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'warn' if (rsk_dash.tiles.needs_rd or 0) > 0 else '' }}">{{ rsk_dash.tiles.needs_rd or 0 }}</div>
-      <div class="kpi-label">Ждёт корректировки РД</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num {{ 'danger' if (rsk_dash.tiles.rejected or 0) > 0 else '' }}">{{ rsk_dash.tiles.rejected or 0 }}</div>
-      <div class="kpi-label">Отклонено РСК</div>
-    </div>
-  </div>
-
-  {# ── Кнопки блока РСК ── #}
-  <div class="quick-nav" style="margin-top:1.25rem">
-    <a href="/rsk/import" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
-      <span class="qn-text">Загрузка акта</span>
-    </a>
-    <a href="/rsk/processing" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></span>
-      <span class="qn-text">Отработка предписаний</span>
-    </a>
-    <a href="/rsk/dashboard" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 14a8 8 0 1 1 16 0"/><path d="M12 14l3-4"/><circle cx="12" cy="14" r="1"/></svg></span>
-      <span class="qn-text">Обзор РСК</span>
-    </a>
-    <a href="/rsk" class="qn-item">
-      <span class="qn-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></span>
-      <span class="qn-text">Реестр предписаний</span>
-    </a>
   </div>
 </div>
 
