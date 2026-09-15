@@ -4,3 +4,4 @@ __pycache__/
 .env
 *.env
 deploy/*.png
+backend/DEPLOYED_COMMIT

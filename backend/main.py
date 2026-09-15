@@ -47,6 +47,20 @@ class NoCacheStaticFiles(StaticFiles):
 app = FastAPI(title="ТМ-35 Мониторинг")
 app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
 
+# Какой коммит сейчас реально запущен — раньше это нельзя было узнать
+# снаружи вообще (координатор, 15.09.2026, после находки о недель разошедшемся
+# git/проде): деплой пишет короткий хэш коммита в DEPLOYED_COMMIT рядом с
+# остальными файлами (`git rev-parse HEAD` в момент деплоя, см. CLAUDE.md,
+# раздел «Инфраструктура»), сюда это попадает через docker cp так же, как
+# и остальной код. Только в лог — не на страницу пользователю.
+_deployed_commit_path = os.path.join(os.path.dirname(__file__), "DEPLOYED_COMMIT")
+try:
+    with open(_deployed_commit_path) as _f:
+        _deployed_commit = _f.read().strip() or "не записан"
+except FileNotFoundError:
+    _deployed_commit = "не записан (DEPLOYED_COMMIT отсутствует — деплой был не по процедуре)"
+print(f"[deploy] запущен коммит: {_deployed_commit}")
+
 # Загруженные PDF предписаний (координатор, 04.09.2026 — п.C1). Тот же
 # уровень надёжности хранения, что у остального кода приложения: живёт в
 # писуемом слое контейнера, не на отдельном volume (его тут нет ни у чего
