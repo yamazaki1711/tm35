@@ -476,10 +476,14 @@ def main_check():
         r'<span class="id-pipe-money"[^>]*>([^<]+)</span>',
         dashboard_html,
     )
-    pipe_ks2_money_v = (
-        _parse_ru_money(dash_ks2_pipe_money_m.group(1).replace("₽", "").strip())
-        if dash_ks2_pipe_money_m else None
-    )
+    # «— ₽» на трубе (known_sum_count=0 — либо в стадии вообще нет папок,
+    # либо есть, но ни у одной ещё не заполнена сметная стоимость) в обоих
+    # случаях означает настоящую сумму 0, ту же, что coalesce(sum(...),0)
+    # в тайле — сравниваем как 0, не как "неизвестно" (это внутренняя
+    # сверка тождества, не то, что показывается пользователю "не изобретая
+    # число" — это правило про экран, не про эту проверку).
+    _ks2_pipe_raw = dash_ks2_pipe_money_m.group(1).replace("₽", "").strip() if dash_ks2_pipe_money_m else None
+    pipe_ks2_money_v = 0.0 if _ks2_pipe_raw == "—" else _parse_ru_money(_ks2_pipe_raw)
     check(
         "ИД: труба «Текущая КС-2» (₽) = тайл «Подписано по КС-2, ₽» (на /dashboard)",
         "труба, Текущая КС-2", round(pipe_ks2_money_v, 2) if pipe_ks2_money_v is not None else None,
