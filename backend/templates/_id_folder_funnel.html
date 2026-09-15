@@ -16,7 +16,7 @@
   </svg>
   {% for b in pipe.blocks %}
   <div class="id-pipe-col" style="left:{{ b.left_pct }}%; width:{{ b.width_pct }}%;">
-    <a class="id-pipe-link" href="/id-folders/registry?status={{ b.stage }}"
+    <a class="id-pipe-link" href="/id-folders/registry?status={{ b.registry_status }}"
        aria-label="{{ b.label }}: {{ b.count }} папок">
       <span class="id-pipe-count {{ 'id-pipe-count-emph' if b.emphasis }}"
             style="top:calc({{ b.y0_pct }}% - 22px);">{{ b.count }}</span>
@@ -32,10 +32,10 @@
 .id-pipe-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .id-pipe-ribbon { fill: var(--c-border-strong); opacity: .5; }
 .id-pipe-rect-formed      { fill: var(--c-surface-alt); stroke: var(--c-border-strong); }
-.id-pipe-rect-transferred { fill: var(--c-primary-bg); stroke: var(--c-primary-light); }
-.id-pipe-rect-checking    { fill: var(--c-warning-bg); stroke: var(--c-warning); }
+.id-pipe-rect-checking    { fill: var(--c-primary-bg); stroke: var(--c-primary-light); }
 .id-pipe-rect-signed      { fill: var(--c-success); stroke: var(--c-success); }
-.id-pipe-rect-ks2         { fill: var(--c-success-bg); stroke: var(--c-success); }
+.id-pipe-rect-ks2_current { fill: var(--c-success-bg); stroke: var(--c-success); }
+.id-pipe-rect-ks2_next    { fill: var(--c-warning-bg); stroke: var(--c-warning); }
 .id-pipe-rect { stroke-width: 1; }
 .id-pipe-col { position: absolute; top: 0; height: 100%; }
 .id-pipe-link {

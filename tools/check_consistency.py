@@ -31,6 +31,20 @@ CHECKS = []
 FAILED = False
 
 
+def _parse_ru_money(s):
+    """Обратный разбор ru_money-отформатированного числа с экрана
+    («4 078 191 380,98») в float — для проверок §7 ТЗ 15.09.2026, где
+    тождество сверяется по тому, что реально нарисовано на странице, а
+    не повторным вызовом той же функции."""
+    if s is None:
+        return None
+    s = s.replace("\xa0", "").replace(" ", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def check(name, a_label, a_val, b_label, b_val, tolerance=0):
     global FAILED
     if isinstance(a_val, float) or isinstance(b_val, float):
@@ -323,9 +337,13 @@ def main_check():
     # 11.09.2026: разметка сменилась с плоских плиток (.kpi-num/.kpi-label)
     # на трубу (.id-pipe-count/.id-pipe-label) — обновлён селектор, сама
     # проверка (числа стадий сходятся между двумя страницами) не менялась.
+    # ТЗ 15.09.2026: труба сменила стадии на ID_FOLDER_PIPE_STAGE_LABELS
+    # (не каноническую ID_FOLDER_STAGE_LABELS — та осталась для колонки
+    # «Стадия» реестра, труба её больше не показывает) — обе страницы
+    # рендерят один и тот же партиал, обязаны совпасть по каждой стадии.
     dashboard_html = urllib.request.urlopen("http://localhost:8000/dashboard", timeout=15).read().decode("utf-8")
     id_folders_html = urllib.request.urlopen("http://localhost:8000/id-folders", timeout=15).read().decode("utf-8")
-    for stage, label in m.ID_FOLDER_STAGE_LABELS.items():
+    for stage, label in m.ID_FOLDER_PIPE_STAGE_LABELS.items():
         pattern = re.compile(
             r'<span class="id-pipe-count[^"]*"[^>]*>(\d+)</span>\s*'
             r'<span class="id-pipe-label"[^>]*>' + re.escape(label) + r"</span>"
@@ -424,36 +442,49 @@ def main_check():
         "/id-folders", folders_contract_m.group(1).strip() if folders_contract_m else None,
     )
 
-    dash_remaining_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток, ₽</div>', dashboard_html)
-    folders_remaining_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток в деньгах, ₽</div>', id_folders_html)
+    # ТЗ Якименко А.И., 15.09.2026 (§3, §7): "Остаток, ₽" на /dashboard
+    # переименован и сменил формулу — теперь "Остаток по контракту, ₽",
+    # это заведомо ДРУГОЕ число, чем "Остаток в деньгах, ₽" на
+    # /id-folders (см. KNOWN_ISSUES.md, "два остатка"), сравнивать между
+    # страницами больше нельзя. Взамен — тождество трёх денежных тайлов
+    # ОДНОЙ и той же строки /dashboard, как реально нарисовано на экране.
+    dash_ks2_tile_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Подписано по КС-2, ₽</div>', dashboard_html)
+    dash_manual_tile_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Невыбираемый остаток, ₽</div>', dashboard_html)
+    dash_remaining_contract_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток по контракту, ₽</div>', dashboard_html)
+    contract_v = _parse_ru_money(dash_contract_m.group(1).strip()) if dash_contract_m else None
+    ks2_tile_v = _parse_ru_money(dash_ks2_tile_m.group(1).strip()) if dash_ks2_tile_m else None
+    manual_tile_v = _parse_ru_money(dash_manual_tile_m.group(1).strip()) if dash_manual_tile_m else None
+    remaining_contract_v = _parse_ru_money(dash_remaining_contract_m.group(1).strip()) if dash_remaining_contract_m else None
+    computed_remaining = (
+        contract_v - ks2_tile_v - manual_tile_v
+        if None not in (contract_v, ks2_tile_v, manual_tile_v) else None
+    )
     check(
-        "Остаток по ИД, ₽: /dashboard vs /id-folders",
-        "/dashboard", dash_remaining_m.group(1).strip() if dash_remaining_m else None,
-        "/id-folders", folders_remaining_m.group(1).strip() if folders_remaining_m else None,
+        "ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано по КС-2» − «Невыбираемый остаток» (как на экране /dashboard)",
+        "пересчитано из тайлов", round(computed_remaining, 2) if computed_remaining is not None else None,
+        "тайл «Остаток по контракту, ₽»", round(remaining_contract_v, 2) if remaining_contract_v is not None else None,
+        tolerance=0.01,
     )
 
-    # ИД: заголовок блока — "N из M папок с КС-2" (/dashboard) сверяется
-    # с числом папок стадии «КС-2» в трубе (уже проверено проверкой 11
-    # между /dashboard и /id-folders) и с общим количеством папок
-    # (folders_count = сумма всех стадий, уже проверено проверкой 4) —
-    # здесь только сверка, что headline не разошёлся С САМОЙ трубой на
-    # той же странице (headline и труба — из одного and того же
-    # compute_id_folder_stats(), но верстка заголовка не переиспользует
-    # трубу текстуально, поэтому регресс здесь возможен независимо).
-    dash_ks2_headline_m = re.search(r'<div class="kpi-num ok">(\d+) из (\d+)</div>\s*<div class="kpi-label">папок с подписанным КС-2</div>', dashboard_html)
-    dash_ks2_pipe_m = re.search(
-        r'<span class="id-pipe-count[^"]*"[^>]*>(\d+)</span>\s*<span class="id-pipe-label"[^>]*>' + re.escape(m.ID_FOLDER_STAGE_LABELS["ks2"]) + r"</span>",
+    # ИД: headline "N из M папок с КС-2" убран (ТЗ 15.09.2026) — взамен
+    # сверка ₽ стадии трубы «Текущая КС-2» с тайлом «Подписано по КС-2, ₽»
+    # на той же странице (оба должны показывать одну и ту же сумму
+    # ks2_folders_sum, но верстка не переиспользует текст друг друга).
+    ks2_current_label = m.ID_FOLDER_PIPE_STAGE_LABELS["ks2_current"]
+    dash_ks2_pipe_money_m = re.search(
+        r'<span class="id-pipe-label"[^>]*>' + re.escape(ks2_current_label) + r"</span>\s*"
+        r'<span class="id-pipe-money"[^>]*>([^<]+)</span>',
         dashboard_html,
     )
-    check(
-        "ИД, заголовок «N из M папок с КС-2»: N vs труба на той же странице",
-        "заголовок", int(dash_ks2_headline_m.group(1)) if dash_ks2_headline_m else None,
-        "труба", int(dash_ks2_pipe_m.group(1)) if dash_ks2_pipe_m else None,
+    pipe_ks2_money_v = (
+        _parse_ru_money(dash_ks2_pipe_money_m.group(1).replace("₽", "").strip())
+        if dash_ks2_pipe_money_m else None
     )
     check(
-        "ИД, заголовок «N из M папок с КС-2»: M vs compute_id_folder_stats()['folders_count']",
-        "заголовок", int(dash_ks2_headline_m.group(2)) if dash_ks2_headline_m else None,
-        "compute_id_folder_stats()", folder_stats["folders_count"],
+        "ИД: труба «Текущая КС-2» (₽) = тайл «Подписано по КС-2, ₽» (на /dashboard)",
+        "труба, Текущая КС-2", round(pipe_ks2_money_v, 2) if pipe_ks2_money_v is not None else None,
+        "тайл", round(ks2_tile_v, 2) if ks2_tile_v is not None else None,
+        tolerance=0.01,
     )
 
     # РСК: /dashboard ("Активных замечаний"/"Готово к снятию") vs
