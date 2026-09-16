@@ -42,9 +42,9 @@
   <thead>
     <tr>
       <th>Категория</th>
-      <th>Групп без раздела</th>
+      <th class="nowrap">Групп без раздела</th>
       {% for t in tabs %}<th class="nowrap">{{ t.label }}</th>{% endfor %}
-      <th></th>
+      <th class="nowrap"></th>
     </tr>
   </thead>
   <tbody>
@@ -52,7 +52,7 @@
     {% set row_form_id = "cat-" ~ loop.index %}
     <tr>
       <td>{{ row.category }}</td>
-      <td class="num">{{ row.empty_groups }}</td>
+      <td class="num nowrap">{{ row.empty_groups }}</td>
       {% for t in tabs %}
       {# 0 здесь — не "нет данных" (правило "—" не применяется): это
          реально посчитанный факт "ни один код категории не нашёлся в
@@ -63,14 +63,14 @@
          "loop.index" здесь означал бы номер вкладки, а не номер строки
          категории, — нашёл на живой проверке (чекбоксы уходили не в ту
          форму, чем строка на экране). #}
-      <td class="num">
+      <td class="num nowrap">
         {{ row.counts[t.id] }}
         <br>
         <input type="checkbox" name="tab_ids" value="{{ t.id }}" form="{{ row_form_id }}"
                {{ 'checked' if t.id in row.checked_tab_ids }}>
       </td>
       {% endfor %}
-      <td><button type="submit" form="{{ row_form_id }}">Сохранить</button></td>
+      <td class="nowrap"><button type="submit" form="{{ row_form_id }}">Сохранить</button></td>
     </tr>
     {% else %}
     <tr><td colspan="18" class="empty-note">Все группы уже сопоставлены — категорий с пустыми группами нет.</td></tr>

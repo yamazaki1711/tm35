@@ -73,12 +73,12 @@
 {% if transitions %}
 <div class="table-wrap" style="margin-bottom:1.5rem;">
 <table class="data-table">
-  <thead><tr><th>Папка</th><th>Переход</th><th>Дата</th></tr></thead>
+  <thead><tr><th class="nowrap">Папка</th><th class="nowrap">Переход</th><th class="nowrap">Дата</th></tr></thead>
   <tbody>
     {% for t in transitions %}
     <tr>
-      <td><a href="/id-folders/{{ t.folder_id }}">{{ t.folder_name }}</a></td>
-      <td>{{ t.label }}</td>
+      <td class="nowrap"><a href="/id-folders/{{ t.folder_id }}">{{ t.folder_name }}</a></td>
+      <td class="nowrap">{{ t.label }}</td>
       <td class="nowrap">{{ t.date|fmt_dmy }}</td>
     </tr>
     {% endfor %}
@@ -97,23 +97,23 @@
 <table class="data-table">
   <thead>
     <tr>
-      <th>Название</th>
-      <th>Дата создания</th>
-      <th>Разделов</th>
-      <th>Оценка ПТО, ₽</th>
-      <th>Стадия</th>
-      <th>Сметная стоимость, ₽</th>
+      <th class="nowrap">Название</th>
+      <th class="nowrap">Дата создания</th>
+      <th class="nowrap">Разделов</th>
+      <th class="nowrap">Оценка ПТО, ₽</th>
+      <th class="nowrap">Стадия</th>
+      <th class="nowrap">Сметная стоимость, ₽</th>
     </tr>
   </thead>
   <tbody>
     {% for f in folders %}
     <tr>
-      <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
-      <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
-      <td>{{ f.row_count }}</td>
-      <td>{{ (f.amount_sum or 0)|ru_money }}</td>
-      <td><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
-      <td>{{ f.amount_smeta_rub|ru_money if f.amount_smeta_rub is not none else '—' }}</td>
+      <td class="nowrap"><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
+      <td class="nowrap">{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
+      <td class="nowrap">{{ f.row_count }}</td>
+      <td class="nowrap">{{ (f.amount_sum or 0)|ru_money }}</td>
+      <td class="nowrap"><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
+      <td class="nowrap">{{ f.amount_smeta_rub|ru_money if f.amount_smeta_rub is not none else '—' }}</td>
     </tr>
     {% else %}
     <tr><td colspan="6" class="empty-note">Папок ещё нет.</td></tr>
@@ -134,13 +134,13 @@
 </form>
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>Описание</th><th>Сумма, ₽</th><th></th></tr></thead>
+  <thead><tr><th>Описание</th><th class="nowrap">Сумма, ₽</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for m in manual_volumes %}
     <tr>
       <td class="wrap">{{ m.description }}</td>
-      <td>{{ m.amount_rub|ru_money }}</td>
-      <td>
+      <td class="nowrap">{{ m.amount_rub|ru_money }}</td>
+      <td class="nowrap">
         <form method="post" action="/api/manual-volume/{{ m.id }}/delete" style="display:inline">
           <button type="submit" class="btn-secondary">Убрать</button>
         </form>
@@ -150,7 +150,7 @@
     <tr><td colspan="3" class="empty-note">Записей нет.</td></tr>
     {% endfor %}
     {% if manual_volumes %}
-    <tr><td><b>Итого</b></td><td><b>{{ stats.manual_sum|ru_money }}</b></td><td></td></tr>
+    <tr><td class="nowrap"><b>Итого</b></td><td class="nowrap"><b>{{ stats.manual_sum|ru_money }}</b></td><td class="nowrap"></td></tr>
     {% endif %}
   </tbody>
 </table>

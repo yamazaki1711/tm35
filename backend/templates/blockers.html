@@ -48,10 +48,10 @@
 {% if rows %}
 <div class="table-wrap">
 <table>
-<tr><th>Работа</th><th>Тип</th><th>Описание</th><th>Статус</th><th>Возникло</th><th>Влияние, дней</th></tr>
+<tr><th class="nowrap">Работа</th><th class="nowrap">Тип</th><th>Описание</th><th class="nowrap">Статус</th><th class="nowrap">Возникло</th><th class="nowrap">Влияние, дней</th></tr>
 {% for r in rows %}
-<tr><td>{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td>{{ r.blocker_type|ru_blocker_type }}</td><td class="wrap">{{ r.description|strip_source_marker }}</td>
-<td>{{ r.status|ru_blocker_status if r.status else '—' }}</td><td>{{ r.created_at|dmy }}</td><td>{{ r.impact_days or '—' }}</td></tr>
+<tr><td class="nowrap">{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td class="nowrap">{{ r.blocker_type|ru_blocker_type }}</td><td class="wrap">{{ r.description|strip_source_marker }}</td>
+<td class="nowrap">{{ r.status|ru_blocker_status if r.status else '—' }}</td><td class="nowrap">{{ r.created_at|dmy }}</td><td class="nowrap">{{ r.impact_days or '—' }}</td></tr>
 {% endfor %}
 </table>
 </div>

@@ -5,16 +5,16 @@
 {% if rows %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Материал</th><th>Поставщик</th><th>Статус</th><th>Срок поставки план</th><th>Срок поставки факт</th><th>Блокирует работу</th><th>Комментарий</th></tr></thead>
+  <thead><tr><th>Материал</th><th>Поставщик</th><th class="nowrap">Статус</th><th class="nowrap">Срок поставки план</th><th class="nowrap">Срок поставки факт</th><th class="nowrap">Блокирует работу</th><th>Комментарий</th></tr></thead>
   <tbody>
   {% for m in rows %}
   <tr>
     <td class="wrap">{{ m.name }}</td>
     <td>{{ m.supplier or '—' }}</td>
-    <td><span class="badge {{ 'badge-bad' if m.status=='missing' else ('badge-ok' if m.status=='on_site' else 'badge-neutral') }}">{{ m.status|ru_material_status }}</span></td>
-    <td>{{ m.expected_delivery_date|dmy if m.expected_delivery_date else '—' }}</td>
-    <td>{{ m.actual_delivery_date|dmy if m.actual_delivery_date else '—' }}</td>
-    <td>{{ 'да' if m.blocks_work else 'нет' }}</td>
+    <td class="nowrap"><span class="badge {{ 'badge-bad' if m.status=='missing' else ('badge-ok' if m.status=='on_site' else 'badge-neutral') }}">{{ m.status|ru_material_status }}</span></td>
+    <td class="nowrap">{{ m.expected_delivery_date|dmy if m.expected_delivery_date else '—' }}</td>
+    <td class="nowrap">{{ m.actual_delivery_date|dmy if m.actual_delivery_date else '—' }}</td>
+    <td class="nowrap">{{ 'да' if m.blocks_work else 'нет' }}</td>
     <td class="wrap">{{ m.comment or '—' }}</td>
   </tr>
   {% endfor %}

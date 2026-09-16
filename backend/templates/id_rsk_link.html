@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  /* "Содержание" — та же подсказка при наведении, что в реестре и в
+     отработке РСК (rsk_registry.html/rsk_processing.html,
+     .rsk-content-cell/.rsk-sentence-clip/#rsk-tooltip) — переиспользовано
+     один в один (найдено 16.09.2026: без класса содержание нарушения
+     тянуло таблицу шире экрана и уводило колонку «Прикрепить»/«Открепить»
+     за правый край при 1366×768). */
+  .rsk-content-cell { max-width: 420px; }
+  .rsk-tooltip {
+    position: fixed; z-index: 50; pointer-events: none;
+    max-width: min(600px, calc(100vw - 32px)); max-height: 70vh; overflow-y: auto;
+    background: var(--c-text); color: #fff; font-size: .82rem; line-height: 1.5;
+    padding: .65rem .85rem; border-radius: var(--r-sm); box-shadow: var(--shadow-md);
+  }
+  .rsk-tooltip p { margin: 0 0 .5rem; }
+  .rsk-tooltip p:last-child { margin-bottom: 0; }
+  .rsk-tooltip ul { margin: 0; padding-left: 1.1rem; }
+  .rsk-tooltip li { margin-bottom: .3rem; }
+  .rsk-tooltip li:last-child { margin-bottom: 0; }
+</style>
 <p class="subtitle"><a href="/id-packages">← Разделы ИД</a></p>
 <h1>{{ tab_label }} — {{ label }}</h1>
 
@@ -14,12 +34,12 @@
 {% if attached %}
 <div class="table-wrap" style="margin-bottom:1.5rem;">
 <table class="data-table">
-  <thead><tr><th>№</th><th>Содержание</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap">№</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for a in attached %}
     <tr>
       <td class="nowrap"><a href="/rsk/violation/{{ a.sys_no }}">№{{ a.sys_no }}</a></td>
-      <td>{{ a.content or '—' }}</td>
+      <td class="wrap rsk-content-cell" data-full="{{ a.content or '' }}"><span class="rsk-sentence-clip">{{ a.content or '—' }}</span></td>
       <td class="nowrap">
         <form method="post" action="/api/id-row-rsk-link/{{ a.link_id }}/detach" style="display:inline">
           <button type="submit">Открепить</button>
@@ -38,7 +58,7 @@
 <form class="filter-bar" method="get" action="/id-rsk-link">
   <input type="hidden" name="row_id" value="{{ row_id }}">
   <label>Поиск по номеру или содержанию
-    <input type="text" name="q" value="{{ q }}" placeholder="например, 210 или свайные фундаменты">
+    <input type="text" name="q" value="{{ q }}" placeholder="например, 210 или свайные фундаменты" style="min-width:24rem">
   </label>
   <button type="submit">Найти</button>
 </form>
@@ -46,12 +66,12 @@
 {% if candidates %}
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>№</th><th>Содержание</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap">№</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for c in candidates %}
     <tr>
       <td class="nowrap">№{{ c.sys_no }}</td>
-      <td>{{ c.content or '—' }}</td>
+      <td class="wrap rsk-content-cell" data-full="{{ c.content or '' }}"><span class="rsk-sentence-clip">{{ c.content or '—' }}</span></td>
       <td class="nowrap">
         <form method="post" action="/api/id-row-rsk/{{ row_id }}/attach" style="display:inline">
           <input type="hidden" name="violation_id" value="{{ c.violation_id }}">
@@ -66,4 +86,121 @@
 {% else %}
 <div class="empty-note">{{ 'Ничего не найдено по запросу «' + q + '».' if q else 'Нет активных нарушений, доступных для прикрепления.' }}</div>
 {% endif %}
+
+<div id="rsk-tooltip" class="rsk-tooltip" hidden></div>
+<script>
+(function() {
+  // Видимый текст "Содержание" — первые два предложения, тот же код,
+  // что в rsk_processing.html (см. комментарий там про цифры перед
+  // точкой/пунктом списка) — переиспользован без изменений.
+  function truncateTwoSentences(text) {
+    if (!text) return '';
+    var sentences = [];
+    var start = 0;
+    var re = /[.!?]+/g;
+    var m;
+    while ((m = re.exec(text))) {
+      var puncStart = m.index, puncEnd = re.lastIndex;
+      if (/\d/.test(text[puncStart - 1] || '')) continue;
+      var wsEnd = puncEnd;
+      while (wsEnd < text.length && /\s/.test(text[wsEnd])) wsEnd++;
+      if (wsEnd > puncEnd && /\d/.test(text[wsEnd] || '')) continue;
+      sentences.push(text.slice(start, wsEnd));
+      start = wsEnd;
+    }
+    if (start < text.length) sentences.push(text.slice(start));
+    sentences = sentences.filter(function(s) { return s.trim().length > 0; });
+    if (sentences.length <= 2) return text;
+    return sentences.slice(0, 2).join('').replace(/\s+$/, '') + '…';
+  }
+  document.querySelectorAll('.rsk-content-cell').forEach(function(td) {
+    var span = td.querySelector('.rsk-sentence-clip');
+    var full = td.getAttribute('data-full') || '';
+    if (span && full) span.textContent = truncateTwoSentences(full);
+  });
+
+  // Подсказка с полным текстом при наведении — тот же компонент, что в
+  // реестре и отработке РСК, один в один.
+  var tip = document.getElementById('rsk-tooltip');
+  var bodies = document.querySelectorAll('.data-table tbody');
+  if (!tip || !bodies.length) return;
+
+  var SHOW_DELAY = 300;
+  var showTimer = null;
+  var hoverCell = null;
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function renderContent(text) {
+    var html = '';
+    text.split(/\n+/).forEach(function(para) {
+      var parts = para.split(/\s-\s/).map(function(p) { return p.trim(); }).filter(Boolean);
+      if (parts.length > 1) {
+        html += '<p>' + escapeHtml(parts[0]) + '</p><ul>';
+        for (var i = 1; i < parts.length; i++) {
+          html += '<li>' + escapeHtml(parts[i]) + '</li>';
+        }
+        html += '</ul>';
+      } else if (para.trim()) {
+        html += '<p>' + escapeHtml(para.trim()) + '</p>';
+      }
+    });
+    return html;
+  }
+
+  function positionTip(cell) {
+    var r = cell.getBoundingClientRect();
+    tip.style.left = '0px';
+    tip.style.top = '0px';
+    tip.hidden = false;
+    var tw = tip.offsetWidth, th = tip.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var left = Math.min(r.left, vw - tw - 8);
+    left = Math.max(8, left);
+    var top = r.bottom + 6;
+    if (top + th > vh - 8) top = r.top - th - 6;
+    if (top < 8) top = 8;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+
+  function showTip(cell) {
+    tip.innerHTML = renderContent(cell.getAttribute('data-full') || '');
+    positionTip(cell);
+  }
+
+  function hideTip() {
+    clearTimeout(showTimer);
+    tip.hidden = true;
+    hoverCell = null;
+  }
+
+  bodies.forEach(function(body) {
+    body.addEventListener('mouseover', function(e) {
+      var cell = e.target.closest('.rsk-content-cell');
+      if (!cell || cell === hoverCell) return;
+      hoverCell = cell;
+      clearTimeout(showTimer);
+      showTimer = setTimeout(function() {
+        if (hoverCell === cell) showTip(cell);
+      }, SHOW_DELAY);
+    });
+
+    body.addEventListener('mouseout', function(e) {
+      var cell = e.target.closest('.rsk-content-cell');
+      if (!cell || cell !== hoverCell) return;
+      if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+      hideTip();
+    });
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideTip();
+  });
+
+  window.addEventListener('scroll', hideTip, true);
+})();
+</script>
 {% endblock %}

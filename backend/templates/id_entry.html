@@ -149,8 +149,8 @@
 <p class="subtitle" id="registry-count"></p>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Вкладка</th><th>Раздел</th><th>Вид работ</th><th>Статус</th>
-  <th>Ответственный</th><th>Дата статуса</th><th>Плановая сдача в РСК</th><th>Подписант РСК</th><th>Блокировка</th></tr></thead>
+  <thead><tr><th class="nowrap">Вкладка</th><th class="nowrap">Раздел</th><th>Вид работ</th><th class="nowrap">Статус</th>
+  <th>Ответственный</th><th class="nowrap">Дата статуса</th><th class="nowrap">Плановая сдача в РСК</th><th>Подписант РСК</th><th class="nowrap">Блокировка</th></tr></thead>
   <tbody id="registry-body"><tr><td colspan="9" style="text-align:center;color:var(--c-text-3)">Загрузка…</td></tr></tbody>
 </table>
 </div>
@@ -397,19 +397,19 @@
 
   function registryRowHtml(r, i) {
     var html = '<tr class="registry-row' + (r.block_id ? ' row-blocked' : '') + '" data-row-index="' + i + '" tabindex="0">';
-    html += '<td>' + r.tab_label + '</td>';
-    html += '<td>' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
+    html += '<td class="nowrap">' + r.tab_label + '</td>';
+    html += '<td class="nowrap">' + (rowLabel(r) === ('#' + r.id) ? '—' : rowLabel(r)) + '</td>';
     html += '<td>' + (r.work_type_name || '—') + '</td>';
-    html += '<td>' + (r.status_missing ? '<span class="status-missing-badge">статус не задан</span>' : r.status_label) + '</td>';
+    html += '<td class="nowrap">' + (r.status_missing ? '<span class="status-missing-badge">статус не задан</span>' : r.status_label) + '</td>';
     html += '<td>' + r.responsible_name + '</td>';
-    html += '<td>' + TM35_RU_DATE.fmtDMY(r.status_date) + '</td>';
-    html += '<td>' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
+    html += '<td class="nowrap">' + TM35_RU_DATE.fmtDMY(r.status_date) + '</td>';
+    html += '<td class="nowrap">' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
     html += '<td>' + (r.rsk_signer_name || '—') + '</td>';
     if (r.block_id) {
-      html += '<td><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
+      html += '<td class="nowrap"><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
         + '<a href="#" data-unblock="' + r.block_id + '">снять</a></td>';
     } else {
-      html += '<td>—</td>';
+      html += '<td class="nowrap">—</td>';
     }
     html += '</tr>';
     return html;

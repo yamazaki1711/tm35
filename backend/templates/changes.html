@@ -69,36 +69,36 @@
 <table class="data-table">
   <thead>
     <tr>
-      <th>Код</th>
-      <th>Шифр</th>
+      <th class="nowrap">Код</th>
+      <th class="nowrap">Шифр</th>
       <th>Тема</th>
-      <th>Статус</th>
-      <th>Запрос</th>
-      <th>SLA</th>
-      <th>План. ответ</th>
-      <th>Факт. ответ</th>
-      <th>Просрочка</th>
-      <th>Эск.</th>
-      <th>₽ под блок.</th>
-      {% if can_edit %}<th>Изменить статус</th>{% endif %}
+      <th class="nowrap">Статус</th>
+      <th class="nowrap">Запрос</th>
+      <th class="nowrap">SLA</th>
+      <th class="nowrap">План. ответ</th>
+      <th class="nowrap">Факт. ответ</th>
+      <th class="nowrap">Просрочка</th>
+      <th class="nowrap">Эск.</th>
+      <th class="nowrap">₽ под блок.</th>
+      {% if can_edit %}<th class="nowrap">Изменить статус</th>{% endif %}
     </tr>
   </thead>
   <tbody>
     {% for c in changes %}
     <tr class="{{ 'row-overdue' if c.overdue_days and c.overdue_days > 0 else '' }}">
-      <td><a href="/changes/{{ c.id }}">{{ c.code or '—' }}</a></td>
-      <td>{{ c.section_code or '—' }}</td>
+      <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.code or '—' }}</a></td>
+      <td class="nowrap">{{ c.section_code or '—' }}</td>
       <td class="wrap">{{ c.topic or '' }}</td>
-      <td><span class="badge badge-neutral" title="Код статуса: {{ c.status }}">{{ CH_LABELS.get(c.status, c.status) }}</span></td>
-      <td>{{ c.request_date|fmt_dmy if c.request_date else '—' }}</td>
-      <td>{{ c.sla_days or '—' }}</td>
-      <td>{{ c.planned_response_date|fmt_dmy if c.planned_response_date else '—' }}</td>
-      <td>{{ c.actual_response_date|fmt_dmy if c.actual_response_date else '—' }}</td>
-      <td>{{ c.overdue_days if c.overdue_days is not none else '—' }}</td>
-      <td>L{{ c.escalation_level }}</td>
-      <td>{{ '{:,.0f}'.format(c.blocked_amount_rub)|replace(',', ' ') if c.blocked_amount_rub else '—' }}</td>
+      <td class="nowrap"><span class="badge badge-neutral" title="Код статуса: {{ c.status }}">{{ CH_LABELS.get(c.status, c.status) }}</span></td>
+      <td class="nowrap">{{ c.request_date|fmt_dmy if c.request_date else '—' }}</td>
+      <td class="nowrap">{{ c.sla_days or '—' }}</td>
+      <td class="nowrap">{{ c.planned_response_date|fmt_dmy if c.planned_response_date else '—' }}</td>
+      <td class="nowrap">{{ c.actual_response_date|fmt_dmy if c.actual_response_date else '—' }}</td>
+      <td class="nowrap">{{ c.overdue_days if c.overdue_days is not none else '—' }}</td>
+      <td class="nowrap">L{{ c.escalation_level }}</td>
+      <td class="nowrap">{{ '{:,.0f}'.format(c.blocked_amount_rub)|replace(',', ' ') if c.blocked_amount_rub else '—' }}</td>
       {% if can_edit %}
-      <td>
+      <td class="nowrap">
         <form class="inline-edit" method="post" action="/api/change/{{ c.id }}/status">
           <select name="status" onchange="this.form.submit()">
             {% for code, label in CH_LABELS.items() %}

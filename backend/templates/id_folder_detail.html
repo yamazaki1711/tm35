@@ -60,13 +60,13 @@
 <h3>Состав папки</h3>
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>Категория</th><th>Раздел</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap">Категория</th><th class="nowrap">Раздел</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for r in rows_in_folder %}
     <tr>
-      <td>{{ r.tab_label }}</td>
-      <td>{{ r.section_label }}</td>
-      <td>
+      <td class="nowrap">{{ r.tab_label }}</td>
+      <td class="nowrap">{{ r.section_label }}</td>
+      <td class="nowrap">
         <form method="post" action="/api/id-folder-row/{{ r.folder_row_id }}/remove">
           <button type="submit" class="btn-secondary">Убрать</button>
         </form>

@@ -21,10 +21,10 @@
 <h3>СТО-ССР: найдено {{ ssr_total }}{% if ssr_total > result_limit %}, показаны первые {{ result_limit }}{% endif %}</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Раздел</th><th>Код</th><th>Наименование</th><th>Ед.</th><th class="num">Чел-ч / ед.</th></tr></thead>
+  <thead><tr><th class="nowrap">Раздел</th><th class="nowrap">Код</th><th>Наименование</th><th class="nowrap">Ед.</th><th class="num nowrap">Чел-ч / ед.</th></tr></thead>
   <tbody>
   {% for n in ssr_rows %}
-  <tr><td>{{ n.section }}</td><td><code>{{ n.code }}</code></td><td class="wrap">{{ n.name }}</td><td>{{ n.unit }}</td><td class="num">{{ n.labor_hours_per_unit }}</td></tr>
+  <tr><td class="nowrap">{{ n.section }}</td><td class="nowrap"><code>{{ n.code }}</code></td><td class="wrap">{{ n.name }}</td><td class="nowrap">{{ n.unit }}</td><td class="num nowrap">{{ n.labor_hours_per_unit }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -34,10 +34,10 @@
 <h3>ГЭСН: найдено {{ gesn_total }}{% if gesn_total > result_limit %}, показаны первые {{ result_limit }}{% endif %}</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Сборник</th><th>Код</th><th>Наименование</th><th>Ед.</th><th class="num">Чел-ч / ед.</th></tr></thead>
+  <thead><tr><th>Сборник</th><th class="nowrap">Код</th><th>Наименование</th><th class="nowrap">Ед.</th><th class="num nowrap">Чел-ч / ед.</th></tr></thead>
   <tbody>
   {% for n in gesn_rows %}
-  <tr><td class="wrap">{{ n.sbornik_title }}</td><td><code>{{ n.code }}</code></td><td class="wrap">{{ n.name }}</td><td>{{ n.unit }}</td><td class="num">{{ n.hours_per_unit }}</td></tr>
+  <tr><td class="wrap">{{ n.sbornik_title }}</td><td class="nowrap"><code>{{ n.code }}</code></td><td class="wrap">{{ n.name }}</td><td class="nowrap">{{ n.unit }}</td><td class="num nowrap">{{ n.hours_per_unit }}</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -110,8 +110,8 @@
     </colgroup>
     <thead>
       <tr>
-        <th>Шифр</th><th>Наименование</th><th>Участок</th><th>% готовности</th>
-        <th>Люди</th><th>Простой</th><th>Комментарий</th><th>Статус</th>
+        <th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Участок</th><th class="nowrap">% готовности</th>
+        <th class="nowrap">Люди</th><th class="nowrap">Простой</th><th>Комментарий</th><th class="nowrap">Статус</th>
       </tr>
     </thead>
     <tbody id="shift-body">
@@ -240,7 +240,7 @@
       html += '<tr data-work-row="' + it.id + '"' + (it.filled ? ' class="row-filled"' : '') + '>';
       html += '<td class="c-code nowrap"><code>' + it.code + '</code></td>';
       html += '<td class="wrap">' + it.name + '</td>';
-      html += '<td>' + (it.location || '—') + '</td>';
+      html += '<td class="nowrap">' + (it.location || '—') + '</td>';
       html += '<td class="num"><input type="number" min="0" max="100" step="0.1" inputmode="decimal" ' +
         'data-work="' + it.id + '" data-field="pct" value="' + (it.fact_pct == null ? '' : it.fact_pct) + '" ' +
         (pctPlaceholder ? 'placeholder="' + pctPlaceholder + '"' : '') + '></td>';
@@ -251,7 +251,7 @@
       html += '<td><select data-work="' + it.id + '" data-field="reason">' + reasonOptionsHtml(it.reason_code) + '</select></td>';
       html += '<td><input type="text" data-work="' + it.id + '" data-field="comment" value="' +
         (it.comment ? it.comment.replace(/"/g, '&quot;') : '') + '"></td>';
-      html += '<td><span class="row-status" data-row-status="' + it.id + '"></span></td>';
+      html += '<td class="nowrap"><span class="row-status" data-row-status="' + it.id + '"></span></td>';
       html += '</tr>';
     });
     document.getElementById('shift-body').innerHTML = html;

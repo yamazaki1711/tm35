@@ -149,17 +149,17 @@
 
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>№</th><th>Содержание</th><th>Статус</th><th>Физика</th><th>Проект</th><th>ИД</th><th>Ответственный</th></tr></thead>
+  <thead><tr><th class="nowrap">№</th><th>Содержание</th><th class="nowrap">Статус</th><th class="nowrap">Физика</th><th class="nowrap">Проект</th><th class="nowrap">ИД</th><th>Ответственный</th></tr></thead>
   <tbody>
     {% for r in rows %}
     <tr class="{{ 'rsk-row-selected' if v and v.sys_no==r.sys_no }}" style="cursor:pointer"
         onclick="location.href='/rsk/processing?sys_no={{ r.sys_no }}'">
-      <td class="mono">{{ r.sys_no }}</td>
+      <td class="mono nowrap">{{ r.sys_no }}</td>
       <td class="wrap rsk-content-cell" data-full="{{ r.content or '' }}"><span class="rsk-sentence-clip">{{ r.content }}</span></td>
-      <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
-      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
-      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
-      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
+      <td class="nowrap"><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
+      <td class="nowrap">{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
+      <td class="nowrap">{{ ru_track.get(r.track_design, r.track_design) }}</td>
+      <td class="nowrap">{{ ru_track.get(r.track_id, r.track_id) }}</td>
       <td>{{ r.responsible_names }}</td>
     </tr>
     {% endfor %}

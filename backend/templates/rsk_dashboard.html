@@ -30,13 +30,13 @@
 <h3>Разрез по ответственным</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Ответственный</th><th class="num">Активных нарушений</th></tr></thead>
+  <thead><tr><th>Ответственный</th><th class="num nowrap">Активных нарушений</th></tr></thead>
   <tbody>
     {% for r in by_responsible %}
-    <tr><td><a href="/rsk?responsible={{ r.id }}">{{ r.name }}</a></td><td class="num">{{ r.n }}</td></tr>
+    <tr><td><a href="/rsk?responsible={{ r.id }}">{{ r.name }}</a></td><td class="num nowrap">{{ r.n }}</td></tr>
     {% endfor %}
     {% if no_responsible %}
-    <tr><td class="empty-note">без ответственного</td><td class="num">{{ no_responsible }}</td></tr>
+    <tr><td class="empty-note">без ответственного</td><td class="num nowrap">{{ no_responsible }}</td></tr>
     {% endif %}
   </tbody>
 </table>

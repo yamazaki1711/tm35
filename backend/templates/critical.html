@@ -25,15 +25,15 @@
 <h3>Просроченные работы ({{ crit.overdue|length }})</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>Плановый срок</th><th>Просрочка, дн.</th><th>Статус</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Плановый срок</th><th class="nowrap">Просрочка, дн.</th><th class="nowrap">Статус</th></tr></thead>
   <tbody>
   {% for w in crit.overdue %}
   <tr>
-    <td><code>{{ w.code }}</code></td>
+    <td class="nowrap"><code>{{ w.code }}</code></td>
     <td class="wrap">{{ w.name }}</td>
-    <td>{{ w.plan_finish|dmy }}</td>
-    <td class="num"><span class="badge badge-bad">{{ w.lag_days }}</span></td>
-    <td>{{ w.status|ru_status }}</td>
+    <td class="nowrap">{{ w.plan_finish|dmy }}</td>
+    <td class="num nowrap"><span class="badge badge-bad">{{ w.lag_days }}</span></td>
+    <td class="nowrap">{{ w.status|ru_status }}</td>
   </tr>
   {% endfor %}
   </tbody>

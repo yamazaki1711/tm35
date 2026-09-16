@@ -43,17 +43,17 @@
   <p class="subtitle">Тепломагистраль-35, г. Хабаровск. Формируется автоматически из введённого факта на эту дату.</p>
 
   <table class="report-meta">
-    <tr><td><b>Дата</b></td><td>{{ date_label }}</td></tr>
+    <tr><td><b>Дата</b></td><td class="nowrap">{{ date_label }}</td></tr>
     <tr><td><b>Погода</b></td><td>{{ weather or '—' }}</td></tr>
   </table>
 
   <h2>Численность по участкам, чел.</h2>
   {% if by_location %}
   <div class="table-wrap"><table>
-  <thead><tr><th>Участок</th><th>План</th><th>Факт</th><th>Недобор</th><th>Избыток</th></tr></thead>
+  <thead><tr><th class="nowrap">Участок</th><th class="nowrap">План</th><th class="nowrap">Факт</th><th class="nowrap">Недобор</th><th class="nowrap">Избыток</th></tr></thead>
   <tbody>
   {% for r in by_location %}
-  <tr><td>{{ r.location }}</td><td>{{ r.planned or 0 }}</td><td>{{ r.actual or 0 }}</td><td>{{ r.deficit if r.deficit is not none else '—' }}</td><td>{{ r.surplus if r.surplus is not none else '—' }}</td></tr>
+  <tr><td class="nowrap">{{ r.location }}</td><td class="nowrap">{{ r.planned or 0 }}</td><td class="nowrap">{{ r.actual or 0 }}</td><td class="nowrap">{{ r.deficit if r.deficit is not none else '—' }}</td><td class="nowrap">{{ r.surplus if r.surplus is not none else '—' }}</td></tr>
   {% endfor %}
   </tbody>
   </table></div>
@@ -62,15 +62,15 @@
   <h2>Работы, которые велись ({{ works_today|length }})</h2>
   {% if works_today %}
   <div class="table-wrap"><table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>План, чел.</th><th>Факт, чел.</th><th>Объём за день</th><th>% нак.</th><th>Комментарий</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">План, чел.</th><th class="nowrap">Факт, чел.</th><th class="nowrap">Объём за день</th><th class="nowrap">% нак.</th><th>Комментарий</th></tr></thead>
   <tbody>
   {% for r in works_today %}
   <tr>
-    <td><code>{{ r.code }}</code></td><td class="wrap">{{ r.name }}</td>
-    <td>{{ r.planned_crew if r.planned_crew is not none else '—' }}</td>
-    <td>{{ r.actual_crew if r.actual_crew is not none else '—' }}</td>
-    <td>{{ r.done_volume if r.done_volume is not none else '—' }}{% if r.done_volume is not none and r.unit %} {{ r.unit }}{% endif %}</td>
-    <td>{{ r.fact_pct if r.fact_pct is not none else '—' }}</td>
+    <td class="nowrap"><code>{{ r.code }}</code></td><td class="wrap">{{ r.name }}</td>
+    <td class="nowrap">{{ r.planned_crew if r.planned_crew is not none else '—' }}</td>
+    <td class="nowrap">{{ r.actual_crew if r.actual_crew is not none else '—' }}</td>
+    <td class="nowrap">{{ r.done_volume if r.done_volume is not none else '—' }}{% if r.done_volume is not none and r.unit %} {{ r.unit }}{% endif %}</td>
+    <td class="nowrap">{{ r.fact_pct if r.fact_pct is not none else '—' }}</td>
     <td class="wrap">{{ r.comment|strip_source_marker or '' }}</td>
   </tr>
   {% endfor %}
@@ -81,12 +81,12 @@
   <h2>Не выполнено полностью ({{ not_done|length }})</h2>
   {% if not_done %}
   <div class="table-wrap"><table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>План</th><th>Факт</th><th>Причина</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">План</th><th class="nowrap">Факт</th><th>Причина</th></tr></thead>
   <tbody>
   {% for r in not_done %}
   <tr>
-    <td><code>{{ r.code }}</code></td><td class="wrap">{{ r.name }}</td>
-    <td>{{ r.planned_crew }}</td><td>{{ r.actual_crew if r.actual_crew is not none else 0 }}</td>
+    <td class="nowrap"><code>{{ r.code }}</code></td><td class="wrap">{{ r.name }}</td>
+    <td class="nowrap">{{ r.planned_crew }}</td><td class="nowrap">{{ r.actual_crew if r.actual_crew is not none else 0 }}</td>
     <td class="wrap">{% if r.reason_code %}{{ r.reason_code|ru_reason_code }}{% elif r.comment %}{{ r.comment|strip_source_marker }}{% else %}не указана{% endif %}</td>
   </tr>
   {% endfor %}

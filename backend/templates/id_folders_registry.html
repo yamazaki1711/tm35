@@ -56,25 +56,25 @@
 <table class="data-table">
   <thead>
     <tr>
-      <th>Номер папки</th>
-      <th>Дата формирования</th>
-      <th>Разделов</th>
-      <th>Стоимость, ₽</th>
+      <th class="nowrap">Номер папки</th>
+      <th class="nowrap">Дата формирования</th>
+      <th class="nowrap">Разделов</th>
+      <th class="nowrap">Стоимость, ₽</th>
       <th>Подписант реестра передачи</th>
-      <th>Дата передачи в СДО</th>
-      <th>Статус</th>
+      <th class="nowrap">Дата передачи в СДО</th>
+      <th class="nowrap">Статус</th>
     </tr>
   </thead>
   <tbody>
     {% for f in folders %}
     <tr>
-      <td><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
-      <td>{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
-      <td>{{ f.row_count }}</td>
-      <td>{{ (f.amount_sum or 0)|ru_money }}</td>
+      <td class="nowrap"><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
+      <td class="nowrap">{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
+      <td class="nowrap">{{ f.row_count }}</td>
+      <td class="nowrap">{{ (f.amount_sum or 0)|ru_money }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
-      <td>{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
-      <td>
+      <td class="nowrap">{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
+      <td class="nowrap">
         <span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span>
       </td>
     </tr>

@@ -6,10 +6,10 @@
 {% if flagged_works %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>Замечание</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th>Замечание</th></tr></thead>
   <tbody>
   {% for w in flagged_works %}
-  <tr><td><code>{{ w.code }}</code></td><td class="wrap">{{ w.name }}</td><td class="wrap">{{ w.data_quality_note or '—' }}</td></tr>
+  <tr><td class="nowrap"><code>{{ w.code }}</code></td><td class="wrap">{{ w.name }}</td><td class="wrap">{{ w.data_quality_note or '—' }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -22,10 +22,10 @@
 {% if flagged_daily %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Дата</th><th>Шифр</th><th>Замечание</th></tr></thead>
+  <thead><tr><th class="nowrap">Дата</th><th class="nowrap">Шифр</th><th>Замечание</th></tr></thead>
   <tbody>
   {% for r in flagged_daily %}
-  <tr><td>{{ r.date|dmy }}</td><td><code>{{ r.code }}</code></td><td class="wrap">{{ r.data_quality_note or '—' }}</td></tr>
+  <tr><td class="nowrap">{{ r.date|dmy }}</td><td class="nowrap"><code>{{ r.code }}</code></td><td class="wrap">{{ r.data_quality_note or '—' }}</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -38,13 +38,13 @@
 {% if unresolved %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Лист</th><th>Ячейка</th><th>Шифр работы</th><th>Тип проблемы</th><th>Сырые данные</th><th>Статус</th></tr></thead>
+  <thead><tr><th class="nowrap">Лист</th><th class="nowrap">Ячейка</th><th class="nowrap">Шифр работы</th><th>Тип проблемы</th><th class="wrap">Сырые данные</th><th class="nowrap">Статус</th></tr></thead>
   <tbody>
   {% for u in unresolved %}
   <tr>
-    <td>{{ u.sheet }}</td><td><code>{{ u.cell_ref }}</code></td><td>{{ u.work_code or '—' }}</td>
+    <td class="nowrap">{{ u.sheet }}</td><td class="nowrap"><code>{{ u.cell_ref }}</code></td><td class="nowrap">{{ u.work_code or '—' }}</td>
     <td>{{ u.issue_type }}</td><td class="wrap"><code>{{ u.raw_payload }}</code></td>
-    <td><span class="badge {{ 'badge-ok' if u.resolved else 'badge-warn' }}">{{ 'решено' if u.resolved else 'открыто' }}</span></td>
+    <td class="nowrap"><span class="badge {{ 'badge-ok' if u.resolved else 'badge-warn' }}">{{ 'решено' if u.resolved else 'открыто' }}</span></td>
   </tr>
   {% endfor %}
   </tbody>

@@ -6,16 +6,16 @@
 <h3>Дней с данными: {{ rows|length }}</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Дата</th><th class="num">План, чел.</th><th class="num">Факт, чел.</th><th class="num">Дефицит</th><th class="num">Избыток</th><th class="num">Работ с фактом</th></tr></thead>
+  <thead><tr><th class="nowrap">Дата</th><th class="num nowrap">План, чел.</th><th class="num nowrap">Факт, чел.</th><th class="num nowrap">Дефицит</th><th class="num nowrap">Избыток</th><th class="num nowrap">Работ с фактом</th></tr></thead>
   <tbody>
   {% for r in rows|reverse %}
   <tr>
-    <td>{{ r.date|dmy }}</td>
-    <td class="num">{{ r.planned or 0 }}</td>
-    <td class="num">{{ r.actual or 0 }}</td>
-    <td class="num">{% if r.deficit is not none %}<span class="badge badge-warn">{{ r.deficit }}</span>{% else %}—{% endif %}</td>
-    <td class="num">{% if r.surplus is not none %}<span class="badge badge-ok">{{ r.surplus }}</span>{% else %}—{% endif %}</td>
-    <td class="num">{{ r.works_with_fact }}</td>
+    <td class="nowrap">{{ r.date|dmy }}</td>
+    <td class="num nowrap">{{ r.planned or 0 }}</td>
+    <td class="num nowrap">{{ r.actual or 0 }}</td>
+    <td class="num nowrap">{% if r.deficit is not none %}<span class="badge badge-warn">{{ r.deficit }}</span>{% else %}—{% endif %}</td>
+    <td class="num nowrap">{% if r.surplus is not none %}<span class="badge badge-ok">{{ r.surplus }}</span>{% else %}—{% endif %}</td>
+    <td class="num nowrap">{{ r.works_with_fact }}</td>
   </tr>
   {% endfor %}
   </tbody>

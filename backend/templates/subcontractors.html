@@ -58,14 +58,14 @@
 {% if registry_rows %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Организация</th><th>Вид работ</th><th>Договор</th><th>Мобилизация</th><th class="num">Бригада</th><th>Начало план</th><th>Начало факт</th></tr></thead>
+  <thead><tr><th>Организация</th><th>Вид работ</th><th class="nowrap">Договор</th><th class="nowrap">Мобилизация</th><th class="num nowrap">Бригада</th><th class="nowrap">Начало план</th><th class="nowrap">Начало факт</th></tr></thead>
   <tbody>
   {% for r in registry_rows %}
   <tr>
-    <td class="wrap">{{ r.name }}</td><td>{{ r.work_type or '—' }}</td><td>{{ r.contract_status or '—' }}</td>
-    <td>{{ r.mobilization_status or '—' }}</td><td class="num">{{ r.crew_size if r.crew_size is not none else '—' }}</td>
-    <td>{{ r.expected_start_date|dmy if r.expected_start_date else '—' }}</td>
-    <td>{{ r.actual_start_date|dmy if r.actual_start_date else '—' }}</td>
+    <td class="wrap">{{ r.name }}</td><td>{{ r.work_type or '—' }}</td><td class="nowrap">{{ r.contract_status or '—' }}</td>
+    <td class="nowrap">{{ r.mobilization_status or '—' }}</td><td class="num nowrap">{{ r.crew_size if r.crew_size is not none else '—' }}</td>
+    <td class="nowrap">{{ r.expected_start_date|dmy if r.expected_start_date else '—' }}</td>
+    <td class="nowrap">{{ r.actual_start_date|dmy if r.actual_start_date else '—' }}</td>
   </tr>
   {% endfor %}
   </tbody>
@@ -80,13 +80,13 @@
 {% if proxy_rows %}
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Комментарий</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Участок</th><th>Комментарий</th></tr></thead>
   <tbody>
   {% for w in proxy_rows %}
   <tr>
-    <td><code>{{ w.code }}</code></td>
+    <td class="nowrap"><code>{{ w.code }}</code></td>
     <td class="wrap">{{ w.name }}</td>
-    <td>{{ w.location or '—' }}</td>
+    <td class="nowrap">{{ w.location or '—' }}</td>
     <td class="wrap">{{ w.comment|strip_source_marker if w.comment else '—' }}</td>
   </tr>
   {% endfor %}

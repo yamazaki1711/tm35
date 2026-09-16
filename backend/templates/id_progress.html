@@ -176,14 +176,14 @@
           if (data.error) { container.innerHTML = '<div class="empty-note">' + esc(data.error) + '</div>'; return; }
           var rows = data.work_types.map(function (wt) {
             var cls = wt.color ? 'id-matrix-' + wt.color : '';
-            return '<tr><td>' + esc(data.label) + '</td><td>' + esc(wt.work_type_name) + '</td>' +
-                   '<td class="id-matrix-cell ' + cls + '">' + esc(wt.status_label) + '</td>' +
+            return '<tr><td class="nowrap">' + esc(data.label) + '</td><td>' + esc(wt.work_type_name) + '</td>' +
+                   '<td class="id-matrix-cell nowrap ' + cls + '">' + esc(wt.status_label) + '</td>' +
                    '<td class="nowrap">' + esc(wt.status_date || '—') + '</td></tr>';
           }).join('');
           container.innerHTML =
             '<h3>' + esc(data.tab_label) + ' — ' + esc(data.label) + '</h3>' +
             '<div class="table-wrap"><table class="data-table">' +
-            '<thead><tr><th>Раздел</th><th>Вид работ</th><th>Статус</th><th>Дата статуса</th></tr></thead>' +
+            '<thead><tr><th class="nowrap">Раздел</th><th>Вид работ</th><th class="nowrap">Статус</th><th class="nowrap">Дата статуса</th></tr></thead>' +
             '<tbody>' + (rows || '<tr><td colspan="4" class="empty-note">Видов работ не найдено.</td></tr>') + '</tbody>' +
             '</table></div>';
           container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

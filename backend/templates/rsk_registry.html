@@ -92,12 +92,12 @@
 <table class="data-table">
   <thead>
     <tr>
-      <th>№</th>
+      <th class="nowrap">№</th>
       <th>Суть нарушения</th>
-      <th>Статус</th>
-      <th>Физика</th>
-      <th>Проект</th>
-      <th>ИД</th>
+      <th class="nowrap">Статус</th>
+      <th class="nowrap">Физика</th>
+      <th class="nowrap">Проект</th>
+      <th class="nowrap">ИД</th>
       <th class="nowrap">Проверка</th>
       <th class="nowrap">Срок</th>
       <th class="nowrap">Устранено</th>
@@ -107,14 +107,14 @@
   <tbody>
     {% for r in rows %}
     <tr class="{{ 'rsk-row-closed' if not r.is_active }}">
-      <td class="mono"><a href="/rsk/violation/{{ r.sys_no }}">{{ r.sys_no }}</a>{% if r.is_repeat %} <span class="status-missing-badge" title="Повторно">п</span>{% endif %}</td>
+      <td class="mono nowrap"><a href="/rsk/violation/{{ r.sys_no }}">{{ r.sys_no }}</a>{% if r.is_repeat %} <span class="status-missing-badge" title="Повторно">п</span>{% endif %}</td>
       <td class="rsk-content-cell" onclick="this.classList.toggle('expanded')" data-full="{{ r.content or '' }}">
         <span class="rsk-clamp">{{ r.content }}</span>
       </td>
-      <td><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
-      <td>{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
-      <td>{{ ru_track.get(r.track_design, r.track_design) }}</td>
-      <td>{{ ru_track.get(r.track_id, r.track_id) }}</td>
+      <td class="nowrap"><span class="badge {{ status_badge.get(r.status_key, 'badge-neutral') }}">{{ ru_status.get(r.status_key, r.status_key) }}</span></td>
+      <td class="nowrap">{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
+      <td class="nowrap">{{ ru_track.get(r.track_design, r.track_design) }}</td>
+      <td class="nowrap">{{ ru_track.get(r.track_id, r.track_id) }}</td>
       <td class="nowrap">{{ r.act_date|fmt_dmy if r.act_date else '—' }}</td>
       <td class="nowrap">{{ r.due_date|fmt_dmy if r.due_date else '—' }}</td>
       <td class="nowrap">{{ r.closed_act_date|fmt_dmy if r.closed_act_date else '—' }}</td>

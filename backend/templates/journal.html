@@ -26,16 +26,16 @@
 <h2>Журнал входов ({{ logins|length }})</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Когда</th><th>Логин</th><th>Кто</th><th>Успех</th><th>Причина отказа</th><th>IP</th></tr></thead>
+  <thead><tr><th class="nowrap">Когда</th><th class="nowrap">Логин</th><th>Кто</th><th class="nowrap">Успех</th><th>Причина отказа</th><th class="nowrap">IP</th></tr></thead>
   <tbody>
   {% for l in logins %}
   <tr>
     <td class="nowrap">{{ l.created_at|dmy }}</td>
-    <td>{{ l.login_attempted }}</td>
+    <td class="nowrap">{{ l.login_attempted }}</td>
     <td>{{ l.full_name or '—' }}</td>
-    <td>{% if l.success %}<span class="row-status st-filled">успех</span>{% else %}<span class="row-status st-error">отказ</span>{% endif %}</td>
+    <td class="nowrap">{% if l.success %}<span class="row-status st-filled">успех</span>{% else %}<span class="row-status st-error">отказ</span>{% endif %}</td>
     <td>{{ l.reason or '' }}</td>
-    <td>{{ l.ip or '—' }}</td>
+    <td class="nowrap">{{ l.ip or '—' }}</td>
   </tr>
   {% else %}
   <tr><td colspan="6" class="empty-note">Записей нет.</td></tr>
@@ -47,15 +47,15 @@
 <h2>Журнал действий ({{ actions|length }})</h2>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Когда</th><th>Кто</th><th>Сущность</th><th>№</th><th>Действие</th><th>Причина/форма</th></tr></thead>
+  <thead><tr><th class="nowrap">Когда</th><th>Кто</th><th class="nowrap">Сущность</th><th class="nowrap">№</th><th class="nowrap">Действие</th><th>Причина/форма</th></tr></thead>
   <tbody>
   {% for a in actions %}
   <tr>
     <td class="nowrap">{{ a.created_at|dmy }}</td>
     <td>{{ a.full_name or 'Веб-форма ТМ-35 (общий вход)' }}</td>
-    <td>{{ a.entity_type | ru_entity_type }}</td>
-    <td>{{ a.entity_id }}</td>
-    <td>{{ a.action }}</td>
+    <td class="nowrap">{{ a.entity_type | ru_entity_type }}</td>
+    <td class="nowrap">{{ a.entity_id }}</td>
+    <td class="nowrap">{{ a.action }}</td>
     <td class="wrap">{{ a.reason or '' }}</td>
   </tr>
   {% else %}

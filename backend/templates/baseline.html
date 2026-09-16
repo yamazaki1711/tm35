@@ -58,19 +58,19 @@
 <h3>Все работы ({{ rows|length }})</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Шифр</th><th>Наименование</th><th>Начало</th><th>Окончание</th><th>Численность</th>
-  <th>Уверенность</th><th>Источник</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Начало</th><th class="nowrap">Окончание</th><th class="nowrap">Численность</th>
+  <th class="nowrap">Уверенность</th><th class="nowrap">Источник</th><th class="nowrap"></th></tr></thead>
   <tbody>
   {% for r in rows %}
   <tr>
-    <td><code>{{ r.code }}</code></td>
+    <td class="nowrap"><code>{{ r.code }}</code></td>
     <td class="wrap">{{ r.name }}</td>
-    <td>{{ r.plan_start|dmy }}</td>
-    <td>{{ r.plan_finish|dmy }}</td>
-    <td>{{ r.plan_crew if r.plan_crew is not none else '—' }}</td>
-    <td>{% if r.confidence %}<span class="badge {{ 'badge-ok' if r.confidence in ('high','medium') else 'badge-neutral' }}">{{ r.confidence|ru_confidence }}</span>{% else %}—{% endif %}</td>
-    <td>{{ r.baseline_source|ru_baseline_source if r.baseline_source else '—' }}</td>
-    <td>{% if r.id %}<a href="/baseline?edit_id={{ r.id }}">править</a>{% else %}<a href="/baseline?work_id={{ r.work_pk }}">добавить</a>{% endif %}</td>
+    <td class="nowrap">{{ r.plan_start|dmy }}</td>
+    <td class="nowrap">{{ r.plan_finish|dmy }}</td>
+    <td class="nowrap">{{ r.plan_crew if r.plan_crew is not none else '—' }}</td>
+    <td class="nowrap">{% if r.confidence %}<span class="badge {{ 'badge-ok' if r.confidence in ('high','medium') else 'badge-neutral' }}">{{ r.confidence|ru_confidence }}</span>{% else %}—{% endif %}</td>
+    <td class="nowrap">{{ r.baseline_source|ru_baseline_source if r.baseline_source else '—' }}</td>
+    <td class="nowrap">{% if r.id %}<a href="/baseline?edit_id={{ r.id }}">править</a>{% else %}<a href="/baseline?work_id={{ r.work_pk }}">добавить</a>{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>

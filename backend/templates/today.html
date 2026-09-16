@@ -8,13 +8,13 @@
 {% if lookahead %}
 <div class="table-wrap">
 <table>
-<tr><th>Шифр</th><th>Наименование</th><th>Участок</th><th>Начало по плану</th><th>Что мешает начать</th></tr>
+<tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Участок</th><th class="nowrap">Начало по плану</th><th>Что мешает начать</th></tr>
 {% for w in lookahead %}
 <tr>
-  <td><code>{{ w.code }}</code></td>
+  <td class="nowrap"><code>{{ w.code }}</code></td>
   <td class="wrap">{{ w.name }}</td>
-  <td>{{ w.location or '—' }}</td>
-  <td>{{ w.plan_start|dmy }}</td>
+  <td class="nowrap">{{ w.location or '—' }}</td>
+  <td class="nowrap">{{ w.plan_start|dmy }}</td>
   <td class="wrap">
     {% if w.obstacles %}
       {% for o in w.obstacles %}<span class="badge badge-warn">{{ o }}</span> {% endfor %}
@@ -34,14 +34,14 @@
 {% if critical %}
 <div class="table-wrap">
 <table>
-<tr><th>Шифр</th><th>Наименование</th><th>Плановый срок</th><th>Причины</th><th>Добавить людей</th></tr>
+<tr><th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Плановый срок</th><th>Причины</th><th class="nowrap">Добавить людей</th></tr>
 {% for w in critical %}
 <tr>
-  <td><code>{{ w.code }}</code></td>
+  <td class="nowrap"><code>{{ w.code }}</code></td>
   <td class="wrap">{{ w.name }}</td>
-  <td>{{ w.plan_finish|dmy }}</td>
+  <td class="nowrap">{{ w.plan_finish|dmy }}</td>
   <td class="wrap">{% for r in w.reasons %}<span class="badge badge-bad">{{ r }}</span> {% endfor %}</td>
-  <td>{{ w.additional_people if w.additional_people is not none else '—' }}</td>
+  <td class="nowrap">{{ w.additional_people if w.additional_people is not none else '—' }}</td>
 </tr>
 {% endfor %}
 </table>
@@ -54,13 +54,13 @@
 {% if open_blockers %}
 <div class="table-wrap">
 <table>
-<tr><th>Тип</th><th>Описание</th><th>Возникло</th><th>Снять до / ответственный</th><th></th></tr>
+<tr><th class="nowrap">Тип</th><th>Описание</th><th class="nowrap">Возникло</th><th class="nowrap">Снять до / ответственный</th><th class="nowrap"></th></tr>
 {% for b in open_blockers %}
 <tr>
-  <td>{{ b.blocker_type|ru_blocker_type }}</td>
+  <td class="nowrap">{{ b.blocker_type|ru_blocker_type }}</td>
   <td class="wrap">{{ b.description|strip_source_marker }}</td>
-  <td>{{ b.created_at|dmy }}</td>
-  <td>
+  <td class="nowrap">{{ b.created_at|dmy }}</td>
+  <td class="nowrap">
     <form class="inline-edit" method="post" action="/api/blocker/{{ b.id }}">
       <span class="dm-picker" data-dm-picker>
         <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
@@ -72,7 +72,7 @@
       <button type="submit">Сохранить</button>
     </form>
   </td>
-  <td>
+  <td class="nowrap">
     <form method="post" action="/api/blocker/{{ b.id }}">
       <input type="hidden" name="resolve" value="1">
       <button type="submit" class="btn-ok">Снято</button>

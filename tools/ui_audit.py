@@ -4,64 +4,107 @@
 экранам, повторяемая (прогонять после КАЖДОЙ правки интерфейса, до
 отчёта о выполнении — координатор, 20.08.2026).
 
-Две категории проверок:
-1. Запрещённые строки (tools/forbidden_strings.py — единый список).
-   Сканируется НЕ только видимый текст (innerText), но и:
-   - содержимое свёрнутых блоков/модальных окон (через textContent,
-     который в отличие от innerText не зависит от display:none);
-   - текст внутри SVG (<text>, <title>, <desc>) — легенды и подписи
-     диаграмм строятся в JS, не в шаблонах, и обычный просмотр HTML их
-     не видит;
-   - атрибуты title/aria-label (всплывающие подсказки).
-   Скрипт завершается с ненулевым кодом, если найдено хоть одно
-   нарушение — этого достаточно, чтобы не отчитываться "исправлено" по
-   ошибке.
-2. Остальное — размеры шрифта, высота строк таблиц, ширина контейнера,
-   горизонтальная прокрутка. Не приводит к ненулевому коду (это
-   вспомогательные находки, часть визуальной приёмки), но печатается.
+ТЗ координатора 16.09.2026 ("текст, который не помещается, переносится,
+а не обрезается — сделать это проверяемым"): до этой правки скрипт был
+написан и НИ РАЗУ не задеплоен (`docs/PROD_SYNC_2026-09-15.md`, §3) —
+список страниц был жёстко зашит (`PAGES`), проверки шрифта/прокрутки
+только печатались, не проваливали прогон. Теперь:
 
-Использование:
+1. Список маршрутов берётся из СОБСТВЕННОЙ таблицы роутинга приложения
+   (`app.routes`) — новая страница появляется в проверке в день своего
+   появления, без правки этого файла. Берутся только GET-маршруты без
+   параметров пути (`{id}` и т.п. — их не с чем подставить вслепую) и не
+   являющиеся `/api/`, `/static/`, `/export/`. Маршрут, которому для
+   осмысленного ответа всё равно нужен обязательный query-параметр,
+   вернёт не-200 — это печатается как "пропущен", не проваливает прогон
+   (проверять его — отдельная страница с реальным id, вне этого прохода).
+
+2. Запрещённые строки (tools/forbidden_strings.py — единый список),
+   как и раньше — сканируется НЕ только видимый текст (innerText), но и
+   содержимое свёрнутых блоков/модалок, текст внутри SVG, атрибуты
+   title/aria-label. Ненулевой код при любом нарушении.
+
+3. Новое — четыре измеримых дефекта из ТЗ 16.09.2026, ТЕПЕРЬ ПРОВАЛИВАЮТ
+   прогон (ненулевой код), не просто печатаются:
+   - горизонтальная прокрутка ВСЕЙ страницы (document.scrollWidth >
+     clientWidth) — собственная прокрутка `.table-wrap`/`.id-matrix-wrap`
+     внутри контейнера сюда не попадает, это разные вещи: контейнер
+     держит своё содержимое в себе, страница вокруг не двигается;
+   - любой видимый текст мельче 14px;
+   - любой элемент, чья правая граница выходит за правый край viewport —
+     кроме элементов ВНУТРИ контейнера с собственным overflow-x
+     (auto/scroll) — тот контейнер (сетка ИД, /gantt, /shift) обязан
+     прокручиваться сам, это его законная работа, не дефект;
+   - любая ячейка таблицы, где scrollWidth > clientWidth (обрезанный,
+     невидимый остаток текста) — тот же вынос за контейнер со
+     собственной прокруткой не считается (там clip — Gantt, `.col-name`,
+     единственное задокументированное исключение с явным многоточием,
+     не молчаливая обрезка).
+
+   Высота строки/ширина контейнера ("main ~90% окна") остаются
+   информационными находками — не о переносе текста, не в периметре ТЗ
+   16.09.2026, ненулевой код не дают.
+
+Использование (внутри контейнера tm_backend):
     python3 tools/ui_audit.py [--base-url URL] [--out DIR] [--no-shots] [--only /a,/b]
 
-Требует переменные окружения TM_BASIC_AUTH_USER/TM_BASIC_AUTH_PASSWORD
-(см. .secrets/tm_basic_auth.env) и playwright с установленным Chrome.
+Базовый URL по умолчанию — сам контейнер (http://localhost:8000), без
+внешнего DNS/TLS и без Basic Auth: тот был снят со всего сайта
+29.08.2026 (docs/AUTH_2026-08-29.md) — TM_BASIC_AUTH_USER/PASSWORD
+поддержаны для обратной совместимости (если когда-нибудь понадобятся
+снова), но не обязательны.
+
+Требует playwright с установленным Chrome — на 16.09.2026 подтверждено
+установленным в контейнере (`p.chromium.launch(channel="chrome")`
+и bundled chromium оба живые), устанавливать заново не пришлось.
 """
 import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, "/app")
 from forbidden_strings import scan as scan_forbidden  # noqa: E402
 
-PAGES = [
-    ("/", "Простой ввод факта"),
-    ("/status", "Успеваем?"),
-    ("/today", "Сегодня"),
-    ("/report", "Рапорт"),
-    ("/losses", "Почему отстаём"),
-    ("/data", "Данные (хаб)"),
-    ("/dashboard", "Данные → Главная (метрики)"),
-    ("/critical", "Данные → Критичные работы"),
-    ("/works", "Данные → Реестр работ"),
-    ("/resources", "Данные → Ресурсы"),
-    ("/downtime", "Данные → Простои"),
-    ("/subcontractors", "Данные → Субподрядчики"),
-    ("/materials", "Данные → Материалы и поставки"),
-    ("/blockers", "Данные → Ограничения"),
-    ("/daily-report", "Данные → Ежедневная сводка"),
-    ("/executor", "Данные → Обоснование Исполнителя"),
-    ("/quality", "Данные → Качество данных"),
-    ("/form", "Данные → Ввод факта (форма)"),
-    ("/gantt", "Данные → Интерактивный график"),
-    ("/norms", "Данные → Справочник норм"),
-    ("/norm-plan", "Данные → Плановый график"),
-]
-
 VIEWPORTS = [(1920, 1080), (1366, 768), (2560, 1440)]
+
+# Маршруты, которые технически GET без параметров пути, но не страницы
+# для человека (экспорт файлов, служебные "прочитать и уйти") — шумели
+# бы в прогоне без пользы. Явный, короткий список причин, не эвристика.
+SKIP_PREFIXES = ("/api/", "/static/", "/export/")
+SKIP_EXACT = {"/healthz", "/health"}
+
+
+def discover_routes():
+    """Список маршрутов — из app.routes (FastAPI), не из ручного списка.
+    Только GET, только без {param} в пути (их не с чем подставить вслепую
+    в общем прогоне — раздельные экраны с реальным id проверяются точечно,
+    не этим проходом)."""
+    import main as m
+
+    routes = []
+    seen = set()
+    for r in m.app.routes:
+        path = getattr(r, "path", None)
+        methods = getattr(r, "methods", None)
+        if not path or not methods or "GET" not in methods:
+            continue
+        if "{" in path:
+            continue
+        if path in SKIP_EXACT or any(path.startswith(p) for p in SKIP_PREFIXES):
+            continue
+        if path in seen:
+            continue
+        seen.add(path)
+        routes.append(path)
+    routes.sort()
+    return routes
+
 
 # Раскрывающиеся элементы, которые нужно принудительно открыть перед
 # сканированием (иначе их содержимое не появится в DOM/останется
@@ -75,6 +118,25 @@ EXPAND_JS = """
     el.style.display = '';
   });
   document.querySelectorAll('.modal-overlay').forEach(el => el.classList.add('open'));
+}
+"""
+
+# Общий JS-хелпер: элемент лежит внутри контейнера с собственной
+# горизонтальной прокруткой (overflow-x: auto/scroll)? Такие контейнеры
+# (сетка ИД `.id-matrix-wrap`, `/gantt` `#gantt-scroll`, `/shift`
+# `.table-wrap` с table-layout:fixed) обязаны прокручиваться сами —
+# единственное разрешённое место, где что-то "выходит за край" законно.
+IN_SCROLL_CONTAINER_JS = """
+function inScrollContainer(el) {
+  let node = el.parentElement;
+  while (node && node !== document.body) {
+    const cs = getComputedStyle(node);
+    if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 1) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
 }
 """
 
@@ -112,6 +174,7 @@ def collect_text_and_forbidden(page):
 def audit_page(page):
     issues = collect_text_and_forbidden(page)
 
+    # --- ТЗ 16.09.2026, дефект 1: любой видимый текст мельче 14px ---
     small_font = page.evaluate(
         """
         () => {
@@ -121,8 +184,9 @@ def audit_page(page):
             const txt = (el.textContent || '').trim();
             if (!txt) return;
             const cs = getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none') return;
             const size = parseFloat(cs.fontSize);
-            if (size < 14 && bad.length < 20) {
+            if (size < 14 && bad.length < 30) {
               bad.push({tag: el.tagName, cls: String(el.className), text: txt.slice(0, 40), size});
             }
           });
@@ -134,8 +198,98 @@ def audit_page(page):
         issues.append({
             "type": "small_font", "label": f"шрифт {b['size']}px < 14px",
             "match": b["text"], "context": f"<{b['tag']} class=\"{b['cls']}\">",
+            "fatal": True,
         })
 
+    # --- ТЗ 16.09.2026, дефект 2: горизонтальная прокрутка ВСЕЙ страницы ---
+    layout = page.evaluate(
+        """
+        () => {
+          const main = document.querySelector('main');
+          const r = main ? main.getBoundingClientRect() : null;
+          return {
+            winWidth: window.innerWidth,
+            mainWidth: r ? r.width : null,
+            leftMargin: r ? r.left : null,
+            rightMargin: r ? (window.innerWidth - r.right) : null,
+            docScrollWidth: document.documentElement.scrollWidth,
+            docClientWidth: document.documentElement.clientWidth,
+          };
+        }
+        """
+    )
+    if layout["docScrollWidth"] > layout["docClientWidth"] + 2:
+        issues.append({
+            "type": "horizontal_scroll", "label": "горизонтальная прокрутка страницы", "fatal": True,
+            "match": f"scrollWidth={layout['docScrollWidth']} clientWidth={layout['docClientWidth']}", "context": "",
+        })
+    if layout["mainWidth"] is not None:
+        pct = layout["mainWidth"] / layout["winWidth"] * 100
+        if not (85 <= pct <= 95):
+            issues.append({
+                "type": "container_width", "label": f"main={pct:.1f}% окна (ожидалось ~90%)",
+                "match": f"{layout['mainWidth']:.0f}px из {layout['winWidth']}px",
+                "context": f"left={layout['leftMargin']:.0f}px right={layout['rightMargin']:.0f}px",
+            })
+        elif abs(layout["leftMargin"] - layout["rightMargin"]) > 4:
+            issues.append({
+                "type": "container_asymmetric", "label": "отступы слева/справа не равны",
+                "match": f"left={layout['leftMargin']:.0f}px right={layout['rightMargin']:.0f}px", "context": "",
+            })
+
+    # --- ТЗ 16.09.2026, дефект 3: элемент выходит за правый край viewport ---
+    off_viewport = page.evaluate(
+        IN_SCROLL_CONTAINER_JS + """
+        () => {
+          const bad = [];
+          const vw = document.documentElement.clientWidth;
+          document.querySelectorAll('body *').forEach(el => {
+            if (bad.length >= 20) return;
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden') return;
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0) return;
+            if (r.right > vw + 2 && !inScrollContainer(el)) {
+              bad.push({tag: el.tagName, cls: String(el.className), right: Math.round(r.right),
+                        text: (el.textContent || '').trim().slice(0, 40)});
+            }
+          });
+          return bad;
+        }
+        """
+    )
+    for o in off_viewport:
+        issues.append({
+            "type": "off_viewport", "label": f"правый край за viewport ({o['right']}px)", "fatal": True,
+            "match": o["text"], "context": f"<{o['tag']} class=\"{o['cls']}\">",
+        })
+
+    # --- ТЗ 16.09.2026, дефект 4: обрезанная (невидимая) ячейка таблицы ---
+    clipped_cells = page.evaluate(
+        IN_SCROLL_CONTAINER_JS + """
+        () => {
+          const bad = [];
+          document.querySelectorAll('td, th').forEach(el => {
+            if (bad.length >= 20) return;
+            const cs = getComputedStyle(el);
+            if (cs.textOverflow === 'ellipsis') return;  // явный, видимый клип — не молчаливая обрезка
+            if (el.scrollWidth > el.clientWidth + 1 && !inScrollContainer(el)) {
+              bad.push({tag: el.tagName, cls: String(el.className),
+                        text: (el.textContent || '').trim().slice(0, 40),
+                        scrollWidth: el.scrollWidth, clientWidth: el.clientWidth});
+            }
+          });
+          return bad;
+        }
+        """
+    )
+    for c in clipped_cells:
+        issues.append({
+            "type": "clipped_cell", "label": f"обрезана: scrollWidth={c['scrollWidth']} > clientWidth={c['clientWidth']}",
+            "match": c["text"], "context": f"<{c['tag']} class=\"{c['cls']}\">", "fatal": True,
+        })
+
+    # --- Информационная находка (не дефект переноса, не проваливает прогон) ---
     short_rows = page.evaluate(
         """
         () => {
@@ -157,47 +311,13 @@ def audit_page(page):
             "match": r["text"], "context": f"таблица #{r['table']}, строка #{r['row']}",
         })
 
-    layout = page.evaluate(
-        """
-        () => {
-          const main = document.querySelector('main');
-          if (!main) return null;
-          const r = main.getBoundingClientRect();
-          return {
-            winWidth: window.innerWidth, mainWidth: r.width,
-            leftMargin: r.left, rightMargin: window.innerWidth - r.right,
-            docScrollWidth: document.documentElement.scrollWidth,
-            docClientWidth: document.documentElement.clientWidth,
-          };
-        }
-        """
-    )
-    if layout:
-        pct = layout["mainWidth"] / layout["winWidth"] * 100
-        if not (85 <= pct <= 95):
-            issues.append({
-                "type": "container_width", "label": f"main={pct:.1f}% окна (ожидалось ~90%)",
-                "match": f"{layout['mainWidth']:.0f}px из {layout['winWidth']}px",
-                "context": f"left={layout['leftMargin']:.0f}px right={layout['rightMargin']:.0f}px",
-            })
-        elif abs(layout["leftMargin"] - layout["rightMargin"]) > 4:
-            issues.append({
-                "type": "container_asymmetric", "label": "отступы слева/справа не равны",
-                "match": f"left={layout['leftMargin']:.0f}px right={layout['rightMargin']:.0f}px", "context": "",
-            })
-        if layout["docScrollWidth"] > layout["docClientWidth"] + 2:
-            issues.append({
-                "type": "horizontal_scroll", "label": "горизонтальная прокрутка страницы",
-                "match": f"scrollWidth={layout['docScrollWidth']} clientWidth={layout['docClientWidth']}", "context": "",
-            })
-
     return issues
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base-url", default="https://tm.asd-kontur.ru")
-    ap.add_argument("--out", default="/tmp/claude-1000/-home-oleg/227be90a-e982-4f69-bfe3-129615d5f18e/scratchpad/ui_audit/after")
+    ap.add_argument("--base-url", default="http://localhost:8000")
+    ap.add_argument("--out", default=f"/tmp/ui_audit_{int(time.time())}")
     ap.add_argument("--no-shots", action="store_true")
     ap.add_argument("--only", default=None)
     args = ap.parse_args()
@@ -213,30 +333,38 @@ def main():
                     os.environ.setdefault(k.strip(), v.strip())
             user = os.environ.get("TM_BASIC_AUTH_USER")
             pw = os.environ.get("TM_BASIC_AUTH_PASSWORD")
-    if not user or not pw:
-        print("Нет учётных данных Basic Auth (TM_BASIC_AUTH_USER/PASSWORD)", file=sys.stderr)
-        sys.exit(2)
+    # Basic auth снят со всего сайта 29.08.2026 (docs/AUTH_2026-08-29.md) —
+    # креды поддержаны для обратной совместимости, но не обязательны.
+
+    routes = discover_routes()
+    if args.only:
+        wanted = set(args.only.split(","))
+        routes = [p for p in routes if p in wanted]
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pages = PAGES
-    if args.only:
-        wanted = set(args.only.split(","))
-        pages = [p for p in PAGES if p[0] in wanted]
-
     report = {}
+    skipped = []
     forbidden_total = 0
+    fatal_total = 0
     with sync_playwright() as p:
         browser = p.chromium.launch(channel="chrome")
-        context = browser.new_context(http_credentials={"username": user, "password": pw})
+        context_kwargs = {}
+        if user and pw:
+            context_kwargs["http_credentials"] = {"username": user, "password": pw}
+        context = browser.new_context(**context_kwargs)
         page = context.new_page()
 
-        for path, title in pages:
-            report[path] = {"title": title, "by_viewport": {}}
+        for path in routes:
+            report[path] = {"by_viewport": {}}
             for w, h in VIEWPORTS:
                 page.set_viewport_size({"width": w, "height": h})
-                page.goto(args.base_url + path, wait_until="networkidle", timeout=30000)
+                resp = page.goto(args.base_url + path, wait_until="networkidle", timeout=30000)
+                if resp is not None and resp.status != 200:
+                    skipped.append((path, w, h, resp.status))
+                    print(f"{path:30s} {w}x{h:<6d} — пропущен, HTTP {resp.status} (нужен параметр запроса?)")
+                    continue
                 page.wait_for_timeout(400)
                 try:
                     page.evaluate(EXPAND_JS)
@@ -245,29 +373,35 @@ def main():
                 page.wait_for_timeout(150)
                 issues = audit_page(page)
                 report[path]["by_viewport"][f"{w}x{h}"] = issues
-                forbidden_total += sum(1 for i in issues if i["type"] == "forbidden_text")
+                n_forbidden = sum(1 for i in issues if i["type"] == "forbidden_text")
+                n_fatal = sum(1 for i in issues if i.get("fatal"))
+                forbidden_total += n_forbidden
+                fatal_total += n_fatal
                 if not args.no_shots:
                     fname = f"{path.strip('/').replace('/', '_') or 'home'}__{w}x{h}.png"
                     page.screenshot(path=str(out_dir / fname), full_page=True)
-                n_forbidden = sum(1 for i in issues if i["type"] == "forbidden_text")
-                print(f"{path:20s} {w}x{h:<6d} — {len(issues)} находок (запрещённых строк: {n_forbidden})")
+                print(f"{path:30s} {w}x{h:<6d} — {len(issues)} находок "
+                      f"(запрещённых строк: {n_forbidden}, провальных: {n_fatal})")
 
         browser.close()
 
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     total = sum(len(v) for r in report.values() for v in r["by_viewport"].values())
-    print(f"\nВсего находок: {total}. Из них запрещённых строк: {forbidden_total}. Отчёт: {out_dir / 'report.json'}")
+    print(f"\nМаршрутов проверено: {len(routes)}, пропущено (не 200): {len(skipped)}.")
+    print(f"Всего находок: {total}. Провальных: {fatal_total}. Запрещённых строк: {forbidden_total}.")
+    print(f"Отчёт: {out_dir / 'report.json'}")
 
-    if forbidden_total > 0:
-        print("\n=== ЗАПРЕЩЁННЫЕ СТРОКИ — ПРОВЕРКА НЕ ПРОЙДЕНА ===", file=sys.stderr)
+    failed = forbidden_total > 0 or fatal_total > 0
+    if failed:
+        print("\n=== ПРОВЕРКА НЕ ПРОЙДЕНА ===", file=sys.stderr)
         for path, data in report.items():
             for vp, issues in data["by_viewport"].items():
                 for it in issues:
-                    if it["type"] == "forbidden_text":
+                    if it["type"] == "forbidden_text" or it.get("fatal"):
                         print(f"  {path} [{vp}] {it['label']}: {it['match']!r} — …{it['context']}…", file=sys.stderr)
         sys.exit(1)
 
-    print("\nЗапрещённых строк не найдено ни на одной странице.")
+    print("\nПровальных находок и запрещённых строк не найдено ни на одной странице.")
     sys.exit(0)
 
 

@@ -38,19 +38,19 @@
 <h3>Найдено: {{ rows|length }}</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Шифр</th><th>Источник</th><th>Участок</th><th>Наименование</th><th>Ед.</th><th>Статус</th><th>Исполнитель</th><th class="num">% факт</th><th>Качество</th></tr></thead>
+  <thead><tr><th class="nowrap">Шифр</th><th class="nowrap">Источник</th><th class="nowrap">Участок</th><th>Наименование</th><th class="nowrap">Ед.</th><th class="nowrap">Статус</th><th class="nowrap">Исполнитель</th><th class="num nowrap">% факт</th><th class="nowrap">Качество</th></tr></thead>
   <tbody>
   {% for w in rows %}
   <tr>
-    <td><code>{{ w.code }}</code></td>
-    <td>{{ w.source|ru_source }}</td>
-    <td>{{ w.location or '—' }}</td>
+    <td class="nowrap"><code>{{ w.code }}</code></td>
+    <td class="nowrap">{{ w.source|ru_source }}</td>
+    <td class="nowrap">{{ w.location or '—' }}</td>
     <td class="wrap">{{ w.name }}</td>
-    <td>{{ w.unit or '—' }}</td>
-    <td>{{ w.status|ru_status }}</td>
-    <td>{{ w.executor_type|ru_executor if w.executor_type else '—' }}</td>
-    <td class="num">{{ w.fact_pct if w.fact_pct is not none else (w.fact_pct_raw or '—') }}</td>
-    <td><span class="badge {{ DQ_BADGE.get(w.data_quality_flag, 'badge-neutral') }}">{{ DQ_LABELS.get(w.data_quality_flag, w.data_quality_flag) }}</span></td>
+    <td class="nowrap">{{ w.unit or '—' }}</td>
+    <td class="nowrap">{{ w.status|ru_status }}</td>
+    <td class="nowrap">{{ w.executor_type|ru_executor if w.executor_type else '—' }}</td>
+    <td class="num nowrap">{{ w.fact_pct if w.fact_pct is not none else (w.fact_pct_raw or '—') }}</td>
+    <td class="nowrap"><span class="badge {{ DQ_BADGE.get(w.data_quality_flag, 'badge-neutral') }}">{{ DQ_LABELS.get(w.data_quality_flag, w.data_quality_flag) }}</span></td>
   </tr>
   {% endfor %}
   </tbody>

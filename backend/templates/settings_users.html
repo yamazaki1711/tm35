@@ -9,15 +9,15 @@
 
 <div class="table-wrap">
 <table>
-  <thead><tr><th>ФИО</th><th>Логин</th><th>Разрешения</th><th>Пароль менялся</th><th>Новый пароль</th></tr></thead>
+  <thead><tr><th>ФИО</th><th class="nowrap">Логин</th><th>Разрешения</th><th class="nowrap">Пароль менялся</th><th class="nowrap">Новый пароль</th></tr></thead>
   <tbody>
   {% for u in users %}
   <tr>
     <td>{{ u.full_name }}</td>
-    <td><code>{{ u.login }}</code></td>
+    <td class="nowrap"><code>{{ u.login }}</code></td>
     <td class="wrap">{{ (u.perms | ru_permission_list) if u.perms else '—' }}</td>
     <td class="nowrap">{{ u.password_changed_at|dmy }}</td>
-    <td>
+    <td class="nowrap">
       <form class="inline-edit" method="post" action="/settings/users/{{ u.id }}/password" style="display:flex;gap:.4rem">
         <input type="text" name="new_password" placeholder="8 знаков" pattern="[a-z2-9]{8}" maxlength="8" minlength="8" required>
         <button type="submit">Сохранить</button>

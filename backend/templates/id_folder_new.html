@@ -31,7 +31,7 @@
   <h3>Выбранные разделы (<span id="picked-count">0</span>)</h3>
   <div class="table-wrap">
   <table class="data-table">
-    <thead><tr><th>Категория</th><th>Раздел</th><th></th></tr></thead>
+    <thead><tr><th class="nowrap">Категория</th><th class="nowrap">Раздел</th><th class="nowrap"></th></tr></thead>
     <tbody id="picked-body">
       <tr id="picked-empty"><td colspan="3" class="empty-note">Список пуст — выберите раздел выше.</td></tr>
     </tbody>
@@ -74,10 +74,13 @@
     var tr = document.createElement('tr');
     tr.setAttribute('data-row-id', rowId);
     var tdTab = document.createElement('td');
+    tdTab.className = 'nowrap';
     tdTab.textContent = opt.getAttribute('data-tab');
     var tdLabel = document.createElement('td');
+    tdLabel.className = 'nowrap';
     tdLabel.textContent = opt.getAttribute('data-label');
     var tdRemove = document.createElement('td');
+    tdRemove.className = 'nowrap';
     var btn = document.createElement('button');
     btn.type = 'button'; btn.className = 'btn-secondary'; btn.setAttribute('data-remove', '1');
     btn.textContent = 'Убрать';

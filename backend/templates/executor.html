@@ -13,10 +13,10 @@
 <h3>Работы по листу-источнику графика</h3>
 <div class="table-wrap">
 <table>
-  <thead><tr><th>Источник</th><th class="num">Кол-во работ</th></tr></thead>
+  <thead><tr><th class="nowrap">Источник</th><th class="num nowrap">Кол-во работ</th></tr></thead>
   <tbody>
   {% for r in by_source_type %}
-  <tr><td>{{ r.source|ru_source }}</td><td class="num">{{ r.n }}</td></tr>
+  <tr><td class="nowrap">{{ r.source|ru_source }}</td><td class="num nowrap">{{ r.n }}</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -31,23 +31,23 @@
   <table>
     <thead>
       <tr>
-        <th>№</th><th>Наименование</th><th>Ед.</th><th class="num">Кол-во</th>
-        <th class="num">Чел-ч/ед.</th><th class="num">Чел-ч всего</th>
-        <th class="num">Людей</th><th class="num">Чел-дней</th><th>Прогноз готовности</th>
+        <th class="nowrap">№</th><th>Наименование</th><th class="nowrap">Ед.</th><th class="num nowrap">Кол-во</th>
+        <th class="num nowrap">Чел-ч/ед.</th><th class="num nowrap">Чел-ч всего</th>
+        <th class="num nowrap">Людей</th><th class="num nowrap">Чел-дней</th><th class="nowrap">Прогноз готовности</th>
       </tr>
     </thead>
     <tbody>
       {% for r in rows %}
       <tr>
-        <td>{{ r.smeta_n }}</td>
+        <td class="nowrap">{{ r.smeta_n }}</td>
         <td class="wrap">{{ r.name }}{% if r.matched_name %}<br><small style="color:var(--c-text-3)">по норме: {{ r.matched_name }}</small>{% endif %}</td>
-        <td>{{ r.unit or '—' }}</td>
-        <td class="num">{{ r.qty if r.qty is not none else '—' }}</td>
-        <td class="num">{{ r.hours_per_unit if r.hours_per_unit is not none else '—' }}</td>
-        <td class="num">{{ r.labor_hours_total if r.labor_hours_total is not none else '—' }}</td>
-        <td class="num"><input type="number" name="people_{{ r.id }}" min="0" value="{{ r.assigned_people if r.assigned_people is not none else '' }}" style="width:5rem"></td>
-        <td class="num">{{ r.working_days|round(1) if r.working_days is not none else '—' }}</td>
-        <td>{{ r.forecast_date|dmy if r.forecast_date else '—' }}</td>
+        <td class="nowrap">{{ r.unit or '—' }}</td>
+        <td class="num nowrap">{{ r.qty if r.qty is not none else '—' }}</td>
+        <td class="num nowrap">{{ r.hours_per_unit if r.hours_per_unit is not none else '—' }}</td>
+        <td class="num nowrap">{{ r.labor_hours_total if r.labor_hours_total is not none else '—' }}</td>
+        <td class="num nowrap"><input type="number" name="people_{{ r.id }}" min="0" value="{{ r.assigned_people if r.assigned_people is not none else '' }}" style="width:5rem"></td>
+        <td class="num nowrap">{{ r.working_days|round(1) if r.working_days is not none else '—' }}</td>
+        <td class="nowrap">{{ r.forecast_date|dmy if r.forecast_date else '—' }}</td>
       </tr>
       {% endfor %}
     </tbody>

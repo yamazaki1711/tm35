@@ -47,13 +47,13 @@
 <h2>Отвлечение ресурса от основного графика</h2>
 {% if by_source %}
 <div class="table-wrap"><table>
-<tr><th>Источник</th><th>План, чел-дн.</th><th>Факт, чел-дн.</th><th>Факт к плану</th></tr>
+<tr><th class="nowrap">Источник</th><th class="nowrap">План, чел-дн.</th><th class="nowrap">Факт, чел-дн.</th><th class="nowrap">Факт к плану</th></tr>
 {% for r in by_source %}
 <tr>
-  <td>{{ r.source|ru_source }}</td>
-  <td>{{ r.planned }}</td>
-  <td>{{ r.actual }}</td>
-  <td>{% if r.planned %}{{ (r.actual / r.planned * 100)|round(0) }}%{% else %}—{% endif %}</td>
+  <td class="nowrap">{{ r.source|ru_source }}</td>
+  <td class="nowrap">{{ r.planned }}</td>
+  <td class="nowrap">{{ r.actual }}</td>
+  <td class="nowrap">{% if r.planned %}{{ (r.actual / r.planned * 100)|round(0) }}%{% else %}—{% endif %}</td>
 </tr>
 {% endfor %}
 </table></div>
