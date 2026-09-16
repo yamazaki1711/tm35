@@ -295,12 +295,13 @@ def main_check():
             "compute_id_progress_stream()", tile_green,
         )
 
-    # --- 10. /id-folders/registry (amount_signed) vs compute_id_folder_stats() ---
+    # --- 10. /id-folders (список папок, бывший /id-folders/registry —
+    # слито в одну страницу 17.09.2026) amount_signed vs compute_id_folder_stats() ---
     reg_folders = m.query_id_folders(order="desc")
     reg_amount_signed = float(m.compute_id_folder_stats()["signed_folders_sum"])
     check(
-        "Реестр папок (amount_signed) vs compute_id_folder_stats()['signed_folders_sum']",
-        "/id-folders/registry", reg_amount_signed,
+        "Список папок /id-folders (amount_signed) vs compute_id_folder_stats()['signed_folders_sum']",
+        "/id-folders", reg_amount_signed,
         "compute_id_folder_stats()", float(folder_stats["signed_folders_sum"]),
         tolerance=0.01,
     )

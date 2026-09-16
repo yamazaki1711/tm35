@@ -5109,10 +5109,10 @@ ID_FOLDER_PIPE_STAGE_LABELS = {
     "ks2_current": "Текущая КС-2",
     "ks2_next": "Следующая КС-2",
 }
-# Клик по стадии трубы должен вести РОВНО на её множество в
-# /id-folders/registry — стадии трубы не совпадают 1:1 с именами
-# канонических стадий (id_folders_registry_page разбирает эти значения
-# status= отдельно, см. там же).
+# Клик по стадии трубы должен вести РОВНО на её множество в списке папок
+# на /id-folders (до 17.09.2026 — отдельная страница /id-folders/registry,
+# слита в одну) — стадии трубы не совпадают 1:1 с именами канонических
+# стадий (id_folders_page разбирает эти значения status= отдельно, см. там же).
 ID_FOLDER_PIPE_STAGE_REGISTRY_STATUS = {
     "formed": "formed",
     "checking": "checking_all",
@@ -5134,9 +5134,10 @@ def id_folder_pipe_stage(folder):
 
 
 def query_id_folders(order="desc"):
-    """Список всех папок с числом разделов — общий источник для
-    /id-folders («Выполнение») и /id-folders/registry («Реестр папок»),
-    чтобы не разойтись в двух вариантах одного и того же SQL."""
+    """Список всех папок с числом разделов — единственный источник для
+    /id-folders («Папки»: труба + список), с 17.09.2026 внутри одной
+    страницы (была ещё и /id-folders/registry — слита сюда же, чтобы
+    не разойтись в двух вариантах одного и того же SQL)."""
     direction = "asc" if order == "asc" else "desc"
     return query(f"""
         select f.id, f.name, f.folder_date, f.sdo_transfer_date, f.sdo_signer_name,
@@ -5342,45 +5343,27 @@ def compute_id_folder_stats():
 
 
 @app.get("/id-folders")
-def id_folders_page(request: Request):
-    folders = query_id_folders()
-    for f in folders:
-        f["stage"] = id_folder_stage(f)
-        f["stage_label"] = ID_FOLDER_STAGE_LABELS[f["stage"]]
-    stats = compute_id_folder_stats()
-    manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
-    transitions = compute_id_folder_transitions()
-    # "Активных ИЗМ (ДПР)" — строка 3 воронки (задача 3, ночной прогон):
-    # тот же признак "активная" (не завершена/не архивна), что и на
-    # /changes и в change_stats_row (home_v2) — не отдельное правило.
-    active_changes = query_one(
-        "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
-    )["n"]
-
-    return render(request, "id_folders.html", "id-folders",
-                  folders=folders, stats=stats, manual_volumes=manual_volumes,
-                  transitions=transitions, active_changes=active_changes)
-
-
-@app.get("/id-folders/registry")
-def id_folders_registry_page(request: Request, status: str = "all", sort: str = "desc"):
+def id_folders_page(request: Request, status: str = "all", sort: str = "desc"):
+    # Координатор, 17.09.2026: «Папки» и «Реестр папок» — один и тот же
+    # id_folder под разными именами колонок, найдено кликом по обоим из
+    # меню. Слито в одну страницу — реестр (фильтр/сортировка/CSV/два
+    # столбца СДО) переехал сюда целиком, /id-folders/registry ниже стал
+    # редиректом. Восемь колонок таблицы — одно имя на каждую, см.
+    # id_folders.html.
     folders = query_id_folders(order=sort)
     for f in folders:
         f["stage"] = id_folder_stage(f)
         f["stage_label"] = ID_FOLDER_STAGE_LABELS[f["stage"]]
 
+    stats = compute_id_folder_stats()
     totals = {
         "folders_count": len(folders),
         "transferred_count": sum(1 for f in folders if f["sdo_transfer_date"]),
         "amount_total": sum(float(f["amount_sum"] or 0) for f in folders),
-        # Та же сумма, что signed_folders_sum в compute_id_folder_stats()
-        # (координатор, 08.09.2026) — раньше считалась второй раз, в
-        # Python. С задачи 3 (ночной прогон 09-10.09.2026) это сумма
-        # amount_smeta_rub ДЕЙСТВИТЕЛЬНО подписанных папок (signed_date),
-        # не оценка по факту передачи в СДО — ключ и подпись в шаблоне
-        # переименованы вместе с расчётом, чтобы название не разошлось со
-        # смыслом.
-        "amount_signed": float(compute_id_folder_stats()["signed_folders_sum"]),
+        # Та же сумма, что stats["signed_folders_sum"] — один вызов
+        # compute_id_folder_stats() на страницу, не два (было по одному в
+        # каждом из прежних двух маршрутов).
+        "amount_signed": float(stats["signed_folders_sum"]),
     }
 
     # Заход 7, 11.09.2026: было `formed`/`transferred` как две отдельные
@@ -5401,15 +5384,38 @@ def id_folders_registry_page(request: Request, status: str = "all", sort: str = 
     elif status == "checking_all":
         # Труба «Выполнение», стадия «На проверке» (ТЗ 15.09.2026) —
         # объединяет канонические "transferred"+"checking", не то же
-        # самое множество, что фильтр status=checking выше.
+        # самое множество, что фильтр status=checking (тот теперь
+        # называется «Проверка» в выпадающем списке — тот же текст, что
+        # и в колонке «Стадия», чтобы два «На проверке» не стояли рядом
+        # с разным смыслом, найдено координатором 17.09.2026).
         folders = [f for f in folders if f["stage"] in ("transferred", "checking")]
     elif status == "ks2_next":
         # Труба «Выполнение», стадия «Следующая КС-2» — подписаны, КС-2
         # ещё нет, сметная стоимость уже известна.
         folders = [f for f in folders if f["signed_date"] and not f["ks2_date"] and f["amount_smeta_rub"] is not None]
 
-    return render(request, "id_folders_registry.html", "id-folders-registry",
-                  folders=folders, totals=totals, status=status, sort=sort)
+    manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
+    transitions = compute_id_folder_transitions()
+    # "Активных ИЗМ (ДПР)" — строка 3 воронки (задача 3, ночной прогон):
+    # тот же признак "активная" (не завершена/не архивна), что и на
+    # /changes и в change_stats_row (home_v2) — не отдельное правило.
+    active_changes = query_one(
+        "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
+    )["n"]
+
+    return render(request, "id_folders.html", "id-folders",
+                  folders=folders, totals=totals, status=status, sort=sort,
+                  stats=stats, manual_volumes=manual_volumes,
+                  transitions=transitions, active_changes=active_changes)
+
+
+@app.get("/id-folders/registry")
+def id_folders_registry_redirect(status: str = "all", sort: str = "desc"):
+    """«Реестр папок» слит в «Папки» (координатор, 17.09.2026) — этот
+    маршрут остаётся только чтобы не ломать сохранённые ссылки/закладки
+    и упоминания в журналах прогонов, сам не рендерит страницу."""
+    qs = urllib.parse.urlencode({"status": status, "sort": sort})
+    return RedirectResponse(url=f"/id-folders?{qs}", status_code=301)
 
 
 @app.get("/export/id-folders.csv")
@@ -5419,16 +5425,21 @@ def export_id_folders_csv(status: str = "all"):
         folders = [f for f in folders if not f["sdo_transfer_date"]]
     elif status == "transferred":
         folders = [f for f in folders if f["sdo_transfer_date"]]
+    # Порядок и подписи колонок — те же 8 имён, что в таблице /id-folders
+    # (координатор, 17.09.2026, слияние с бывшим /id-folders/registry):
+    # раньше здесь была третья формулировка ("Стоимость (оценка), ₽") для
+    # того же amount_rub, что на экране называлось то «Оценка ПТО, ₽», то
+    # «Стоимость, ₽» — теперь везде одно имя на колонку.
     out = [
         (f["name"], _csv_dmy(f["folder_date"]), f["row_count"], f["amount_sum"] or 0,
-         f["sdo_signer_name"] or "", _csv_dmy(f["sdo_transfer_date"]),
-         ID_FOLDER_STAGE_LABELS[id_folder_stage(f)], f["amount_smeta_rub"] or "")
+         f["amount_smeta_rub"] or "", f["sdo_signer_name"] or "",
+         _csv_dmy(f["sdo_transfer_date"]), ID_FOLDER_STAGE_LABELS[id_folder_stage(f)])
         for f in folders
     ]
     return _csv_response(
         "id_folders.csv",
-        ["Номер папки", "Дата формирования", "Разделов", "Стоимость (оценка), ₽",
-         "Подписант реестра передачи", "Дата передачи в СДО", "Стадия", "Сметная стоимость, ₽"],
+        ["Номер папки", "Дата формирования", "Разделов", "Оценка ПТО, ₽",
+         "Сметная стоимость, ₽", "Подписант реестра передачи", "Дата передачи в СДО", "Стадия"],
         out,
     )
 

@@ -16,7 +16,7 @@
   </svg>
   {% for b in pipe.blocks %}
   <div class="id-pipe-col" style="left:{{ b.left_pct }}%; width:{{ b.width_pct }}%;">
-    <a class="id-pipe-link" href="/id-folders/registry?status={{ b.registry_status }}"
+    <a class="id-pipe-link" href="/id-folders?status={{ b.registry_status }}"
        aria-label="{{ b.label }}: {{ b.count }} папок">
       <span class="id-pipe-count {{ 'id-pipe-count-emph' if b.emphasis }}"
             style="top:calc({{ b.y0_pct }}% - 22px);">{{ b.count }}</span>

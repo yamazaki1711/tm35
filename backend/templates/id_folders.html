@@ -93,16 +93,62 @@
 <a href="/id-folders/bulk-entry">Массовый ввод данных по всем папкам →</a></p>
 
 <h3>Список папок</h3>
+<p class="subtitle"><a href="/export/id-folders.csv?status={{ status }}">Скачать CSV</a></p>
+
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.folders_count }}</div>
+    <div class="kpi-label">Всего папок</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.transferred_count }}</div>
+    <div class="kpi-label">Передано в СДО</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.amount_total|ru_money }}</div>
+    <div class="kpi-label">Сумма оценок ПТО, ₽</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ totals.amount_signed|ru_money }}</div>
+    <div class="kpi-label">Сметная стоимость подписанных, ₽</div>
+  </div>
+</div>
+
+<form method="get" action="/id-folders" class="form-box" style="max-width:520px;display:flex;gap:1rem;align-items:flex-end;">
+  <label style="flex:1">Статус
+    <select name="status" onchange="this.form.submit()">
+      <option value="all" {{ 'selected' if status=='all' }}>Все</option>
+      <option value="formed" {{ 'selected' if status=='formed' }}>Сформированные</option>
+      <option value="transferred" {{ 'selected' if status=='transferred' }}>Переданные в СДО</option>
+      <option value="checking" {{ 'selected' if status=='checking' }}>Проверка</option>
+      <option value="signed" {{ 'selected' if status=='signed' }}>Подписанные</option>
+      <option value="ks2" {{ 'selected' if status=='ks2' }}>С оформленным КС-2</option>
+      <option value="not_signed" {{ 'selected' if status=='not_signed' }}>Ещё не подписаны</option>
+      <option value="awaiting_smeta" {{ 'selected' if status=='awaiting_smeta' }}>Ждут сметную стоимость</option>
+      <option value="checking_all" {{ 'selected' if status=='checking_all' }}>На проверке</option>
+      <option value="ks2_next" {{ 'selected' if status=='ks2_next' }}>Следующая КС-2</option>
+    </select>
+  </label>
+  <label style="flex:1">Сортировка по номеру
+    <select name="sort" onchange="this.form.submit()">
+      <option value="desc" {{ 'selected' if sort=='desc' }}>Новые сверху</option>
+      <option value="asc" {{ 'selected' if sort=='asc' }}>Старые сверху</option>
+    </select>
+  </label>
+</form>
+
 <div class="table-wrap">
 <table class="data-table">
   <thead>
     <tr>
-      <th class="nowrap">Название</th>
-      <th class="nowrap">Дата создания</th>
+      <th class="nowrap">Номер папки</th>
+      <th class="nowrap">Дата формирования</th>
       <th class="nowrap">Разделов</th>
       <th class="nowrap">Оценка ПТО, ₽</th>
-      <th class="nowrap">Стадия</th>
       <th class="nowrap">Сметная стоимость, ₽</th>
+      <th>Подписант реестра передачи</th>
+      <th class="nowrap">Дата передачи в СДО</th>
+      <th class="nowrap">Стадия</th>
     </tr>
   </thead>
   <tbody>
@@ -112,11 +158,13 @@
       <td class="nowrap">{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td class="nowrap">{{ f.row_count }}</td>
       <td class="nowrap">{{ (f.amount_sum or 0)|ru_money }}</td>
-      <td class="nowrap"><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
       <td class="nowrap">{{ f.amount_smeta_rub|ru_money if f.amount_smeta_rub is not none else '—' }}</td>
+      <td>{{ f.sdo_signer_name or '—' }}</td>
+      <td class="nowrap">{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
+      <td class="nowrap"><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="empty-note">Папок ещё нет.</td></tr>
+    <tr><td colspan="8" class="empty-note">Папок с таким статусом нет.</td></tr>
     {% endfor %}
   </tbody>
 </table>

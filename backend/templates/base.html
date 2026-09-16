@@ -19,7 +19,7 @@
 </head>
 <body>
 {% set smr_active = active in ['shift', 'form', 'baseline', 'blockers', 'today', 'report', 'gantt', 'status', 'calculator'] %}
-{% set id_active = active in ['id-packages', 'changes', 'id-entry', 'id-folders', 'id-folders-new', 'id-folders-registry', 'id-grafik', 'id-progress'] %}
+{% set id_active = active in ['id-packages', 'changes', 'id-entry', 'id-folders', 'id-folders-new', 'id-grafik', 'id-progress'] %}
 {% set rsk_active = active in ['rsk-registry', 'rsk-dashboard', 'rsk-processing', 'rsk-import'] %}
 <nav>
 <div class="nav-inner">
@@ -109,10 +109,6 @@
         <a href="/id-folders" role="menuitem" class="{{ 'active' if active=='id-folders' }}" {{ 'aria-current="page"' if active=='id-folders' }}>
           <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M3 7l2-3h5l2 3"/></svg>
           <span>Папки</span>
-        </a>
-        <a href="/id-folders/registry" role="menuitem" class="{{ 'active' if active=='id-folders-registry' }}" {{ 'aria-current="page"' if active=='id-folders-registry' }}>
-          <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
-          <span>Реестр папок</span>
         </a>
         <a href="/id-progress" role="menuitem" class="{{ 'active' if active=='id-progress' }}" {{ 'aria-current="page"' if active=='id-progress' }}>
           <svg class="icon" viewBox="0 0 24 24"><path d="M4 19h16M7 19V9M12 19V5M17 19v-7"/></svg>
