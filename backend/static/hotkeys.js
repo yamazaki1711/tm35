@@ -66,34 +66,39 @@
     btn.click();
   });
 
-  // Подсказка "Ctrl+Enter"/"⌘Enter" рядом с кнопкой — не на каждой мелкой
-  // кнопке формы (например "Убрать" в строке таблицы — тоже технически
-  // submit своей маленькой формы, хоткей на неё сработает при фокусе, но
-  // подпись рядом с каждой такой кнопкой в каждой строке была бы визуальным
-  // шумом): подсказываем только у явно помеченных data-hotkey-save и у
-  // обычных (не .btn-secondary) кнопок сохранения. Не показываем на touch —
-  // сочетание клавиш там недоступно физически.
+  // Подсказка "Ctrl+Enter"/"⌘Enter" рядом с кнопкой — раньше отбиралась по
+  // имени класса (не .btn-secondary) как замена настоящему условию, и это
+  // не то же самое: /id-rsk-link рендерит ~20 одинаковых POST-форм
+  // «Прикрепить» по одной на строку — по имени класса каждая проходила
+  // фильтр, получалась подсказка под каждой строкой, а хоткей там ничего
+  // не делает (фокус после поиска остаётся в форме фильтра, GET, кандидат
+  // на срабатывание не один — см. правило вверху файла). Подсказка обязана
+  // повторять УСЛОВИЕ хоткея, а не гадать по классу: он однозначно бьёт по
+  // цели независимо от фокуса, только когда allSaveForms() возвращает
+  // ровно одну форму — это и есть единственный случай, когда подсказку
+  // можно показывать. На странице с несколькими формами сохранения
+  // подсказка не показывается вообще ни у одной — хоткей там по-прежнему
+  // работает при фокусе внутри конкретной формы, просто не разрекламирован
+  // без адреса. Кнопка-действие в строке таблицы (например «Убрать») сама
+  // по себе технически submit маленькой формы — на странице с несколькими
+  // такими строками их несколько, значит allSaveForms().length !== 1, и
+  // подсказка так и не появляется, отдельного условия не нужно. Не
+  // показываем на touch — сочетание клавиш там недоступно физически.
   document.addEventListener("DOMContentLoaded", function () {
     if (window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches) return;
+
+    var candidates = allSaveForms();
+    if (candidates.length !== 1) return;
+    var btn = findButton(candidates[0]);
+    if (!btn || btn.dataset.hotkeyHinted) return;
+
     var isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform || "");
     var label = isMac ? "⌘Enter" : "Ctrl+Enter";
 
-    var buttons = [];
-    allSaveForms().forEach(function (form) {
-      var btn = findButton(form);
-      if (!btn) return;
-      if (btn.hasAttribute("data-hotkey-save") || !btn.classList.contains("btn-secondary")) {
-        buttons.push(btn);
-      }
-    });
-
-    buttons.forEach(function (btn) {
-      if (btn.dataset.hotkeyHinted) return;
-      btn.dataset.hotkeyHinted = "1";
-      var hint = document.createElement("span");
-      hint.className = "hotkey-hint";
-      hint.textContent = label;
-      btn.insertAdjacentElement("afterend", hint);
-    });
+    btn.dataset.hotkeyHinted = "1";
+    var hint = document.createElement("span");
+    hint.className = "hotkey-hint";
+    hint.textContent = label;
+    btn.insertAdjacentElement("afterend", hint);
   });
 })();
