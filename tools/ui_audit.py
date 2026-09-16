@@ -77,7 +77,10 @@ VIEWPORTS = [(1920, 1080), (1366, 768), (2560, 1440)]
 # для человека (экспорт файлов, служебные "прочитать и уйти") — шумели
 # бы в прогоне без пользы. Явный, короткий список причин, не эвристика.
 SKIP_PREFIXES = ("/api/", "/static/", "/export/")
-SKIP_EXACT = {"/healthz", "/health"}
+# /docs, /redoc, /openapi.json — служебные маршруты FastAPI (Swagger/
+# ReDoc), не экраны приложения; /docs тянет CDN-скрипт и без внешнего
+# интернета из контейнера виснет на networkidle (найдено 16.09.2026).
+SKIP_EXACT = {"/healthz", "/health", "/docs", "/redoc", "/openapi.json"}
 
 
 def discover_routes():
@@ -127,17 +130,17 @@ EXPAND_JS = """
 # `.table-wrap` с table-layout:fixed) обязаны прокручиваться сами —
 # единственное разрешённое место, где что-то "выходит за край" законно.
 IN_SCROLL_CONTAINER_JS = """
-function inScrollContainer(el) {
-  let node = el.parentElement;
-  while (node && node !== document.body) {
-    const cs = getComputedStyle(node);
-    if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 1) {
-      return true;
+  function inScrollContainer(el) {
+    let node = el.parentElement;
+    while (node && node !== document.body) {
+      const cs = getComputedStyle(node);
+      if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 1) {
+        return true;
+      }
+      node = node.parentElement;
     }
-    node = node.parentElement;
+    return false;
   }
-  return false;
-}
 """
 
 
@@ -239,8 +242,9 @@ def audit_page(page):
 
     # --- ТЗ 16.09.2026, дефект 3: элемент выходит за правый край viewport ---
     off_viewport = page.evaluate(
-        IN_SCROLL_CONTAINER_JS + """
+        """
         () => {
+""" + IN_SCROLL_CONTAINER_JS + """
           const bad = [];
           const vw = document.documentElement.clientWidth;
           document.querySelectorAll('body *').forEach(el => {
@@ -266,8 +270,9 @@ def audit_page(page):
 
     # --- ТЗ 16.09.2026, дефект 4: обрезанная (невидимая) ячейка таблицы ---
     clipped_cells = page.evaluate(
-        IN_SCROLL_CONTAINER_JS + """
+        """
         () => {
+""" + IN_SCROLL_CONTAINER_JS + """
           const bad = [];
           document.querySelectorAll('td, th').forEach(el => {
             if (bad.length >= 20) return;
