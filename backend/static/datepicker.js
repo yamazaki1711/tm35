@@ -188,4 +188,16 @@
   document.addEventListener("DOMContentLoaded", function () {
     document.querySelectorAll("[data-dm-picker]").forEach(init);
   });
+
+  // Публичный вызов для разметки, добавленной ПОСЛЕ DOMContentLoaded —
+  // например, строки таблицы /shift, перерисовываемые из AJAX-ответа
+  // (ТЗ Якименко 16.09.2026, задача 3, §3: даты графика прямо в строке).
+  // root — контейнер, внутри которого искать [data-dm-picker] (сам
+  // элемент тоже проверяется, на случай если он и есть виджет).
+  window.TM35_DATEPICKER = {
+    init: function (root) {
+      if (root.matches && root.matches("[data-dm-picker]")) init(root);
+      root.querySelectorAll("[data-dm-picker]").forEach(init);
+    },
+  };
 })();

@@ -48,10 +48,34 @@
 {% if rows %}
 <div class="table-wrap">
 <table>
-<tr><th class="nowrap">Работа</th><th class="nowrap">Тип</th><th>Описание</th><th class="nowrap">Статус</th><th class="nowrap">Возникло</th><th class="nowrap">Влияние, дней</th></tr>
+<tr><th class="nowrap">Работа</th><th class="nowrap">Тип</th><th>Описание</th><th class="nowrap">Статус</th><th class="nowrap">Возникло</th><th class="nowrap">Влияние, дней</th><th class="nowrap">Снять до / ответственный</th><th class="nowrap"></th></tr>
 {% for r in rows %}
 <tr><td class="nowrap">{% if r.work_code %}<code>{{ r.work_code }}</code>{% else %}—{% endif %}</td><td class="nowrap">{{ r.blocker_type|ru_blocker_type }}</td><td class="wrap">{{ r.description|strip_source_marker }}</td>
-<td class="nowrap">{{ r.status|ru_blocker_status if r.status else '—' }}</td><td class="nowrap">{{ r.created_at|dmy }}</td><td class="nowrap">{{ r.impact_days or '—' }}</td></tr>
+<td class="nowrap">{{ r.status|ru_blocker_status if r.status else '—' }}</td><td class="nowrap">{{ r.created_at|dmy }}</td><td class="nowrap">{{ r.impact_days or '—' }}</td>
+{% if r.status == 'active' %}
+<td class="nowrap">
+    <form class="inline-edit" method="post" action="/api/blocker/{{ r.id }}">
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" name="expected_resolution_date" value="{{ r.expected_resolution_date or '' }}">
+        <div class="dm-cal" hidden></div>
+      </span>
+      <input type="text" name="responsible_name" placeholder="ответственный" value="{{ r.responsible_name or '' }}" style="width:9rem">
+      <button type="submit">Сохранить</button>
+    </form>
+</td>
+<td class="nowrap">
+    <form method="post" action="/api/blocker/{{ r.id }}">
+      <input type="hidden" name="resolve" value="1">
+      <button type="submit" class="btn-ok">Снято</button>
+    </form>
+</td>
+{% else %}
+<td class="nowrap">{{ r.expected_resolution_date|dmy if r.expected_resolution_date else '—' }}{% if r.responsible_name %} · {{ r.responsible_name }}{% endif %}</td>
+<td class="nowrap"></td>
+{% endif %}
+</tr>
 {% endfor %}
 </table>
 </div>

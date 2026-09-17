@@ -15,7 +15,7 @@
      колонок ниже заставляет таблицу держать реальный размер, а
      .table-wrap (overflow-x:auto) даёт горизонтальную прокрутку вместо
      сжатия — то же решение, что уже используется в /gantt. */
-  table.shift { table-layout: fixed; min-width: 80rem; }
+  table.shift { table-layout: fixed; min-width: 98rem; }
   table.shift col.c-code { width: 8.5rem; }
   table.shift col.c-name { width: 18rem; }
   table.shift col.c-loc { width: 7rem; }
@@ -23,6 +23,7 @@
   table.shift col.c-crew { width: 7rem; }
   table.shift col.c-reason { width: 11rem; }
   table.shift col.c-comment { width: 14rem; }
+  table.shift col.c-sched { width: 9rem; }
   table.shift col.c-status { width: 8rem; }
   /* Перенос текста в ячейках — общими классами .wrap/.nowrap из style.css,
      не локальными правилами здесь (баг 28.08.2026: white-space:normal на
@@ -44,6 +45,8 @@
   table.shift td.num { text-align: right; }
   table.shift td.num:has(.planned-hint) { display: flex; flex-direction: column; align-items: flex-end; }
   table.shift td.num:has(.planned-hint) input { width: auto; align-self: stretch; }
+  table.shift .dm-picker { width: 100%; }
+  table.shift .dm-text { width: auto; flex: 1; min-width: 0; }
   tr.row-filled td.c-code, tr.row-filled td.c-name { box-shadow: inset 3px 0 0 var(--c-success); }
   .row-status { font-size: .74rem; font-weight: 600; white-space: nowrap; }
   .row-status.st-empty { color: var(--c-text-3); }
@@ -54,15 +57,20 @@
   .placeholder-hint { color: var(--c-text-3); }
   table.shift td.num { position: relative; }
   .planned-hint { display: block; margin-top: .2rem; font-size: .74rem; color: var(--c-text-3); white-space: nowrap; }
+  .work-optgroup-done { color: var(--c-text-3); }
 
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(16,24,40,.5); z-index: 50; align-items: center; justify-content: center; }
   .modal-overlay.open { display: flex; }
-  .modal-box { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg); padding: 1.25rem 1.5rem; width: 380px; max-width: 92vw; box-shadow: var(--shadow-lg); }
+  .modal-box { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg); padding: 1.25rem 1.5rem; width: 460px; max-width: 92vw; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
   .modal-box h3 { margin: 0 0 .75rem; font-size: 1.05rem; }
   .modal-box label { display: block; margin-top: .8rem; font-size: .85rem; font-weight: 600; color: var(--c-text-2); }
   .modal-box input, .modal-box select { width: 100%; margin-top: .3rem; }
+  .modal-box label.chk { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin-top: 1rem; }
+  .modal-box label.chk input { width: auto; margin-top: 0; }
+  .modal-fieldset { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .8rem; }
   .modal-errors { color: var(--c-danger); font-size: .82rem; margin-top: .6rem; min-height: 1em; }
   .modal-actions { display: flex; gap: .5rem; margin-top: 1.1rem; justify-content: flex-end; }
+  #existing-note { font-size: .82rem; margin-top: .8rem; }
 
   #toast {
     position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-success); color: #fff;
@@ -74,7 +82,7 @@
 <h1>Экран смены</h1>
 <p class="subtitle">Строки — работы, не завершённые физически (по умолчанию). Сохранение — по уходу из ячейки, каждое поле независимо.
 Клавиатура: Tab/Shift+Tab между ячейками, Enter/↓/↑ — по столбцу вниз/вверх.
-Нужно внести только одну запись — проще через <a href="/form">форму «Ввод факта»</a>.
+Нужно внести только одну запись — кнопка «+ ввод факта» ниже открывает то же самое одной формой.
 По умолчанию открывается вчерашний день — дату можно сменить.</p>
 
 {% if not can_write %}
@@ -98,7 +106,8 @@
     <label for="inp-search" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Поиск по шифру/наименованию</label>
     <input type="text" id="inp-search" class="search" placeholder="например, УТ13 или герметизация">
   </div>
-  <button type="button" id="btn-add-work" class="btn-secondary">+ добавить работу</button>
+  <button type="button" id="btn-add-fact" class="btn-secondary">+ ввод факта</button>
+  <button type="button" id="btn-refresh-schedule" class="btn-secondary">Обновить график СМР</button>
   <span id="shift-count"></span>
 </div>
 
@@ -106,37 +115,77 @@
   <table class="shift">
     <colgroup>
       <col class="c-code"><col class="c-name"><col class="c-loc"><col class="c-pct">
-      <col class="c-crew"><col class="c-reason"><col class="c-comment"><col class="c-status">
+      <col class="c-crew"><col class="c-reason"><col class="c-comment">
+      <col class="c-sched"><col class="c-sched"><col class="c-status">
     </colgroup>
     <thead>
       <tr>
         <th class="nowrap">Шифр</th><th>Наименование</th><th class="nowrap">Участок</th><th>% готовности</th>
-        <th class="nowrap">Люди</th><th class="nowrap">Простой</th><th>Комментарий</th><th class="nowrap">Статус</th>
+        <th class="nowrap">Люди</th><th class="nowrap">Простой</th><th>Комментарий</th>
+        <th class="nowrap">Дата начала работ</th><th class="nowrap">Дата окончания работ</th><th class="nowrap">Статус</th>
       </tr>
     </thead>
     <tbody id="shift-body">
-      <tr><td colspan="8" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>
+      <tr><td colspan="10" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>
     </tbody>
   </table>
 </div>
 
-<!-- Модалка: новая работа -->
-<div class="modal-overlay" id="modal-new-work">
+<!-- Модалка: ввод факта (ТЗ Якименко 16.09.2026, задача 3, §2 — заменяет
+     собой отдельную страницу /form и кнопку "+ добавить работу"; новую
+     работу по-прежнему заводят на /gantt, этот путь не тронут). -->
+<div class="modal-overlay" id="modal-fact">
   <div class="modal-box">
-    <h3>Добавить работу</h3>
-    <label>Категория
-      <select id="nw-source">
-        <option value="main">Основные работы</option>
-        <option value="aux" selected>Вспомогательные работы</option>
-      </select>
+    <h3>Ввод факта</h3>
+    <label>Работа
+      <select id="nf-work"></select>
     </label>
-    <label>Наименование<input type="text" id="nw-name"></label>
-    <label>Ед. изм.<input type="text" id="nw-unit"></label>
-    <label>Участок<input type="text" id="nw-location" placeholder="например УТ13"></label>
-    <div class="modal-errors" id="nw-errors"></div>
+    <label>Дата
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" id="nf-date">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+    <div id="nf-existing-note" class="empty-note" style="display:none"></div>
+    <div class="modal-fieldset">
+      <label>План людей (0–50)<input type="number" id="nf-planned" min="0" max="50"></label>
+      <label>Факт людей (0–50)<input type="number" id="nf-actual" min="0" max="50"></label>
+    </div>
+    <label>Процент выполнения, % (0–100)<input type="number" id="nf-pct" min="0" max="100" step="1" placeholder="например, 65"></label>
+    <label>Причина простоя (если был)
+      <select id="nf-reason"><option value="">— не указана —</option></select>
+    </label>
+    <label>Комментарий (обязателен, если причина «Иное»)<input type="text" id="nf-comment"></label>
+
+    <p class="subtitle" style="margin:1rem 0 0">Сроки по графику (необязательно) — сохранение сразу отражается на /gantt.</p>
+    <div class="modal-fieldset">
+      <label>Дата начала работ
+        <span class="dm-picker" data-dm-picker>
+          <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+          <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+          <input type="hidden" id="nf-sched-start">
+          <div class="dm-cal" hidden></div>
+        </span>
+      </label>
+      <label>Дата окончания работ
+        <span class="dm-picker" data-dm-picker>
+          <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+          <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+          <input type="hidden" id="nf-sched-finish">
+          <div class="dm-cal" hidden></div>
+        </span>
+      </label>
+    </div>
+
+    <label class="chk"><input type="checkbox" id="nf-subcontractor"> Подрядчик</label>
+    <input type="text" id="nf-subcontractor-name" placeholder="название" style="margin-top:.4rem;display:none">
+
+    <div class="modal-errors" id="nf-errors"></div>
     <div class="modal-actions">
-      <button type="button" class="btn-secondary" data-close="modal-new-work">Отмена</button>
-      <button type="button" class="btn-ok" id="nw-save">Добавить</button>
+      <button type="button" class="btn-secondary" data-close="modal-fact">Отмена</button>
+      <button type="button" class="btn-ok" id="nf-save">Сохранить</button>
     </div>
   </div>
 </div>
@@ -150,6 +199,7 @@
   var order = [];          // порядок id работ в текущей отрисовке — для навигации стрелками
   var lastSaved = {};      // "id:field" -> последнее сохранённое строковое значение
   var reasonCodes = [];    // приходит в каждом ответе /api/shift
+  var workRows = [];       // приходит в каждом ответе /api/shift — для модалки «Ввод факта»
 
   function toast(msg, ok) {
     var t = document.getElementById('toast');
@@ -197,8 +247,40 @@
     el.innerHTML = '<span class="dot"></span>' + (labels[mode] || mode);
   }
 
+  // Ячейка «Дата начала/окончания работ» — тот же виджет dm-picker, что
+  // и везде в проекте (ТЗ Якименко 16.09.2026, задача 3, §3), но строка
+  // таблицы собирается JS-строкой и вставляется через innerHTML — сам
+  // виджет инициализируется только на DOMContentLoaded, поэтому здесь
+  // вызывается его публичный TM35_DATEPICKER.init() (datepicker.js).
+  function schedCellHtml(workId, field, iso) {
+    return '<span class="dm-picker" data-dm-picker data-work="' + workId + '" data-sched="' + field + '">' +
+      '<input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">' +
+      '<button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>' +
+      '<input type="hidden" value="' + (iso || '') + '">' +
+      '<div class="dm-cal" hidden></div></span>';
+  }
+
+  function saveSchedRow(workId) {
+    var row = document.querySelector('tr[data-work-row="' + workId + '"]');
+    if (!row) return;
+    var startEl = row.querySelector('[data-sched="start"] input[type=hidden]');
+    var finishEl = row.querySelector('[data-sched="finish"] input[type=hidden]');
+    postForm('/api/gantt/schedule', {
+      work_id: workId,
+      current_start: startEl ? startEl.value : '',
+      current_finish: finishEl ? finishEl.value : '',
+    }).then(function (res) {
+      if (res.body.ok) {
+        toast('График обновлён');
+      } else {
+        toast('Не сохранено: ' + formatErrors(res), false);
+      }
+    }).catch(function (e) { toast('Ошибка сети — сроки не сохранены: ' + e, false); });
+  }
+
   function render(data) {
     reasonCodes = data.reason_codes;
+    workRows = data.work_rows;
     order = data.items.map(function (it) { return it.id; });
     var countLabel;
     if (state.all) {
@@ -223,7 +305,7 @@
 
     if (!data.items.length) {
       document.getElementById('shift-body').innerHTML =
-        '<tr><td colspan="8" class="empty-note" style="border:none">Ничего не найдено — попробуйте ' +
+        '<tr><td colspan="10" class="empty-note" style="border:none">Ничего не найдено — попробуйте ' +
         '«показать все» или измените поиск.</td></tr>';
       return;
     }
@@ -251,6 +333,8 @@
       html += '<td><select data-work="' + it.id + '" data-field="reason">' + reasonOptionsHtml(it.reason_code) + '</select></td>';
       html += '<td><input type="text" data-work="' + it.id + '" data-field="comment" value="' +
         (it.comment ? it.comment.replace(/"/g, '&quot;') : '') + '"></td>';
+      html += '<td class="nowrap">' + schedCellHtml(it.id, 'start', it.current_start) + '</td>';
+      html += '<td class="nowrap">' + schedCellHtml(it.id, 'finish', it.current_finish) + '</td>';
       html += '<td class="nowrap"><span class="row-status" data-row-status="' + it.id + '"></span></td>';
       html += '</tr>';
     });
@@ -262,6 +346,8 @@
     });
 
     wireCells();
+    if (window.TM35_DATEPICKER) TM35_DATEPICKER.init(document.getElementById('shift-body'));
+    wireSchedCells();
   }
 
   function fieldEl(id, field) {
@@ -355,19 +441,32 @@
     });
   }
 
+  // Дата начала/окончания работ — сохраняются вместе (оба текущих
+  // значения строки), не по одному полю: current_schedule хранит одну
+  // строку на работу целиком (см. /api/gantt/schedule), сохранение
+  // только начала стёрло бы уже стоящее окончание, и наоборот.
+  function wireSchedCells() {
+    document.querySelectorAll('#shift-body [data-sched] input[type=hidden]').forEach(function (hidden) {
+      hidden.addEventListener('change', function () {
+        var wrap = hidden.closest('[data-work]');
+        if (wrap) saveSchedRow(wrap.getAttribute('data-work'));
+      });
+    });
+  }
+
   function load() {
     var params = new URLSearchParams();
     if (state.date) params.set('date', state.date);
     if (state.all) params.set('all', '1');
     if (state.q) params.set('q', state.q);
     document.getElementById('shift-body').innerHTML =
-      '<tr><td colspan="8" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>';
+      '<tr><td colspan="10" style="text-align:center;color:var(--c-text-3);padding:1.5rem">Загрузка…</td></tr>';
     fetch('/api/shift?' + params.toString())
       .then(function (r) { return r.json(); })
       .then(render)
       .catch(function (e) {
         document.getElementById('shift-body').innerHTML =
-          '<tr><td colspan="8" style="color:var(--c-danger);padding:1rem">Ошибка загрузки: ' + e + '</td></tr>';
+          '<tr><td colspan="10" style="color:var(--c-danger);padding:1rem">Ошибка загрузки: ' + e + '</td></tr>';
       });
   }
 
@@ -390,25 +489,127 @@
     if (state.q !== this.value) { state.q = this.value; load(); }
   });
 
-  document.getElementById('btn-add-work').addEventListener('click', function () {
-    document.getElementById('nw-name').value = '';
-    document.getElementById('nw-unit').value = '';
-    document.getElementById('nw-location').value = '';
-    document.getElementById('nw-errors').textContent = '';
-    openModal('modal-new-work');
+  // "Обновить график СМР" — ТЗ Якименко 16.09.2026, задача 3, §3: сохранение
+  // дат в строке уже отражается на /gantt само по себе (см. wireSchedCells
+  // выше — правило "не только по кнопке"); кнопка — честный ручной
+  // пересчёт отображения экрана смены, не единственный путь к
+  // правильному графику.
+  document.getElementById('btn-refresh-schedule').addEventListener('click', function () {
+    load();
+    toast('График обновлён');
   });
-  document.getElementById('nw-save').addEventListener('click', function () {
-    var errEl = document.getElementById('nw-errors');
+
+  // ====== Модалка «Ввод факта» ======
+  function workOptionsHtml() {
+    var html = '<option value="" selected disabled>— выбрать —</option>';
+    var open = workRows.filter(function (w) { return !w.is_done; });
+    var done = workRows.filter(function (w) { return w.is_done; });
+    open.forEach(function (w) {
+      html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
+    });
+    if (done.length) {
+      html += '<optgroup label="Выполнены физически" class="work-optgroup-done">';
+      done.forEach(function (w) {
+        html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
+      });
+      html += '</optgroup>';
+    }
+    return html;
+  }
+
+  function setHiddenDate(id, iso) {
+    var hidden = document.getElementById(id);
+    hidden.value = iso || '';
+    var text = hidden.parentElement.querySelector('.dm-text');
+    if (text) text.value = iso ? TM35_RU_DATE.fmtDMY(iso) : '';
+  }
+
+  function checkExistingForModal() {
+    var workId = document.getElementById('nf-work').value;
+    var date = document.getElementById('nf-date').value;
+    var note = document.getElementById('nf-existing-note');
+    if (!workId || !date) { note.style.display = 'none'; return; }
+    fetch('/api/existing-entry?work_id=' + encodeURIComponent(workId) + '&date=' + encodeURIComponent(date))
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.exists) {
+          note.style.display = 'block';
+          var pctTxt = data.fact_pct === null || data.fact_pct === undefined ? '—' : data.fact_pct + '%';
+          note.innerHTML = 'На эту дату по этой работе уже есть запись: план ' +
+            (data.planned_crew === null ? '—' : data.planned_crew) + ', факт ' +
+            (data.actual_crew === null ? '—' : data.actual_crew) +
+            ', % выполнения: ' + pctTxt +
+            '. Сохранение перезапишет её (время последнего изменения: ' + TM35_RU_DATE.fmtDMYHM(data.updated_at) + ').';
+          document.getElementById('nf-planned').value = data.planned_crew === null ? '' : data.planned_crew;
+          document.getElementById('nf-actual').value = data.actual_crew === null ? '' : data.actual_crew;
+          if (data.fact_pct !== null && data.fact_pct !== undefined) document.getElementById('nf-pct').value = data.fact_pct;
+          document.getElementById('nf-reason').value = data.reason_code || '';
+          document.getElementById('nf-comment').value = data.comment || '';
+        } else {
+          note.style.display = 'none';
+        }
+        // Сроки и подрядчик — свойства РАБОТЫ, не дня: показываются
+        // независимо от того, есть ли факт на выбранную дату (см.
+        // /api/existing-entry, main.py).
+        setHiddenDate('nf-sched-start', data.current_start);
+        setHiddenDate('nf-sched-finish', data.current_finish);
+        document.getElementById('nf-subcontractor').checked = !!data.subcontractor;
+        document.getElementById('nf-subcontractor-name').value = data.subcontractor_name || '';
+        document.getElementById('nf-subcontractor-name').style.display = data.subcontractor ? 'block' : 'none';
+      })
+      .catch(function () { note.style.display = 'none'; });
+  }
+
+  document.getElementById('btn-add-fact').addEventListener('click', function () {
+    document.getElementById('nf-work').innerHTML = workOptionsHtml();
+    document.getElementById('nf-work').value = '';
+    setHiddenDate('nf-date', state.date);
+    document.getElementById('nf-planned').value = '';
+    document.getElementById('nf-actual').value = '';
+    document.getElementById('nf-pct').value = '';
+    document.getElementById('nf-reason').innerHTML = '<option value="">— не указана —</option>' +
+      reasonCodes.map(function (rc) { return '<option value="' + rc[0] + '">' + rc[1] + '</option>'; }).join('');
+    document.getElementById('nf-comment').value = '';
+    setHiddenDate('nf-sched-start', null);
+    setHiddenDate('nf-sched-finish', null);
+    document.getElementById('nf-subcontractor').checked = false;
+    document.getElementById('nf-subcontractor-name').value = '';
+    document.getElementById('nf-subcontractor-name').style.display = 'none';
+    document.getElementById('nf-existing-note').style.display = 'none';
+    document.getElementById('nf-errors').textContent = '';
+    // Дата-пикеры модалки — статическая разметка страницы, уже
+    // инициализированы общим DOMContentLoaded-сканом datepicker.js при
+    // загрузке страницы; повторный init() здесь не нужен (и удвоил бы
+    // обработчики событий) — только setHiddenDate() выше меняет значения.
+    openModal('modal-fact');
+  });
+
+  document.getElementById('nf-work').addEventListener('change', checkExistingForModal);
+  document.getElementById('nf-date').addEventListener('change', checkExistingForModal);
+  document.getElementById('nf-subcontractor').addEventListener('change', function () {
+    document.getElementById('nf-subcontractor-name').style.display = this.checked ? 'block' : 'none';
+  });
+
+  document.getElementById('nf-save').addEventListener('click', function () {
+    var errEl = document.getElementById('nf-errors');
     errEl.textContent = '';
-    postForm('/api/gantt/work', {
-      source: document.getElementById('nw-source').value,
-      name: document.getElementById('nw-name').value,
-      unit: document.getElementById('nw-unit').value,
-      location: document.getElementById('nw-location').value,
+    postForm('/api/shift/fact', {
+      work_id: document.getElementById('nf-work').value,
+      date: document.getElementById('nf-date').value,
+      planned_crew: document.getElementById('nf-planned').value,
+      actual_crew: document.getElementById('nf-actual').value,
+      fact_pct: document.getElementById('nf-pct').value,
+      current_start: document.getElementById('nf-sched-start').value,
+      current_finish: document.getElementById('nf-sched-finish').value,
+      reason_code: document.getElementById('nf-reason').value,
+      comment: document.getElementById('nf-comment').value,
+      subcontractor: document.getElementById('nf-subcontractor').checked ? '1' : '',
+      subcontractor_name: document.getElementById('nf-subcontractor-name').value,
     }).then(function (res) {
       if (res.body.ok) {
-        closeModal('modal-new-work');
-        toast('Добавлено: ' + res.body.code);
+        closeModal('modal-fact');
+        var warn = res.body.warnings && res.body.warnings.length ? ' ' + res.body.warnings.join(' ') : '';
+        toast('Факт сохранён.' + warn);
         load();
       } else {
         errEl.textContent = formatErrors(res);
@@ -425,5 +626,3 @@
 })();
 </script>
 {% endblock %}
-
-

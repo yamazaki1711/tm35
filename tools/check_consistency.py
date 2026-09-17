@@ -20,6 +20,7 @@ LATEST_ID_FORM_ENTRY_CTE в main.py — там же прямо написано:
 Печатает таблицу "показатель / источник A / источник B / сходится ли",
 возвращает ненулевой код при любом расхождении.
 """
+import json
 import re
 import sys
 import urllib.request
@@ -580,6 +581,35 @@ def main_check():
             "/dashboard", int(dash_m.group(1)) if dash_m else None,
             "/rsk/dashboard", int(rsk_m.group(1)) if rsk_m else None,
         )
+
+    # --- ТЗ Якименко А.И., 16.09.2026, задача 3, §3/§7.7 — до этой задачи
+    # экран смены не писал сроки графика вообще (только /gantt писал
+    # current_schedule; форма ввода факта писала мёртвый work.plan_-
+    # finish_date, который никто не читал) — отсюда и был найденный
+    # разрыв "новый срок не двигает график". Проверка ловит именно
+    # повторение этого класса дефекта: сроки, которые видит /api/shift
+    # (правятся прямо в его таблице и в модалке «Ввод факта»), обязаны
+    # буквально совпадать с тем, что рисует /api/gantt — оба читают
+    # одну и ту же current_schedule, второй независимой записи нет.
+    shift_data = json.loads(
+        urllib.request.urlopen("http://localhost:8000/api/shift?all=1", timeout=15).read().decode("utf-8")
+    )
+    gantt_data = json.loads(
+        urllib.request.urlopen("http://localhost:8000/api/gantt?days=7", timeout=15).read().decode("utf-8")
+    )
+    shift_sched = {it["id"]: (it["current_start"], it["current_finish"]) for it in shift_data["items"]}
+    gantt_sched = {}
+    for g in gantt_data["groups"]:
+        for w in g["works"]:
+            gantt_sched[w["id"]] = (w["current_start"], w["current_finish"])
+    common_ids = set(shift_sched) & set(gantt_sched)
+    mismatched = sorted(wid for wid in common_ids if shift_sched[wid] != gantt_sched[wid])
+    check(
+        f"Сроки графика (current_schedule): /api/shift vs /api/gantt — по всем {len(common_ids)} работам"
+        + (f" (расходятся: work_id {mismatched[:5]})" if mismatched else ""),
+        "количество расхождений", len(mismatched),
+        "ожидается", 0,
+    )
 
 
 def print_report():

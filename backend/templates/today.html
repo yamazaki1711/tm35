@@ -50,42 +50,6 @@
 <div class="empty-note">По правилу критичных работ нет.</div>
 {% endif %}
 
-<h2>Ограничения к снятию ({{ open_blockers|length }})</h2>
-{% if open_blockers %}
-<div class="table-wrap">
-<table>
-<tr><th class="nowrap">Тип</th><th>Описание</th><th class="nowrap">Возникло</th><th class="nowrap">Снять до / ответственный</th><th class="nowrap"></th></tr>
-{% for b in open_blockers %}
-<tr>
-  <td class="nowrap">{{ b.blocker_type|ru_blocker_type }}</td>
-  <td class="wrap">{{ b.description|strip_source_marker }}</td>
-  <td class="nowrap">{{ b.created_at|dmy }}</td>
-  <td class="nowrap">
-    <form class="inline-edit" method="post" action="/api/blocker/{{ b.id }}">
-      <span class="dm-picker" data-dm-picker>
-        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-        <input type="hidden" name="expected_resolution_date" value="{{ b.expected_resolution_date or '' }}">
-        <div class="dm-cal" hidden></div>
-      </span>
-      <input type="text" name="responsible_name" placeholder="ответственный" value="{{ b.responsible_name or '' }}" style="width:9rem">
-      <button type="submit">Сохранить</button>
-    </form>
-  </td>
-  <td class="nowrap">
-    <form method="post" action="/api/blocker/{{ b.id }}">
-      <input type="hidden" name="resolve" value="1">
-      <button type="submit" class="btn-ok">Снято</button>
-    </form>
-  </td>
-</tr>
-{% endfor %}
-</table>
-</div>
-{% else %}
-<div class="empty-note">Активных ограничений нет.</div>
-{% endif %}
-
-<p><a href="/gantt">Интерактивный график (рабочая поверхность) →</a> · <a href="/dashboard">Успеваем? →</a></p>
+<p><a href="/gantt">Интерактивный график (рабочая поверхность) →</a> · <a href="/dashboard">Успеваем? →</a> · <a href="/blockers">Ограничения (стоп-факторы) →</a></p>
 {% endblock %}
 

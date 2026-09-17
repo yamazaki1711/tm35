@@ -863,12 +863,25 @@ def get_criticality_data():
     """
     today = object_today()
 
+    # ТЗ Якименко А.И., 16.09.2026, задача 3, §3 — "плановый срок" теперь
+    # может прийти двумя путями: исходный baseline_schedule (импорт/форма
+    # /baseline, отменена) ИЛИ current_schedule (правка прямо в графике —
+    # /gantt, и теперь форма ввода факта на /shift). current_schedule
+    # заведомо надёжнее (внесено человеком через приложение только что,
+    # не оценка confidence из разового импорта) — используется, если
+    # есть, без фильтра confidence; иначе — старое правило high/medium.
+    # Раньше здесь читался только baseline_schedule, из-за чего дата,
+    # внесённая через current_schedule, на /status и /dashboard не была
+    # видна вовсе (тот самый разрыв, см. run log).
     works_with_baseline = query(
         f"""
-        select w.code, w.name, {_work_status_expr()} as status, bs.plan_finish
+        select w.code, w.name, {_work_status_expr()} as status,
+               coalesce(cs.current_finish, bs.plan_finish) as plan_finish
         from work w
-        join baseline_schedule bs on bs.work_id = w.id
-        where bs.plan_finish is not null and bs.confidence in ('high', 'medium')
+        left join baseline_schedule bs on bs.work_id = w.id
+        left join current_schedule cs on cs.work_id = w.id
+        where coalesce(cs.current_finish, bs.plan_finish) is not null
+          and (cs.current_finish is not null or bs.confidence in ('high', 'medium'))
         """
     )
     overdue = compute_overdue(works_with_baseline, today)
@@ -1225,15 +1238,21 @@ def get_lookahead_works(today, horizon_days=14):
     придумывать сигнал, которого нет.
     """
     end = today + timedelta(days=horizon_days)
+    # current_schedule.current_start (правка через /gantt или ввод факта
+    # на /shift) заменяет baseline_schedule.plan_start, когда есть —
+    # см. докстринг get_criticality_data() про тот же принцип и то же
+    # исправление разрыва "новый срок не виден на экранах".
     rows = query(
         f"""
-        select w.id, w.code, w.name, w.location, w.executor_type, w.subcontractor_id, bs.plan_start
+        select w.id, w.code, w.name, w.location, w.executor_type, w.subcontractor_id,
+               coalesce(cs.current_start, bs.plan_start) as plan_start
         from work w
-        join baseline_schedule bs on bs.work_id = w.id
-        where bs.plan_start between %s and %s
-          and bs.confidence in ('high', 'medium')
+        left join baseline_schedule bs on bs.work_id = w.id
+        left join current_schedule cs on cs.work_id = w.id
+        where coalesce(cs.current_start, bs.plan_start) between %s and %s
+          and (cs.current_start is not null or bs.confidence in ('high', 'medium'))
           and {_work_status_expr()} = 'not_started'
-        order by bs.plan_start, w.code
+        order by coalesce(cs.current_start, bs.plan_start), w.code
         """,
         (today, end),
     )
@@ -1257,12 +1276,17 @@ def get_critical_rule_works(today, directive_deadline, trudoemkost_by_work, last
     (тот же принцип, что и в общем калькуляторе Дата↔Люди, но на уровне
     одной работы вместо всего проекта).
     """
+    # coalesce(current_schedule, baseline_schedule) — тот же принцип, что
+    # в get_criticality_data()/get_lookahead_works(), см. их докстринги.
     works = query(
         f"""
-        select w.id, w.code, w.name, w.fact_pct, {_work_status_expr()} as status, bs.plan_finish
+        select w.id, w.code, w.name, w.fact_pct, {_work_status_expr()} as status,
+               coalesce(cs.current_finish, bs.plan_finish) as plan_finish
         from work w
-        join baseline_schedule bs on bs.work_id = w.id
-        where bs.plan_finish is not null and bs.confidence in ('high', 'medium')
+        left join baseline_schedule bs on bs.work_id = w.id
+        left join current_schedule cs on cs.work_id = w.id
+        where coalesce(cs.current_finish, bs.plan_finish) is not null
+          and (cs.current_finish is not null or bs.confidence in ('high', 'medium'))
         """
     )
     blocked_counts = {
@@ -1326,17 +1350,16 @@ def get_today_data():
 
     lookahead = get_lookahead_works(today)
     critical = get_critical_rule_works(today, directive_deadline, trudoemkost_by_work, last_actual_by_work)
-    open_blockers = query(
-        "select id, blocker_type, description, created_at, expected_resolution_date, responsible_name, impact_days "
-        "from blocker where status='active' order by created_at"
-    )
+    # "Ограничения к снятию" убраны с этого экрана (ТЗ Якименко 16.09.2026,
+    # задача 3, §6) — тот же список с возможностью снять/поправить срок
+    # переехал на /blockers (единственная оставшаяся страница ограничений),
+    # см. blockers_page().
 
     return {
         "today": today,
         "directive_deadline": directive_deadline.isoformat() if directive_deadline else None,
         "lookahead": lookahead,
         "critical": critical,
-        "open_blockers": open_blockers,
     }
 
 
@@ -1373,7 +1396,10 @@ def api_blocker_update(
             "update blocker set expected_resolution_date=%s, responsible_name=%s where id=%s",
             (d or None, responsible_name.strip() or None, blocker_id),
         )
-    return RedirectResponse("/today", status_code=303)
+    # ТЗ Якименко 16.09.2026, задача 3, §6 — "Ограничения к снятию" (и
+    # эта форма её редактирования) переехали с /today на /blockers,
+    # единственный оставшийся отправитель этого POST теперь там.
+    return RedirectResponse("/blockers", status_code=303)
 
 
 # ---------------------------------------------------------------------
@@ -2461,21 +2487,22 @@ def validate_date(raw, errors, warnings):
 
 
 @app.get("/form")
-def form_get(request: Request, ok: str = "", w: str = ""):
-    work_rows = query("select id, code, name from work order by code")
-    warnings = w.split("||") if w else []
-    # Регламент Якименко А.И. (28.08.2026): форму заполняют на следующий
-    # день до 11:00 ЗА ПРЕДЫДУЩИЙ день — дата по умолчанию вчера по
-    # календарю объекта, не сегодня и не пустая (было пустой — искать
-    # дату вручную не должно быть нужно).
-    can_write = has_permission(request.state.user, "smr:write")
-    return render(
-        request, "form.html", "form",
-        work_rows=work_rows, reason_codes=REASON_CODES,
-        errors=[], warnings=warnings, ok=bool(ok),
-        values={"date": object_yesterday().isoformat()},
-        can_write=can_write,
-    )
+def form_get(request: Request):
+    # ТЗ Якименко А.И., 16.09.2026, задача 3, §1 — «Ввод факта (одна
+    # запись)» убрана из меню Ввод, её работа переехала в модалку «Ввод
+    # факта» на /shift (§2). Страница /form отвечает редиректом, чтобы
+    # старые ссылки/закладки не попадали на 404 — сама форма и её POST
+    # ниже не рендерятся больше нигде.
+    return RedirectResponse(url="/shift", status_code=301)
+
+
+@app.post("/form")
+def form_post_redirect():
+    # Тот же редирект и для POST — на случай открытой в браузере старой
+    # вкладки с формой: данные из неё не сохраняются (страницы, которая
+    # их обработала бы, больше нет), пользователь просто попадает на
+    # новое место ввода факта вместо ошибки.
+    return RedirectResponse(url="/shift", status_code=303)
 
 
 # ---------------------------------------------------------------------
@@ -2748,6 +2775,47 @@ def api_gantt_cell_save(
     return {"ok": True}
 
 
+def _parse_schedule_dates(current_start, current_finish, errors):
+    """Разбор и перекрёстная проверка пары дат графика — общая часть
+    /api/gantt/schedule и /api/shift/fact (задача 3, ТЗ Якименко
+    16.09.2026, §3: раньше единственным входом в current_schedule был
+    /gantt, форма ввода факта его не писала вовсе — отсюда и был разрыв
+    "график не обновляется")."""
+    start_d = finish_d = None
+    if current_start.strip():
+        try:
+            start_d = date_cls.fromisoformat(current_start.strip())
+        except ValueError:
+            errors.append("Некорректная дата начала графика.")
+    if current_finish.strip():
+        try:
+            finish_d = date_cls.fromisoformat(current_finish.strip())
+        except ValueError:
+            errors.append("Некорректная дата окончания графика.")
+    if start_d and finish_d and finish_d < start_d:
+        errors.append("Дата окончания графика раньше даты начала.")
+    return start_d, finish_d
+
+
+def _write_current_schedule(cur, work_id, start_d, finish_d, user_id, reason):
+    """Единственное место, которое пишет current_schedule — вызывается и
+    из /api/gantt/schedule, и из /api/shift/fact. Одна актуальная строка
+    на работу, не журнал версий."""
+    cur.execute("delete from current_schedule where work_id=%s", (work_id,))
+    cur.execute(
+        "insert into current_schedule (work_id, current_start, current_finish, updated_by, reason) "
+        "values (%s, %s, %s, %s, %s) returning id",
+        (work_id, start_d, finish_d, user_id, reason),
+    )
+    cs_id = cur.fetchone()["id"]
+    cur.execute(
+        "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+        "values (%s, 'current_schedule', %s, 'gantt_schedule_edit', "
+        "jsonb_build_object('work_id', %s, 'current_start', %s, 'current_finish', %s), %s)",
+        (user_id, cs_id, work_id, str(start_d) if start_d else None, str(finish_d) if finish_d else None, reason),
+    )
+
+
 @app.post("/api/gantt/schedule")
 def api_gantt_schedule_save(
     request: Request,
@@ -2757,44 +2825,16 @@ def api_gantt_schedule_save(
     if not has_permission(request.state.user, "smr:write"):
         return JSONResponse({"ok": False, "errors": ["Доступ только для группы СМР."]}, status_code=403)
     errors = []
-    start_d = finish_d = None
-    if current_start.strip():
-        try:
-            start_d = date_cls.fromisoformat(current_start.strip())
-        except ValueError:
-            errors.append("Некорректная дата начала.")
-    if current_finish.strip():
-        try:
-            finish_d = date_cls.fromisoformat(current_finish.strip())
-        except ValueError:
-            errors.append("Некорректная дата окончания.")
-    if start_d and finish_d and finish_d < start_d:
-        errors.append("Дата окончания раньше даты начала.")
-    if not start_d and not finish_d:
+    start_d, finish_d = _parse_schedule_dates(current_start, current_finish, errors)
+    if not start_d and not finish_d and not errors:
         errors.append("Укажите хотя бы одну дату.")
     if errors:
         return JSONResponse({"ok": False, "errors": errors}, status_code=400)
 
     user_id = current_user_id_or_web_form()
-
-    def _do(cur):
-        # Одна актуальная строка current_schedule на работу — не журнал версий.
-        cur.execute("delete from current_schedule where work_id=%s", (work_id,))
-        cur.execute(
-            "insert into current_schedule (work_id, current_start, current_finish, updated_by, reason) "
-            "values (%s, %s, %s, %s, %s) returning id",
-            (work_id, start_d, finish_d, user_id, "изменено через график (веб)"),
-        )
-        cs_id = cur.fetchone()["id"]
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
-            "values (%s, 'current_schedule', %s, 'gantt_schedule_edit', "
-            "jsonb_build_object('work_id', %s, 'current_start', %s, 'current_finish', %s), "
-            "'сдвиг сроков через график')",
-            (user_id, cs_id, work_id, str(start_d) if start_d else None, str(finish_d) if finish_d else None),
-        )
-
-    run_in_transaction(_do)
+    run_in_transaction(lambda cur: _write_current_schedule(
+        cur, work_id, start_d, finish_d, user_id, "изменено через график (веб)"
+    ))
     return {"ok": True}
 
 
@@ -2844,36 +2884,45 @@ def api_gantt_new_work(
     return {"ok": True, "code": code}
 
 
+def _assign_subcontractor(cur, work_id, name, user_id, reason):
+    """Единственное место, которое назначает субподрядчика работе —
+    вызывается и из /api/gantt/subcontractor, и из /api/shift/fact
+    (задача 3, ТЗ Якименко 16.09.2026, §5). Справочник `subcontractor`
+    уже существовал (координатор проверил заранее, не заводил параллельно
+    свободный текст) — по имени находит существующую строку или
+    создаёт новую, назначение хранится на work (subcontractor_id/
+    executor_type), не на дневной записи — субподрядчик относится к
+    работе, не к одной смене."""
+    cur.execute("select id from subcontractor where name=%s", (name,))
+    row = cur.fetchone()
+    if row:
+        sub_id = row["id"]
+    else:
+        cur.execute("insert into subcontractor (name) values (%s) returning id", (name,))
+        sub_id = cur.fetchone()["id"]
+    cur.execute(
+        "update work set subcontractor_id=%s, executor_type='subcontract', updated_at=now() where id=%s",
+        (sub_id, work_id),
+    )
+    cur.execute(
+        "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+        "values (%s, 'work', %s, 'gantt_assign_subcontractor', "
+        "jsonb_build_object('subcontractor', %s), %s)",
+        (user_id, work_id, name, reason),
+    )
+
+
 @app.post("/api/gantt/subcontractor")
 def api_gantt_subcontractor(request: Request, work_id: int = Form(...), name: str = Form("")):
     # Права по веткам, 30.08.2026 — график (СМР), раньше не проверялось.
     if not has_permission(request.state.user, "smr:write"):
         return JSONResponse({"ok": False, "errors": ["Доступ только для группы СМР."]}, status_code=403)
-    if not name.strip():
+    name_val = name.strip()
+    if not name_val:
         return JSONResponse({"ok": False, "errors": ["Название субподрядчика обязательно."]}, status_code=400)
 
     user_id = current_user_id_or_web_form()
-
-    def _do(cur):
-        cur.execute("select id from subcontractor where name=%s", (name.strip(),))
-        row = cur.fetchone()
-        if row:
-            sub_id = row["id"]
-        else:
-            cur.execute("insert into subcontractor (name) values (%s) returning id", (name.strip(),))
-            sub_id = cur.fetchone()["id"]
-        cur.execute(
-            "update work set subcontractor_id=%s, executor_type='subcontract', updated_at=now() where id=%s",
-            (sub_id, work_id),
-        )
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
-            "values (%s, 'work', %s, 'gantt_assign_subcontractor', "
-            "jsonb_build_object('subcontractor', %s), 'назначено через график')",
-            (user_id, work_id, name.strip()),
-        )
-
-    run_in_transaction(_do)
+    run_in_transaction(lambda cur: _assign_subcontractor(cur, work_id, name_val, user_id, "назначено через график"))
     return {"ok": True}
 
 
@@ -2951,10 +3000,16 @@ def api_shift(date: str = "", all: str = "", q: str = ""):
         like = f"%{q.strip()}%"
         params += [like, like]
 
+    # cs.current_start/current_finish — ТЗ Якименко 16.09.2026, §3: те же
+    # два столбца, что читает /api/gantt для рисования графика, здесь
+    # показываются рядом с фактом и редактируются тем же путём
+    # (/api/gantt/schedule, см. shift.html) — один источник, не второй.
     works = query(
         f"""
-        select w.id, w.code, w.name, w.location, w.source, {_work_status_expr()} as status, w.fact_pct as work_fact_pct
+        select w.id, w.code, w.name, w.location, w.source, {_work_status_expr()} as status, w.fact_pct as work_fact_pct,
+               cs.current_start, cs.current_finish
         from work w
+        left join current_schedule cs on cs.work_id = w.id
         where true {where_extra}
         order by w.source, w.code
         """,
@@ -2982,12 +3037,23 @@ def api_shift(date: str = "", all: str = "", q: str = ""):
             "comment": _strip_source_marker(r["comment"]) if r else None,
             "updated_at": to_object_tz(r["updated_at"]).isoformat() if r and r["updated_at"] else None,
             "filled": r is not None,
+            "current_start": w["current_start"].isoformat() if w["current_start"] else None,
+            "current_finish": w["current_finish"].isoformat() if w["current_finish"] else None,
         })
+
+    # Список работ для модалки «Ввод факта» (задача 3, §2, §4) — работы со
+    # 100% (готовы физически) идут отдельным блоком в конце списка, не
+    # пропадают из выбора (уже проставленный процент по ошибке всё ещё
+    # можно поправить, работа не потерялась из справочника).
+    work_rows = query(
+        "select id, code, name, (coalesce(fact_pct, 0) >= 100) as is_done "
+        "from work order by (coalesce(fact_pct, 0) >= 100), code"
+    )
 
     return {
         "date": d.isoformat(), "today": object_today().isoformat(),
         "all": bool(all), "q": q, "has_plan_for_date": bool(planned_by_work),
-        "items": items, "reason_codes": REASON_CODES,
+        "items": items, "reason_codes": REASON_CODES, "work_rows": work_rows,
     }
 
 
@@ -3082,6 +3148,125 @@ def api_shift_cell_save(
 
 
 # ---------------------------------------------------------------------
+# Модалка «Ввод факта» на /shift (ТЗ Якименко А.И., 16.09.2026, задача 3,
+# §2) — заменяет собой отдельную страницу /form (была
+# «Ввод факта — веб-форма», теперь редиректит сюда же) и кнопку
+# «+ добавить работу» (создание новой работы осталось на /gantt,
+# /api/gantt/work не тронут). Одна запись факта, выбор работы из уже
+# существующего справочника — плюс, впервые в одной форме: сроки (§3,
+# через _write_current_schedule — тот же путь, что и правка прямо в
+# графике) и подрядчик (§5, через _assign_subcontractor). AJAX-эндпоинт
+# (JSON), не редирект — /shift сам себя перерисовывает после успеха,
+# как и остальные ячейки этого экрана.
+# ---------------------------------------------------------------------
+
+@app.post("/api/shift/fact")
+def api_shift_fact_save(
+    request: Request,
+    work_id: str = Form(""), date: str = Form(""),
+    planned_crew: str = Form(""), actual_crew: str = Form(""), fact_pct: str = Form(""),
+    current_start: str = Form(""), current_finish: str = Form(""),
+    reason_code: str = Form(""), comment: str = Form(""),
+    subcontractor: str = Form(""), subcontractor_name: str = Form(""),
+):
+    if not has_permission(request.state.user, "smr:write"):
+        return JSONResponse({"ok": False, "errors": ["Доступ только для группы СМР."]}, status_code=403)
+
+    errors = []
+    warnings = []
+
+    work_row = None
+    if not work_id.strip():
+        errors.append("«Работа» обязательна.")
+    else:
+        try:
+            work_row = query_one("select id from work where id=%s", (int(work_id),))
+        except ValueError:
+            errors.append("«Работа» указана некорректно.")
+        else:
+            if not work_row:
+                errors.append("Выбранная работа не найдена в справочнике.")
+
+    parsed_date = validate_date(date, errors, warnings)
+    planned_val = validate_crew(planned_crew, "План людей", errors)
+    actual_val = validate_crew(actual_crew, "Факт людей", errors)
+
+    pct_val = None
+    if fact_pct.strip():
+        try:
+            pct_val = float(fact_pct.replace(",", "."))
+        except ValueError:
+            errors.append("«Процент выполнения» указан некорректно.")
+        else:
+            if pct_val < 0 or pct_val > 100:
+                errors.append("«Процент выполнения» должен быть от 0 до 100.")
+
+    start_d, finish_d = _parse_schedule_dates(current_start, current_finish, errors)
+
+    reason_val = reason_code.strip() or None
+    if reason_val and reason_val not in REASON_CODE_SET:
+        errors.append("Причина простоя указана некорректно.")
+    if reason_val == "OTHER" and not comment.strip():
+        errors.append("При причине «Иное» комментарий обязателен.")
+
+    comment_val = comment.strip() or None
+    if planned_val is None and actual_val is None and pct_val is None and not comment_val:
+        errors.append("Заполните хотя бы одно из: план людей, факт людей, % выполнения, комментарий — пустая запись бессмысленна.")
+
+    sub_checked = subcontractor == "1"
+    sub_name_val = subcontractor_name.strip()
+    if sub_checked and not sub_name_val:
+        errors.append("Отмечено «Подрядчик» — укажите название.")
+
+    if errors:
+        return JSONResponse({"ok": False, "errors": errors}, status_code=400)
+
+    user_id = current_user_id_or_web_form()
+
+    def _do(cur):
+        cur.execute(
+            """
+            insert into daily_progress
+                (date, work_id, planned_crew, actual_crew, fact_pct, reason_code, comment, source, created_by, updated_at)
+            values (%s, %s, %s, %s, %s, %s, %s, 'web_form', %s, now())
+            on conflict (date, work_id, source) do update set
+                planned_crew = excluded.planned_crew,
+                actual_crew = excluded.actual_crew,
+                fact_pct = excluded.fact_pct,
+                reason_code = excluded.reason_code,
+                comment = excluded.comment,
+                updated_at = now()
+            returning id
+            """,
+            (parsed_date, work_row["id"], planned_val, actual_val, pct_val, reason_val, comment_val, user_id),
+        )
+        dp_id = cur.fetchone()["id"]
+
+        if pct_val is not None:
+            cur.execute(
+                "update work set fact_pct = %s, updated_at = now() where id = %s",
+                (pct_val, work_row["id"]),
+            )
+
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+            "values (%s, 'daily_progress', %s, 'shift_fact_submit', "
+            "jsonb_build_object('date', %s::text, 'work_id', %s, 'planned_crew', %s, "
+            "'actual_crew', %s, 'fact_pct', %s), 'модалка «Ввод факта» /shift')",
+            (user_id, dp_id, str(parsed_date), work_row["id"], planned_val, actual_val, pct_val),
+        )
+
+        if start_d or finish_d:
+            _write_current_schedule(cur, work_row["id"], start_d, finish_d, user_id, "изменено через ввод факта (смена)")
+
+        if sub_checked and sub_name_val:
+            _assign_subcontractor(cur, work_row["id"], sub_name_val, user_id, "назначено через ввод факта (смена)")
+
+    run_in_transaction(_do)
+    return {"ok": True, "warnings": warnings}
+
+
+# ---------------------------------------------------------------------
 # Выгрузка в CSV — задача координатора: "чтобы отказаться от Excel как
 # источника, нужно дать Excel как выгрузку" (документ «Критерии
 # готовности к запрету Excel», §2). Пять реестров, явно перечисленных
@@ -3130,8 +3315,14 @@ def export_works_csv(source: str = "", status: str = "", executor_type: str = ""
     # не всегда весь реестр целиком. Статус — та же _work_status_expr(),
     # что и на /works (координатор, 08.09.2026).
     status_expr = _work_status_expr(None)
-    sql = (f"select code, source, location, name, unit, {status_expr} as status, executor_type, "
-           "fact_pct, plan_finish_date from work where true")
+    # Плановый срок — current_schedule, если работа уже сдвигалась через
+    # /gantt или ввод факта на /shift (§3, ТЗ Якименко 16.09.2026),
+    # иначе — старый work.plan_finish_date (писала снятая форма /form,
+    # значения из неё не пропадают, просто больше не обновляются оттуда).
+    sql = (f"select work.code, work.source, work.location, work.name, work.unit, "
+           f"{status_expr} as status, work.executor_type, work.fact_pct, "
+           "coalesce(cs.current_finish, work.plan_finish_date) as plan_finish_date "
+           "from work left join current_schedule cs on cs.work_id = work.id where true")
     params = []
     if source:
         sql += " and source=%s"; params.append(source)
@@ -3253,182 +3444,25 @@ def export_blockers_csv():
 
 
 # ---------------------------------------------------------------------
-# Форма плановых сроков (`baseline_schedule`) — до 28.08.2026 формы не
-# было вообще, все 146 заполненных строк попали разовым импортом
-# (миграция 003_baseline_source.sql). Питает /dashboard, /today,
-# /critical через confidence in ('high','medium').
+# Форма плановых сроков (`baseline_schedule`) — ТЗ Якименко А.И.,
+# 16.09.2026, задача 3, §1: убрана из меню, её работа переехала в
+# экран смены (§3) — Дата начала/окончания работ теперь пишутся в
+# current_schedule прямо из /shift, тот же путь, что уже использовал
+# /gantt. baseline_schedule как таблица не тронута (146 строк разового
+# импорта остаются источником для работ, у которых current_schedule ещё
+# нет — см. coalesce() в get_criticality_data()/get_lookahead_works()/
+# get_critical_rule_works()), просто больше не редактируется вручную
+# через отдельную форму — /baseline отвечает редиректом.
 # ---------------------------------------------------------------------
 
 @app.get("/baseline")
-def baseline_page(request: Request, ok: str = "", edit_id: str = "", work_id: str = ""):
-    rows = query(
-        "select bs.id, bs.work_id, w.id as work_pk, w.code, w.name, bs.plan_start, bs.plan_finish, bs.plan_crew, "
-        "bs.confidence, bs.baseline_source, bs.comment "
-        "from work w left join baseline_schedule bs on bs.work_id = w.id "
-        "order by (bs.id is null), w.code"
-    )
-    work_rows = query("select id, code, name from work order by code")
-
-    edit_row = None
-    if edit_id.strip():
-        try:
-            edit_row = query_one(
-                "select id, work_id, plan_start, plan_finish, plan_crew, confidence, comment "
-                "from baseline_schedule where id=%s", (int(edit_id),),
-            )
-        except ValueError:
-            edit_row = None
-
-    values = {}
-    if edit_row:
-        values = {
-            "work_id": edit_row["work_id"],
-            "plan_start": edit_row["plan_start"].isoformat() if edit_row["plan_start"] else "",
-            "plan_finish": edit_row["plan_finish"].isoformat() if edit_row["plan_finish"] else "",
-            "plan_crew": edit_row["plan_crew"] if edit_row["plan_crew"] is not None else "",
-            "confidence": edit_row["confidence"] or "",
-            "comment": edit_row["comment"] or "",
-        }
-    elif work_id.strip():
-        values = {"work_id": work_id.strip()}
-
-    return render(
-        request, "baseline.html", "baseline", rows=rows, work_rows=work_rows,
-        errors=[], ok=bool(ok), values=values, edit_id=edit_row["id"] if edit_row else "",
-    )
+def baseline_page():
+    return RedirectResponse(url="/shift", status_code=301)
 
 
 @app.post("/baseline")
-def baseline_post(
-    request: Request,
-    work_id: str = Form(""),
-    plan_start: str = Form(""),
-    plan_finish: str = Form(""),
-    plan_crew: str = Form(""),
-    confidence: str = Form(""),
-    comment: str = Form(""),
-    edit_id: str = Form(""),
-):
-    # Права по веткам, 30.08.2026 — ЯВНЫЙ РАЗВОРОТ прежнего решения.
-    # Ранее (перепроверка доступа, 30.08.2026, утро) здесь стояло
-    # "только is_admin" — живой тест под denisov без роли admin тогда
-    # показал реальную запись в чужую работу. Новое задание координатора
-    # (перестройка прав на две ветки) прямо и дважды называет "плановые
-    # сроки" в списке того, что должна уметь писать ВСЯ группа СМР, не
-    # только координатор — проверка раздела 1.2 задания прямо этого
-    # требует. Меняю на admin ИЛИ zone:smr — не тихо, фиксирую здесь.
-    if not (is_admin(request.state.user) or has_permission(request.state.user, "smr:write")):
-        return JSONResponse({"ok": False, "error": "Плановые сроки может менять координатор или группа СМР."}, status_code=403)
-
-    errors = []
-
-    work_id_val = None
-    if not work_id.strip():
-        errors.append("«Работа» обязательна.")
-    else:
-        try:
-            work_id_val = int(work_id)
-        except ValueError:
-            errors.append("«Работа» указана некорректно.")
-        else:
-            if not query_one("select id from work where id=%s", (work_id_val,)):
-                errors.append("Выбранная работа не найдена в справочнике.")
-
-    start_val = None
-    if plan_start.strip():
-        try:
-            start_val = date_cls.fromisoformat(plan_start.strip())
-        except ValueError:
-            errors.append("«Дата начала» указана некорректно.")
-
-    finish_val = None
-    if plan_finish.strip():
-        try:
-            finish_val = date_cls.fromisoformat(plan_finish.strip())
-        except ValueError:
-            errors.append("«Дата окончания» указана некорректно.")
-
-    if start_val and finish_val and finish_val < start_val:
-        errors.append("Дата окончания раньше даты начала.")
-    if not start_val and not finish_val:
-        errors.append("Укажите хотя бы одну дату (начала или окончания).")
-
-    crew_val = validate_crew(plan_crew, "Плановая численность", errors)
-
-    if confidence not in RU_CONFIDENCE:
-        errors.append("«Уверенность» обязательна и должна быть из списка.")
-
-    comment_val = comment.strip() or None
-    edit_id_val = None
-    if edit_id.strip():
-        try:
-            edit_id_val = int(edit_id)
-        except ValueError:
-            errors.append("Некорректный идентификатор редактируемой записи.")
-
-    if errors:
-        rows = query(
-            "select bs.id, bs.work_id, w.id as work_pk, w.code, w.name, bs.plan_start, bs.plan_finish, bs.plan_crew, "
-            "bs.confidence, bs.baseline_source, bs.comment "
-            "from work w left join baseline_schedule bs on bs.work_id = w.id "
-            "order by (bs.id is null), w.code"
-        )
-        work_rows = query("select id, code, name from work order by code")
-        return render(
-            request, "baseline.html", "baseline", rows=rows, work_rows=work_rows,
-            errors=errors, ok=False, edit_id=edit_id,
-            values={
-                "work_id": work_id, "plan_start": plan_start, "plan_finish": plan_finish,
-                "plan_crew": plan_crew, "confidence": confidence, "comment": comment,
-            },
-        )
-
-    user_id = current_user_id_or_web_form()
-
-    def _do(cur):
-        existing_id = edit_id_val
-        if not existing_id:
-            cur.execute("select id from baseline_schedule where work_id=%s order by id limit 1", (work_id_val,))
-            row = cur.fetchone()
-            existing_id = row["id"] if row else None
-
-        if existing_id:
-            cur.execute(
-                """
-                update baseline_schedule set
-                    plan_start=%s, plan_finish=%s, plan_crew=%s, confidence=%s, comment=%s,
-                    baseline_source='web_form', approved_by=%s, approved_at=now()
-                where id=%s
-                """,
-                (start_val, finish_val, crew_val, confidence, comment_val, user_id, existing_id),
-            )
-            action = "baseline_update"
-        else:
-            cur.execute(
-                """
-                insert into baseline_schedule
-                    (work_id, plan_start, plan_finish, plan_crew, confidence, comment,
-                     baseline_source, approved_by, approved_at)
-                values (%s, %s, %s, %s, %s, %s, 'web_form', %s, now())
-                returning id
-                """,
-                (work_id_val, start_val, finish_val, crew_val, confidence, comment_val, user_id),
-            )
-            existing_id = cur.fetchone()["id"]
-            action = "baseline_create"
-
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
-            "values (%s, 'baseline_schedule', %s, %s, "
-            "jsonb_build_object('work_id', %s, 'plan_start', %s, 'plan_finish', %s, "
-            "'plan_crew', %s, 'confidence', %s, 'comment', %s), 'форма /baseline')",
-            (user_id, existing_id, action, work_id_val,
-             str(start_val) if start_val else None, str(finish_val) if finish_val else None,
-             crew_val, confidence, comment_val),
-        )
-
-    run_in_transaction(_do)
-    return RedirectResponse(url="/baseline?ok=1", status_code=303)
+def baseline_post_redirect():
+    return RedirectResponse(url="/shift", status_code=303)
 
 
 # ---------------------------------------------------------------------
@@ -3476,38 +3510,25 @@ def data_hub(request: Request):
 def healthz():
     query_one("select 1 as ok")
     return {"status": "ok"}
-"""
-Патч для main.py — добавляет:
-1. Поля fact_pct и plan_finish_date в POST /form
-2. Обновление существующего эндпоинта GET /api/existing-entry (возвращает fact_pct, plan_finish_date)
-3. Новые эндпоинты: /id-packages, /changes, /prescriptions (GET — список, POST — добавить)
-4. Jinja2-фильтр fmt_dmy для форматирования дат
-
-Этот файл нужно вставить в main.py перед последней строкой (или в любое место после импортов).
-"""
-
-# ====== Добавить к импортам (если ещё нет) ======
-from datetime import datetime as _dt, timedelta as _td
-
 def _parse_date(s):
-    """Парсит дату из строки. Возвращает date или None."""
+    """Парсит дату (ISO или ДД.ММ.ГГГГ) из строки. Возвращает date или None."""
     if not s or not s.strip():
         return None
     s = s.strip()
     for fmt in ('%Y-%m-%d', '%d.%m.%Y'):
         try:
-            return _dt.strptime(s, fmt).date()
+            return datetime_cls.strptime(s, fmt).date()
         except ValueError:
             continue
     return None
 
-# ====== Jinja2-фильтр для дат ======
+
 def _fmt_dmy(value):
     if not value:
         return ''
     if isinstance(value, str):
         try:
-            value = _dt.fromisoformat(value.replace('Z', '+00:00')).date()
+            value = datetime_cls.fromisoformat(value.replace('Z', '+00:00')).date()
         except Exception:
             return value
     try:
@@ -3515,175 +3536,53 @@ def _fmt_dmy(value):
     except Exception:
         return str(value)
 
+
 templates.env.filters['fmt_dmy'] = _fmt_dmy
 
-# ====== Обновлённый POST /form с поддержкой fact_pct и plan_finish_date ======
-# (заменяет существующий form_post)
-
-@app.post("/form")
-def form_post_v2(
-    request: Request,
-    work_id: str = Form(""),
-    date: str = Form(""),
-    planned_crew: str = Form(""),
-    actual_crew: str = Form(""),
-    fact_pct: str = Form(""),
-    plan_finish_date: str = Form(""),
-    reason_code: str = Form(""),
-    comment: str = Form(""),
-):
-    # Права по веткам, 30.08.2026 — ввод факта (СМР), раньше не
-    # проверялось. КРИТИЧНЫЙ путь — контур СМР работает ежедневно,
-    # проверен живьём под ОБЕ группы сразу после деплоя. HTML-рендер
-    # ошибки, не JSON — та же форма ниже так делает на все остальные
-    # ошибки валидации, эта страница не fetch-форма.
-    if not has_permission(request.state.user, "smr:write"):
-        work_rows = query("select id, code, name from work order by code")
-        return render(
-            request, "form.html", "form",
-            work_rows=work_rows, reason_codes=REASON_CODES,
-            errors=["Доступ только для группы СМР."], warnings=[], ok=False,
-            values={
-                "work_id": work_id, "date": date, "planned_crew": planned_crew,
-                "actual_crew": actual_crew, "fact_pct": fact_pct,
-                "plan_finish_date": plan_finish_date,
-                "reason_code": reason_code, "comment": comment,
-            },
-        )
-    errors = []
-    warnings = []
-
-    work_row = None
-    if not work_id.strip():
-        errors.append("«Работа» обязательна.")
-    else:
-        try:
-            work_row = query_one("select id, code, name from work where id=%s", (int(work_id),))
-        except ValueError:
-            errors.append("«Работа» указана некорректно.")
-        if work_id.strip() and not work_row:
-            errors.append("Выбранная работа не найдена в справочнике.")
-
-    parsed_date = validate_date(date, errors, warnings)
-    planned_val = validate_crew(planned_crew, "План людей", errors)
-    actual_val = validate_crew(actual_crew, "Факт людей", errors)
-
-    # Валидация fact_pct
-    pct_val = None
-    if fact_pct.strip():
-        try:
-            pct_val = float(fact_pct.replace(',', '.'))
-            if pct_val < 0 or pct_val > 100:
-                errors.append("«Процент выполнения» должен быть от 0 до 100.")
-        except ValueError:
-            errors.append("«Процент выполнения» указан некорректно.")
-
-    # Валидация plan_finish_date
-    finish_date_val = None
-    if plan_finish_date.strip():
-        finish_date_val = _parse_date(plan_finish_date)
-        if not finish_date_val:
-            errors.append("«Плановый срок окончания» указан некорректно (формат ДД.ММ.ГГГГ).")
-
-    reason_val = reason_code.strip() or None
-    if reason_val and reason_val not in REASON_CODE_SET:
-        errors.append("Причина простоя указана некорректно.")
-    if reason_val == "OTHER" and not comment.strip():
-        errors.append("При причине «Иное» комментарий обязателен.")
-
-    comment_val = comment.strip() or None
-    if planned_val is None and actual_val is None and pct_val is None and not comment_val:
-        errors.append("Заполните хотя бы одно из: план людей, факт людей, % выполнения, комментарий — пустая запись бессмысленна.")
-
-    if errors:
-        work_rows = query("select id, code, name from work order by code")
-        return render(
-            request, "form.html", "form",
-            work_rows=work_rows, reason_codes=REASON_CODES,
-            errors=errors, warnings=warnings, ok=False,
-            values={
-                "work_id": work_id, "date": date, "planned_crew": planned_crew,
-                "actual_crew": actual_crew, "fact_pct": fact_pct,
-                "plan_finish_date": plan_finish_date,
-                "reason_code": reason_code, "comment": comment,
-            },
-        )
-
-    user_id = current_user_id_or_web_form()
-
-    def _do(cur):
-        cur.execute(
-            """
-            insert into daily_progress
-                (date, work_id, planned_crew, actual_crew, fact_pct, reason_code, comment, source, created_by, updated_at)
-            values (%s, %s, %s, %s, %s, %s, %s, 'web_form', %s, now())
-            on conflict (date, work_id, source) do update set
-                planned_crew = excluded.planned_crew,
-                actual_crew = excluded.actual_crew,
-                fact_pct = excluded.fact_pct,
-                reason_code = excluded.reason_code,
-                comment = excluded.comment,
-                updated_at = now()
-            returning id
-            """,
-            (parsed_date, work_row["id"], planned_val, actual_val, pct_val, reason_val, comment_val, user_id),
-        )
-        dp_id = cur.fetchone()["id"]
-
-        # Если указан % выполнения — обновить итоговый % по работе
-        if pct_val is not None:
-            cur.execute(
-                "update work set fact_pct = %s, updated_at = now() where id = %s",
-                (pct_val, work_row["id"]),
-            )
-
-        # Если указан плановый срок окончания — обновить
-        if finish_date_val is not None:
-            cur.execute(
-                "update work set plan_finish_date = %s, updated_at = now() where id = %s",
-                (finish_date_val, work_row["id"]),
-            )
-
-        cur.execute(
-            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
-            "values (%s, 'daily_progress', %s, 'web_form_submit', "
-            "jsonb_build_object('date', %s::text, 'work_id', %s, 'planned_crew', %s, "
-            "'actual_crew', %s, 'fact_pct', %s, 'plan_finish_date', %s, "
-            "'reason_code', %s, 'comment', %s), 'веб-форма v2')",
-            (user_id, dp_id, str(parsed_date), work_row["id"], planned_val, actual_val,
-             pct_val, str(finish_date_val) if finish_date_val else None,
-             reason_val, comment_val),
-        )
-        return dp_id
-
-    run_in_transaction(_do)
-    q = "ok=1"
-    if warnings:
-        q += "&w=" + urllib.parse.quote("||".join(warnings))
-    return RedirectResponse(url=f"/form?{q}", status_code=303)
+# Старый /form (POST) — form_post_v2 — удалён вместе со страницей /form
+# (ТЗ Якименко 16.09.2026, задача 3, §1-2): ввод факта переехал в
+# модалку «Ввод факта» на /shift (/api/shift/fact, см. выше), сроки —
+# в current_schedule через ту же модалку, а не в дохлый work.plan_-
+# finish_date (тот столбец писала только эта форма, и никто, кроме неё
+# же, никогда не читал — ровно то, что не давало /gantt и /status видеть
+# новые сроки, см. run log). Единственный писатель /form теперь —
+# редирект на /shift (см. form_get/form_post_redirect выше).
 
 
-# ====== Обновлённый GET /api/existing-entry (возвращает fact_pct, plan_finish_date) ======
 @app.get("/api/existing-entry")
 def api_existing_entry(work_id: int, date: str):
-    row = query_one(
-        "select dp.planned_crew, dp.actual_crew, dp.fact_pct, dp.comment, dp.reason_code, dp.updated_at, "
-        "w.plan_finish_date "
-        "from daily_progress dp join work w on w.id = dp.work_id "
-        "where dp.work_id=%s and dp.date=%s and dp.source='web_form'",
+    """Подгрузка модалки «Ввод факта» на /shift при выборе работы/даты —
+    задача 3, ТЗ Якименко 16.09.2026. Сроки графика и подрядчик относятся
+    к РАБОТЕ, не к дню (см. _write_current_schedule/_assign_subcontractor) —
+    показываются независимо от того, есть ли уже факт на выбранную дату,
+    поэтому запрос к work — отдельный, не через join с daily_progress
+    (тот вернул бы NULL по обеим колонкам, пока факта на эту дату нет)."""
+    work_row = query_one(
+        "select w.executor_type, sc.name as subcontractor_name, "
+        "cs.current_start, cs.current_finish "
+        "from work w "
+        "left join subcontractor sc on sc.id = w.subcontractor_id "
+        "left join current_schedule cs on cs.work_id = w.id "
+        "where w.id=%s",
+        (work_id,),
+    )
+    dp_row = query_one(
+        "select planned_crew, actual_crew, fact_pct, comment, reason_code, updated_at "
+        "from daily_progress where work_id=%s and date=%s and source='web_form'",
         (work_id, date),
     )
-    if not row:
-        return {"exists": False}
     return {
-        "exists": True,
-        "planned_crew": row["planned_crew"],
-        "actual_crew": row["actual_crew"],
-        "fact_pct": row["fact_pct"],
-        "plan_finish_date": row["plan_finish_date"].isoformat() if row["plan_finish_date"] else None,
-        "comment": row["comment"],
-        "reason_code": row["reason_code"],
-        "updated_at": to_object_tz(row["updated_at"]).isoformat() if row["updated_at"] else None,
+        "exists": dp_row is not None,
+        "planned_crew": dp_row["planned_crew"] if dp_row else None,
+        "actual_crew": dp_row["actual_crew"] if dp_row else None,
+        "fact_pct": dp_row["fact_pct"] if dp_row else None,
+        "comment": dp_row["comment"] if dp_row else None,
+        "reason_code": dp_row["reason_code"] if dp_row else None,
+        "updated_at": to_object_tz(dp_row["updated_at"]).isoformat() if dp_row and dp_row["updated_at"] else None,
+        "current_start": work_row["current_start"].isoformat() if work_row and work_row["current_start"] else None,
+        "current_finish": work_row["current_finish"].isoformat() if work_row and work_row["current_finish"] else None,
+        "subcontractor": bool(work_row and work_row["executor_type"] == "subcontract"),
+        "subcontractor_name": work_row["subcontractor_name"] if work_row else None,
     }
 
 
@@ -6027,8 +5926,8 @@ def changes_post(
     overdue_val = None
     if req_date_val:
         
-        plan_resp_val = req_date_val + _td(days=sla_val)
-        today = _dt.now().date()
+        plan_resp_val = req_date_val + timedelta(days=sla_val)
+        today = datetime_cls.now().date()
         if not status or status in ('DRAFT', 'REQUEST_SENT', 'IN_WORK_DESIGNER'):
             if today > plan_resp_val:
                 overdue_val = (today - plan_resp_val).days
@@ -6152,8 +6051,8 @@ def change_detail_post(
     plan_resp_val = None
     overdue_val = None
     if req_date_val:
-        plan_resp_val = req_date_val + _td(days=sla_val)
-        today = _dt.now().date()
+        plan_resp_val = req_date_val + timedelta(days=sla_val)
+        today = datetime_cls.now().date()
         if not status or status in ('DRAFT', 'REQUEST_SENT', 'IN_WORK_DESIGNER'):
             if today > plan_resp_val:
                 overdue_val = (today - plan_resp_val).days
