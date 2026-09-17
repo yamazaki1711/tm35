@@ -1,29 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>Обзор РСК</h1>
-<p class="subtitle"><a href="/rsk">Реестр →</a> · <a href="/rsk/processing">Отработка →</a> · <a href="/rsk/import">Загрузить акт →</a></p>
+<p class="subtitle"><a href="/rsk">Реестр →</a> · <a href="/rsk/processing">Отработка →</a></p>
 
+{# ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, тот же порядок и те
+   же числа, что в блоке «Обзор РСК» на /dashboard (home.html) — обе
+   страницы читают compute_rsk_dashboard_stats(), второй источник не
+   заводится. #}
 <div class="kpi-row">
   <div class="kpi">
     <div class="kpi-num">{{ tiles.total_active or 0 }}</div>
-    <div class="kpi-label">Всего активных</div>
+    <div class="kpi-label">Активных замечаний</div>
   </div>
   <div class="kpi">
     <div class="kpi-num ok">{{ tiles.ready_to_close or 0 }}</div>
-    <div class="kpi-label">Готово к снятию</div>
-    <div class="kpi-sub">все треки закрыты</div>
+    <div class="kpi-label">Готовы к снятию</div>
   </div>
   <div class="kpi">
     <div class="kpi-num warn">{{ tiles.blocked_by_id or 0 }}</div>
-    <div class="kpi-label">Заблокировано ожиданием ИД</div>
+    <div class="kpi-label">Предъявить ИД</div>
   </div>
   <div class="kpi">
     <div class="kpi-num warn">{{ tiles.needs_rd or 0 }}</div>
-    <div class="kpi-label">Ждёт корректировки РД</div>
+    <div class="kpi-label">Корректировка ПД/РД</div>
   </div>
   <div class="kpi">
     <div class="kpi-num danger">{{ tiles.rejected or 0 }}</div>
     <div class="kpi-label">Отклонено РСК</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ tiles.resolved or 0 }}</div>
+    <div class="kpi-label">Устранено</div>
   </div>
 </div>
 

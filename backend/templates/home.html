@@ -141,6 +141,10 @@
       <h2><a href="/rsk/dashboard">Обзор РСК</a></h2>
     </div>
   </div>
+  {# ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, тот же порядок и
+     те же числа, что на /rsk/dashboard (rsk_dashboard.html) — обе
+     страницы читают compute_rsk_dashboard_stats(), второй источник не
+     заводится. #}
   <div class="kpi-row">
     <div class="kpi">
       <div class="kpi-num">{{ rsk_dash.tiles.total_active or 0 }}</div>
@@ -148,12 +152,23 @@
     </div>
     <div class="kpi">
       <div class="kpi-num ok">{{ rsk_dash.tiles.ready_to_close or 0 }}</div>
-      <div class="kpi-label">Готово к снятию</div>
+      <div class="kpi-label">Готовы к снятию</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num {{ 'warn' if (rsk_dash.tiles.blocked_by_id or 0) + (rsk_dash.tiles.needs_rd or 0) > 0 else '' }}">{{ (rsk_dash.tiles.blocked_by_id or 0) + (rsk_dash.tiles.needs_rd or 0) }}</div>
-      <div class="kpi-label">Заблокировано</div>
-      <div class="kpi-sub">{{ rsk_dash.tiles.blocked_by_id or 0 }} ждёт ИД · {{ rsk_dash.tiles.needs_rd or 0 }} ждёт корректировки РД</div>
+      <div class="kpi-num warn">{{ rsk_dash.tiles.blocked_by_id or 0 }}</div>
+      <div class="kpi-label">Предъявить ИД</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num warn">{{ rsk_dash.tiles.needs_rd or 0 }}</div>
+      <div class="kpi-label">Корректировка ПД/РД</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num danger">{{ rsk_dash.tiles.rejected or 0 }}</div>
+      <div class="kpi-label">Отклонено РСК</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ rsk_dash.tiles.resolved or 0 }}</div>
+      <div class="kpi-label">Устранено</div>
     </div>
   </div>
 </div>

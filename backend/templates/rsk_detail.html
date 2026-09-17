@@ -35,6 +35,7 @@
   </p>
   <p><b>Условие снятия:</b> {{ processing.close_condition_id and (close_conditions | selectattr('id','equalto',processing.close_condition_id) | map(attribute='label') | first) or '—' }}</p>
   <p><b>Плановая дата снятия:</b> {{ processing.planned_close_date|fmt_dmy if processing.planned_close_date else '—' }}</p>
+  <p><b>Устранено:</b> {{ (processing.resolved_date|fmt_dmy if processing.resolved_date else 'да') if processing.resolved else 'нет' }}</p>
   <p><b>Комментарий:</b> {{ processing.comment or '—' }}</p>
 </div>
 {% else %}

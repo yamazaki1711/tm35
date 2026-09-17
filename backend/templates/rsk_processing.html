@@ -7,8 +7,8 @@
     background: var(--c-surface); border: 1px solid var(--c-border-strong); color: var(--c-text);
     padding: .55rem .7rem; border-radius: var(--r-sm); font-size: .9rem; font-family: inherit;
   }
-  .rsk-checkbox-row { display: flex; flex-wrap: wrap; gap: .8rem; }
-  .rsk-checkbox-row label { flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; }
+  .rsk-checkbox-row { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1.4rem; }
+  .rsk-checkbox-row label { flex: 0 0 auto; flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; white-space: nowrap; }
   tr.rsk-row-selected td { background: var(--c-primary-bg); }
 
   /* "Содержание" — та же подсказка при наведении, что в реестре РСК
@@ -52,7 +52,15 @@
   <div class="rsk-form-grid">
     <label>Физика
       <select name="track_phys">
-        {% for code, label in ru_track.items() %}
+        {# ТЗ Якименко А.И., 16.09.2026, §6 — «факт (нужна корректировка
+           РД)» убран из выбора: новый выбор track_phys='fact' больше не
+           делается. Уже сохранённые строки с этим значением показывают
+           его по-прежнему (условие ниже держит опцию в списке ровно для
+           того нарушения, где оно уже стоит) — иначе открытие такой
+           карточки молча подставляло бы первый пункт списка, а
+           следующее же «Сохранить» тихо стёрло бы факт на «не
+           требуется». #}
+        {% for code, label in ru_track.items() if code != 'fact' or (processing and processing.track_phys == 'fact') %}
         <option value="{{ code }}" {{ 'selected' if (processing and processing.track_phys==code) or (not processing and code=='unknown') }}>{{ label }}</option>
         {% endfor %}
       </select>
@@ -91,11 +99,28 @@
       <input type="checkbox" name="rejected" value="1" style="width:auto" {{ 'checked' if processing and processing.rejected }}>
       Отклонено РСК
     </label>
+    <label style="flex-direction:row;align-items:center;gap:.5rem">
+      <input type="checkbox" name="resolved" value="1" style="width:auto" {{ 'checked' if processing and processing.resolved }}>
+      Устранено
+    </label>
+    <label>Дата снятия
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" name="resolved_date" value="{{ processing.resolved_date.isoformat() if processing and processing.resolved_date else '' }}">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
   </div>
 
   <label style="display:block;margin-top:1rem;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Ответственный
     <div class="rsk-checkbox-row" style="margin-top:.4rem">
-      {% for r in responsibles %}
+      {# ИКС скрыта из выбора (координатор 16.09.2026, ИКС.active=false) —
+         условие ниже держит её чекбокс в разметке ровно тогда, когда
+         именно ЭТО нарушение уже отмечено на неё, иначе сохранение формы
+         молча снимало бы отметку (чекбокс, которого нет в разметке, не
+         попадает в отправленный список). #}
+      {% for r in responsibles if r.active or r.id in responsible_ids %}
       <label><input type="checkbox" name="responsible_ids" value="{{ r.id }}" style="width:auto" {{ 'checked' if r.id in responsible_ids }}> {{ r.name }}</label>
       {% endfor %}
     </div>
@@ -115,7 +140,7 @@
   <label>Ответственный
     <select name="f_responsible">
       <option value="">— все —</option>
-      {% for r in responsibles %}
+      {% for r in responsibles if r.active %}
       <option value="{{ r.id }}" {{ 'selected' if f_responsible==r.id|string }}>{{ r.name }}</option>
       {% endfor %}
     </select>
@@ -123,7 +148,7 @@
   <label>Физика
     <select name="f_track_phys">
       <option value="">— все —</option>
-      {% for code, label in ru_track.items() %}
+      {% for code, label in ru_track.items() if code != 'fact' %}
       <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
       {% endfor %}
     </select>

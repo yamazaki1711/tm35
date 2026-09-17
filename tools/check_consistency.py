@@ -358,6 +358,38 @@ def main_check():
         "прямой SQL", direct_active,
     )
 
+    # --- 11c. ТЗ Якименко А.И., 16.09.2026, §6 — "Корректировка ПД/РД"
+    # больше не определяется одним track_phys='fact' (значение убрано из
+    # выбора в «Физика»), а треком «Проект» — плюс легаси-строки, у
+    # которых track_phys='fact' ещё сохранился. Прямой SQL — та же логика,
+    # переписанная заново, чтобы проверка не подтверждала сама себя.
+    direct_needs_rd = m.query_one(f"""
+        select count(*) as n
+        from rsk_violation v left join rsk_processing p on p.violation_id = v.id
+        where v.is_active and (coalesce(p.track_design,'unknown') = 'not_done'
+            or coalesce(p.track_phys,'unknown') = 'fact')
+    """)["n"]
+    check(
+        "«Корректировка ПД/РД» (needs_rd): /rsk/dashboard vs прямой SQL",
+        "/rsk/dashboard", rsk_dash_stats["tiles"]["needs_rd"],
+        "прямой SQL", direct_needs_rd,
+    )
+
+    # --- 11d. ТЗ Якименко А.И., 16.09.2026, §3 — «Устранено» (слой 2,
+    # rsk_processing.resolved) не должно совпадать по смыслу со
+    # структурным «Снято» (rsk_violation.is_active=false) — независимая
+    # прямая проверка тайла и явная проверка, что оба состояния умеют
+    # расходиться (устранено=true у ещё активного нарушения — не ошибка).
+    direct_resolved = m.query_one(
+        "select count(*) as n from rsk_violation v join rsk_processing p on p.violation_id = v.id "
+        "where v.is_active and p.resolved"
+    )["n"]
+    check(
+        "«Устранено» (resolved): /rsk/dashboard vs прямой SQL",
+        "/rsk/dashboard", rsk_dash_stats["tiles"]["resolved"],
+        "прямой SQL", direct_resolved,
+    )
+
     # --- 11. Труба папок ИД на /dashboard vs /id-folders — не текст кода, а
     # то, что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
     # экран, не на код"). Обе страницы включают один и тот же шаблон
@@ -527,40 +559,27 @@ def main_check():
         tolerance=0.01,
     )
 
-    # РСК: /dashboard ("Активных замечаний"/"Готово к снятию") vs
-    # /rsk/dashboard (tiles.total_active/ready_to_close) — разные
-    # подписи, тот же compute_rsk_dashboard_stats(). "Заблокировано" на
-    # Обзоре — сумма blocked_by_id+needs_rd, сверяем с суммой тех же
-    # двух чисел на /rsk/dashboard, а не с одним из них.
-    dash_active_m = re.search(r'<div class="kpi-num">(\d+)</div>\s*<div class="kpi-label">Активных замечаний</div>', dashboard_html)
-    rsk_active_m = re.search(r'<div class="kpi-num">(\d+)</div>\s*<div class="kpi-label">Всего активных</div>', rsk_dashboard_html)
-    check(
-        "РСК, активных замечаний: /dashboard vs /rsk/dashboard",
-        "/dashboard", int(dash_active_m.group(1)) if dash_active_m else None,
-        "/rsk/dashboard", int(rsk_active_m.group(1)) if rsk_active_m else None,
-    )
-
-    dash_ready_m = re.search(r'<div class="kpi-num ok">(\d+)</div>\s*<div class="kpi-label">Готово к снятию</div>', dashboard_html)
-    rsk_ready_m = re.search(r'<div class="kpi-num ok">(\d+)</div>\s*<div class="kpi-label">Готово к снятию</div>', rsk_dashboard_html)
-    check(
-        "РСК, готово к снятию: /dashboard vs /rsk/dashboard",
-        "/dashboard", int(dash_ready_m.group(1)) if dash_ready_m else None,
-        "/rsk/dashboard", int(rsk_ready_m.group(1)) if rsk_ready_m else None,
-    )
-
-    dash_blocked_m = re.search(r'<div class="kpi-label">Заблокировано</div>\s*<div class="kpi-sub">(\d+) ждёт ИД · (\d+) ждёт корректировки РД</div>', dashboard_html)
-    rsk_blocked_id_m = re.search(r'<div class="kpi-num warn">(\d+)</div>\s*<div class="kpi-label">Заблокировано ожиданием ИД</div>', rsk_dashboard_html)
-    rsk_needs_rd_m = re.search(r'<div class="kpi-num warn">(\d+)</div>\s*<div class="kpi-label">Ждёт корректировки РД</div>', rsk_dashboard_html)
-    dash_blocked_sum = (int(dash_blocked_m.group(1)) + int(dash_blocked_m.group(2))) if dash_blocked_m else None
-    rsk_blocked_sum = (
-        (int(rsk_blocked_id_m.group(1)) + int(rsk_needs_rd_m.group(1)))
-        if rsk_blocked_id_m and rsk_needs_rd_m else None
-    )
-    check(
-        "РСК, заблокировано (ожиданием ИД + корректировкой РД): /dashboard (сумма) vs /rsk/dashboard (сумма)",
-        "/dashboard", dash_blocked_sum,
-        "/rsk/dashboard", rsk_blocked_sum,
-    )
+    # РСК: ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, ОДИНАКОВЫЕ
+    # подпись и число на /dashboard и /rsk/dashboard (было — разные
+    # подписи и одна плитка "Заблокировано" на /dashboard, сложенная из
+    # двух чисел /rsk/dashboard; теперь оба экрана рисуют один и тот же
+    # compute_rsk_dashboard_stats() тайл-в-тайл, как и для денег ИД
+    # выше). Сверяем все шесть по отрендеренному HTML.
+    rsk_tile_labels = [
+        "Активных замечаний", "Готовы к снятию", "Предъявить ИД",
+        "Корректировка ПД/РД", "Отклонено РСК", "Устранено",
+    ]
+    for label in rsk_tile_labels:
+        pattern = re.compile(
+            r'<div class="kpi-num[^"]*">(\d+)</div>\s*<div class="kpi-label">' + re.escape(label) + r"</div>"
+        )
+        dash_m = pattern.search(dashboard_html)
+        rsk_m = pattern.search(rsk_dashboard_html)
+        check(
+            f"РСК, тайл «{label}»: /dashboard vs /rsk/dashboard",
+            "/dashboard", int(dash_m.group(1)) if dash_m else None,
+            "/rsk/dashboard", int(rsk_m.group(1)) if rsk_m else None,
+        )
 
 
 def print_report():

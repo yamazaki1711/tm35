@@ -40,7 +40,7 @@
   <label>Физика
     <select name="track_phys">
       <option value="">— все —</option>
-      {% for code, label in ru_track.items() %}
+      {% for code, label in ru_track.items() if code != 'fact' %}
       <option value="{{ code }}" {{ 'selected' if f_track_phys==code }}>{{ label }}</option>
       {% endfor %}
     </select>
@@ -61,26 +61,11 @@
       {% endfor %}
     </select>
   </label>
-  <label>Акт
-    <select name="act_no">
-      <option value="">— все —</option>
-      {% for a in acts %}
-      <option value="{{ a.act_no }}" {{ 'selected' if f_act_no==a.act_no }}>{{ a.act_no }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>Повторность
-    <select name="is_repeat">
-      <option value="">— все —</option>
-      <option value="1" {{ 'selected' if f_is_repeat=='1' }}>Повторные</option>
-      <option value="0" {{ 'selected' if f_is_repeat=='0' }}>Первичные</option>
-    </select>
-  </label>
   <label>Состояние
     <select name="state">
-      <option value="active" {{ 'selected' if f_state!='closed' }}>Активные</option>
+      <option value="active" {{ 'selected' if f_state=='active' }}>Активные</option>
       <option value="closed" {{ 'selected' if f_state=='closed' }}>Снятые</option>
-      <option value="">Все</option>
+      <option value="" {{ 'selected' if f_state not in ('active', 'closed') }}>Все</option>
     </select>
   </label>
   <button type="submit">Применить</button>
@@ -100,6 +85,7 @@
       <th class="nowrap">ИД</th>
       <th class="nowrap">Проверка</th>
       <th class="nowrap">Срок</th>
+      <th class="nowrap">Снято</th>
       <th class="nowrap">Устранено</th>
       <th>Ответственный</th>
     </tr>
@@ -118,6 +104,7 @@
       <td class="nowrap">{{ r.act_date|fmt_dmy if r.act_date else '—' }}</td>
       <td class="nowrap">{{ r.due_date|fmt_dmy if r.due_date else '—' }}</td>
       <td class="nowrap">{{ r.closed_act_date|fmt_dmy if r.closed_act_date else '—' }}</td>
+      <td class="nowrap">{{ r.resolved_date|fmt_dmy if r.resolved and r.resolved_date else ('да' if r.resolved else '—') }}</td>
       <td>{{ r.responsible_names }}</td>
     </tr>
     {% endfor %}

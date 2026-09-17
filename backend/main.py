@@ -6800,8 +6800,8 @@ def api_id_block_unset(request: Request, block_id: int):
 # нужна корректировка РД — задача для ДПР, не синоним "выполнено") —
 # поэтому у track_design/track_id в справочнике его нет вовсе.
 RU_RSK_TRACK = {
-    "not_required": "не треб.", "not_done": "не вып.", "done": "вып.",
-    "fact": "факт (нужна корр. РД)", "unknown": "—",
+    "not_required": "не требуется", "not_done": "не выполнено", "done": "выполнено",
+    "fact": "факт (нужна корректировка РД)", "unknown": "—",
 }
 
 # "Латералим" последнюю по акту позицию каждого нарушения — от акта к
@@ -6827,6 +6827,7 @@ RSK_LIST_SELECT_SQL = f"""
            coalesce(p.track_design, 'unknown') as track_design,
            coalesce(p.track_id, 'unknown') as track_id,
            coalesce(p.rejected, false) as rejected,
+           coalesce(p.resolved, false) as resolved, p.resolved_date,
            p.id as processing_id, p.planned_close_date, p.comment as processing_comment,
            cc.label as close_condition_label,
            coalesce(
@@ -6841,7 +6842,15 @@ RSK_LIST_SELECT_SQL = f"""
 
 def rsk_pseudo_status(row):
     """Статус для отображения — вычисляется, не хранится (докс: "статусы
-    из [комментария] не выводить"; здесь то же самое, но из треков)."""
+    из [комментария] не выводить"; здесь то же самое, но из треков).
+
+    ТЗ Якименко А.И., 16.09.2026 — "факт" убран из выбора в «Физика»
+    (значение остаётся в справочнике только для уже сохранённых строк,
+    задним числом не переписывается), поэтому "ждёт корректировки РД"
+    больше не может определяться исключительно им — иначе плитка
+    навсегда встала бы в 0. Признак перенесён на трек «Проект»:
+    невыполненный проектный трек — и есть ожидание корректировки ПД/РД;
+    старые строки с track_phys='fact' по-прежнему считаются сюда же."""
     if not row["is_active"]:
         return "closed"
     if row["rejected"]:
@@ -6849,7 +6858,7 @@ def rsk_pseudo_status(row):
     if row["track_phys"] in ("done", "not_required") and row["track_design"] in ("done", "not_required") \
             and row["track_id"] in ("done", "not_required"):
         return "ready"
-    if row["track_phys"] == "fact":
+    if row["track_design"] == "not_done" or row["track_phys"] == "fact":
         return "needs_rd"
     return "open"
 
@@ -6866,8 +6875,12 @@ RSK_STATUS_BADGE = {
 
 @app.get("/rsk")
 def rsk_registry_page(request: Request, responsible: str = "", track_phys: str = "",
-                       track_design: str = "", track_id_: str = "", act_no: str = "",
-                       is_repeat: str = "", state: str = ""):
+                       track_design: str = "", track_id_: str = "", state: str = ""):
+    # ТЗ Якименко А.И., 16.09.2026 — дропдауны «Акт» и «Повторность» убраны
+    # (§4); соответствующие фильтры по act_no/is_repeat сняты вместе с
+    # ними — управлять ими больше неоткуда. Данные (номер акта в столбце
+    # таблицы/CSV, значок «п» у повторных) никуда не делись, это была
+    # только пара входов фильтра.
     where = ["1=1"]
     params = []
     if responsible.strip():
@@ -6885,12 +6898,6 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
     if track_id_.strip():
         where.append("coalesce(p.track_id, 'unknown') = %s")
         params.append(track_id_)
-    if act_no.strip():
-        where.append("a.act_no = %s")
-        params.append(act_no.strip())
-    if is_repeat in ("1", "0"):
-        where.append("i.is_repeat = %s")
-        params.append(is_repeat == "1")
     if state == "active":
         where.append("v.is_active")
     elif state == "closed":
@@ -6900,14 +6907,19 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
     for r in rows:
         r["status_key"] = rsk_pseudo_status(r)
 
-    responsibles = query("select id, name from rsk_responsible order by id")
-    acts = query("select distinct act_no from rsk_act order by act_no desc")
+    # «ИКС» скрыта (active=false, координатор 16.09.2026) из выбора — из
+    # фильтра тоже, он такой же выбор, как форма отработки. Уже
+    # записанные на неё строки (11 на 17.09.2026, см. run log) продолжают
+    # показывать её имя в столбце «Ответственный» — это факт из БД, не
+    # список для выбора, скрывать его здесь означало бы стирать реально
+    # выполненную работу с экрана.
+    responsibles = query("select id, name from rsk_responsible where active order by id")
 
     return render(request, "rsk_registry.html", "rsk-registry",
-                  rows=rows, total=len(rows), responsibles=responsibles, acts=acts,
+                  rows=rows, total=len(rows), responsibles=responsibles,
                   ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
                   f_responsible=responsible, f_track_phys=track_phys, f_track_design=track_design,
-                  f_track_id=track_id_, f_act_no=act_no, f_is_repeat=is_repeat, f_state=state)
+                  f_track_id=track_id_, f_state=state)
 
 
 @app.get("/export/rsk.csv")
@@ -6918,13 +6930,14 @@ def export_rsk_csv():
          RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
          RU_RSK_TRACK.get(r["track_id"], ""),
          r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]), _csv_dmy(r["closed_act_date"]),
+         _csv_dmy(r["resolved_date"]) if r["resolved"] else "",
          "да" if r["is_repeat"] else "нет")
         for r in rows
     ]
     return _csv_response(
         "rsk_registry.csv",
         ["№", "Статус", "Содержание", "Ответственные", "Физика", "Проект", "ИД",
-         "Акт", "Проверка", "Срок", "Устранено", "Повторно"],
+         "Акт", "Проверка", "Срок", "Снято", "Устранено", "Повторно"],
         out,
     )
 
@@ -6934,6 +6947,12 @@ def export_rsk_csv():
 # раздел меню рядом с СМР/ИД, одной плитки внутри блока ИД недостаточно).
 # Вынесено в функцию, чтобы не дублировать SQL между двумя местами.
 def compute_rsk_dashboard_stats():
+    # ТЗ Якименко А.И., 16.09.2026 — шесть плиток «Обзора РСК», один и тот
+    # же расчёт на /rsk/dashboard и на /dashboard, второй источник не
+    # заводится. `needs_rd` — см. rsk_pseudo_status(), тот же принцип
+    # (трек «Проект», плюс легаси track_phys='fact'). `resolved` — новая
+    # плитка «Устранено», слой 2 (rsk_processing.resolved), НЕ
+    # is_active/closed_in_act_id — правило двух слоёв не меняется.
     tiles = query_one(f"""
         select
             count(*) filter (where v.is_active) as total_active,
@@ -6941,8 +6960,10 @@ def compute_rsk_dashboard_stats():
                 and coalesce(p.track_design,'unknown') in ('done','not_required')
                 and coalesce(p.track_id,'unknown') in ('done','not_required')) as ready_to_close,
             count(*) filter (where v.is_active and cc.code = 'id_priniatie') as blocked_by_id,
-            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') = 'fact') as needs_rd,
-            count(*) filter (where v.is_active and coalesce(p.rejected, false)) as rejected
+            count(*) filter (where v.is_active and (coalesce(p.track_design,'unknown') = 'not_done'
+                or coalesce(p.track_phys,'unknown') = 'fact')) as needs_rd,
+            count(*) filter (where v.is_active and coalesce(p.rejected, false)) as rejected,
+            count(*) filter (where v.is_active and coalesce(p.resolved, false)) as resolved
         {RSK_LIST_BASE_SQL}
     """) or {}
 
@@ -7062,7 +7083,14 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
     for r in rows:
         r["status_key"] = rsk_pseudo_status(r)
 
-    responsibles = query("select id, name from rsk_responsible order by id")
+    # Полный список с флагом `active` — не только активные. Фильтр выше
+    # таблицы читает только `r.active` (шаблон), а чекбоксы формы отработки
+    # — `r.active or r.id in responsible_ids`: неактивная «ИКС», уже
+    # отмеченная у ЭТОГО нарушения, должна остаться видимой и отмеченной,
+    # иначе следующее же сохранение формы молча стёрло бы её из
+    # rsk_processing_responsible (список чекбоксов — источник того, что
+    # сервер запишет, см. api_rsk_processing_upsert).
+    responsibles = query("select id, name, active from rsk_responsible order by id")
     close_conditions = query("select id, label from rsk_close_condition order by id")
 
     return render(request, "rsk_processing.html", "rsk-processing",
@@ -7079,6 +7107,7 @@ def api_rsk_processing_upsert(
     track_phys: str = Form("unknown"), track_design: str = Form("unknown"), track_id_: str = Form("unknown"),
     responsible_ids: list[int] = Form(default=[]), close_condition_id: str = Form(""),
     planned_close_date: str = Form(""), rejected: str = Form(""), comment: str = Form(""),
+    resolved: str = Form(""), resolved_date: str = Form(""),
 ):
     if not has_permission(request.state.user, "rsk:submit"):
         return RedirectResponse(
@@ -7094,6 +7123,14 @@ def api_rsk_processing_upsert(
     planned_val = _parse_date(planned_close_date) if planned_close_date.strip() else None
     rejected_val = rejected == "1"
     comment_val = comment.strip() or None
+    # «Устранено» — отметка слоя 2 (ТЗ Якименко А.И., 16.09.2026, §3): то,
+    # что ПТО считает выполненным. НЕ пишет rsk_violation.is_active/
+    # closed_in_act_id — это остаётся только за импортом акта (правило
+    # двух слоёв). Нарушение может быть отмечено «Устранено» и при этом
+    # оставаться в последнем акте (is_active=true) — это не ошибка,
+    # отдельное состояние, показывается как есть, не прячется.
+    resolved_val = resolved == "1"
+    resolved_date_val = _parse_date(resolved_date) if resolved_date.strip() else None
     user_id = current_user_id_or_web_form()
 
     def _do(cur):
@@ -7101,16 +7138,18 @@ def api_rsk_processing_upsert(
             """
             insert into rsk_processing
                 (violation_id, track_phys, track_design, track_id, close_condition_id,
-                 planned_close_date, rejected, comment, updated_ts)
-            values (%s,%s,%s,%s,%s,%s,%s,%s, now())
+                 planned_close_date, rejected, comment, resolved, resolved_date, updated_ts)
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             on conflict (violation_id) do update set
                 track_phys=excluded.track_phys, track_design=excluded.track_design,
                 track_id=excluded.track_id, close_condition_id=excluded.close_condition_id,
                 planned_close_date=excluded.planned_close_date, rejected=excluded.rejected,
-                comment=excluded.comment, updated_ts=now()
+                comment=excluded.comment, resolved=excluded.resolved, resolved_date=excluded.resolved_date,
+                updated_ts=now()
             returning id
             """,
-            (v["id"], track_phys, track_design, track_id_, cc_val, planned_val, rejected_val, comment_val),
+            (v["id"], track_phys, track_design, track_id_, cc_val, planned_val, rejected_val, comment_val,
+             resolved_val, resolved_date_val),
         )
         processing_id = cur.fetchone()["id"]
 
@@ -7127,7 +7166,7 @@ def api_rsk_processing_upsert(
             "values (%s, 'rsk_processing', %s, 'rsk_processing_update', %s, 'форма /rsk/processing')",
             (user_id, processing_id, json.dumps(
                 {"sys_no": sys_no, "track_phys": track_phys, "track_design": track_design,
-                 "track_id": track_id_}, ensure_ascii=False)),
+                 "track_id": track_id_, "resolved": resolved_val}, ensure_ascii=False)),
         )
         return processing_id
 
