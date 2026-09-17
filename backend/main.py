@@ -3501,7 +3501,6 @@ def data_hub(request: Request):
         "gantt": query_one("select count(*) as n from work")["n"],
         "ssr_norms": query_one("select count(*) as n from ssr_norm")["n"],
         "norm_plan": query_one("select count(*) as n from norm_plan_item")["n"],
-        "baseline": query_one("select count(*) as n from baseline_schedule")["n"],
     }
     return render(request, "data.html", "data", counts=counts)
 
