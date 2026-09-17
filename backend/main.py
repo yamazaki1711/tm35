@@ -5120,6 +5120,13 @@ ID_FOLDER_PIPE_STAGE_REGISTRY_STATUS = {
     "ks2_current": "ks2",
     "ks2_next": "ks2_next",
 }
+# Обратная сторона того же словаря — ТЗ Якименко А.И., 16.09.2026: список
+# «Статус» на /id-folders должен фильтровать РОВНО по тем же пяти
+# множествам, что рисует труба, одно значение на стадию (было —
+# отдельные написанные вручную булевы условия на каждый status=, которые
+# СЛУЧАЙНО совпадали с id_folder_pipe_stage(); теперь фильтр читает
+# стадию из той же самой функции — разойтись больше нечему).
+ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE = {v: k for k, v in ID_FOLDER_PIPE_STAGE_REGISTRY_STATUS.items()}
 
 
 def id_folder_pipe_stage(folder):
@@ -5131,6 +5138,27 @@ def id_folder_pipe_stage(folder):
     if folder.get("sdo_transfer_date") or folder.get("check_start_date"):
         return "checking"
     return "formed"
+
+
+def id_folder_cost(folder):
+    """Единственное денежное значение папки — «Стоимость, ₽» (координатор,
+    16.09.2026: «Оценка ПТО», «Сметная стоимость» и «Стоимость» — три
+    имени одной цифры; в интерфейсе теперь везде одно слово). В БД
+    по-прежнему два столбца — `amount_rub` (оценка ПТО при сборке
+    папки) и `amount_smeta_rub` (приходит от СДО после подписания) —
+    столбцы НЕ объединены и не перезаписывают друг друга (см.
+    KNOWN_ISSUES.md, находка о слиянии — на будущее, не эта задача).
+    Показываемое и суммируемое значение = coalesce(amount_smeta_rub,
+    amount_rub) — единственное место с этой формулой, вызывается для
+    каждой цифры о деньгах папки (список, карточка, плитки, труба,
+    выгрузка), второе выражение не заводится."""
+    smeta = folder.get("amount_smeta_rub")
+    if smeta is not None:
+        return float(smeta)
+    raw = folder.get("amount_rub")
+    if raw is None:
+        raw = folder.get("amount_sum")  # query_id_folders() алиасит amount_rub как amount_sum
+    return float(raw) if raw is not None else 0.0
 
 
 def query_id_folders(order="desc"):
@@ -5155,15 +5183,16 @@ def compute_id_folder_funnel():
     стадиям id_folder_pipe_stage() (не канонической id_folder_stage(),
     см. комментарий там же). Сумма по count(*) стадий обязана сходиться
     с count(*) from id_folder — каждая папка ровно в одной стадии,
-    стадии не пересекаются."""
+    стадии не пересекаются. Сумма — через id_folder_cost() (ТЗ 16.09.2026,
+    «Стоимость, ₽» одна формула everywhere), не голый amount_smeta_rub."""
     folders = query("select id, sdo_transfer_date, check_start_date, signed_date, ks2_date, "
-                     "amount_smeta_rub from id_folder")
+                     "amount_rub, amount_smeta_rub from id_folder")
     funnel = {s: {"count": 0, "sum": 0.0, "known_sum_count": 0} for s in ID_FOLDER_PIPE_STAGES}
     for f in folders:
         stage = id_folder_pipe_stage(f)
         funnel[stage]["count"] += 1
-        if f["amount_smeta_rub"] is not None:
-            funnel[stage]["sum"] += float(f["amount_smeta_rub"])
+        if f["amount_smeta_rub"] is not None or f["amount_rub"] is not None:
+            funnel[stage]["sum"] += id_folder_cost(f)
             funnel[stage]["known_sum_count"] += 1
     return funnel
 
@@ -5261,6 +5290,20 @@ def compute_id_folder_transitions(limit=10):
     return events[:limit]
 
 
+def get_id_signed_before_boundary_date():
+    """Граница «подписано ранее» для тайла «Подписано ранее, ₽» — папки,
+    закрытые ДО того, как Якименко А.И. принял участок (координатор,
+    16.09.2026), уже вычтены из остатка раньше и не пересчитываются.
+    Дата — в app_setting, не литералом в коде: поправить можно прямым
+    UPDATE, без деплоя. 10.03.2026 — значение по умолчанию и текущее
+    (см. migrations/037_id_signed_before_boundary.sql)."""
+    v = get_app_setting("id_signed_before_boundary_date", "2026-03-10")
+    try:
+        return date_cls.fromisoformat(v)
+    except (TypeError, ValueError):
+        return date_cls(2026, 3, 10)
+
+
 def compute_id_folder_stats():
     """Общая сводка для /id-folders и плитки дашборда — один источник цифр,
     не считать дважды в двух местах по-разному."""
@@ -5275,10 +5318,9 @@ def compute_id_folder_stats():
         "join id_form_status s on s.id=le.status_id "
         "where t.code not in ('opv','n') and s.code='Подписано'"
     )["n"]
-    # "Остаток неподписанных разделов" (координатор, докс D5) — буквально
-    # разделы, которые ещё не в статусе «Подписано», а не «подписанные,
-    # но ещё не в папке» (для второго смысла ниже отдельная переменная,
-    # не одно и то же — не путать).
+    # "Неподписано" (разделов) — буквально разделы, которые ещё не в
+    # статусе «Подписано», а не «подписанные, но ещё не в папке» (для
+    # второго смысла ниже отдельная переменная, не одно и то же — не путать).
     unsigned_count = total_rows - signed_total
 
     in_folder_total = query_one("select count(*) as n from id_folder_row")["n"]
@@ -5286,125 +5328,98 @@ def compute_id_folder_stats():
 
     folders_count = query_one("select count(*) as n from id_folder")["n"]
 
-    # Денежный источник истины — amount_smeta_rub ПОДПИСАННЫХ (signed_date
-    # заполнена) папок, не amount_rub (прикидка ПТО при сборке) и не по
-    # факту передачи в СДО (задача 3, ночной прогон 09-10.09.2026).
-    # Старое значение (по sdo_transfer_date/amount_rub) считается тоже —
-    # только для сравнения старое/новое в отчёте прогона, в денежных
-    # показателях интерфейса больше не участвует.
-    signed_folders_sum = query_one(
-        "select coalesce(sum(amount_smeta_rub), 0) as s from id_folder where signed_date is not null"
-    )["s"]
-    signed_folders_sum_old_by_transfer_estimate = query_one(
-        "select coalesce(sum(amount_rub), 0) as s from id_folder where sdo_transfer_date is not null"
-    )["s"]
+    # ТЗ Якименко А.И., 16.09.2026 — пять денежных плиток, одинаковых на
+    # /dashboard и /id-folders. «Подписано ранее» и «Подписано по КС-2»
+    # не должны считать одну папку дважды: папка, подписанная до границы,
+    # идёт в «ранее» и явно исключается из «по КС-2», даже если у неё
+    # тоже есть ks2_date (overlap_count — сколько таких, для отчёта).
+    # Денежная величина каждой папки — id_folder_cost() (coalesce
+    # amount_smeta_rub/amount_rub), не голая колонка.
+    boundary = get_id_signed_before_boundary_date()
+    money_rows = query("select signed_date, ks2_date, amount_rub, amount_smeta_rub from id_folder")
+    signed_before_sum = 0.0
+    signed_before_count = 0
+    ks2_sum = 0.0
+    ks2_count = 0
+    overlap_count = 0
+    for f in money_rows:
+        if f["signed_date"] and f["signed_date"] < boundary:
+            signed_before_sum += id_folder_cost(f)
+            signed_before_count += 1
+            if f["ks2_date"]:
+                overlap_count += 1
+        elif f["ks2_date"]:
+            ks2_sum += id_folder_cost(f)
+            ks2_count += 1
+
     manual_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_manual_volume")["s"]
-    # Координатор, 08.09.2026: "Остаток в деньгах" не вычитал незакрытый
-    # ручной объём — считал только minus подписанные папки, показывал
-    # фактически "контракт минус подписано", не настоящий остаток.
-    money_remaining = ID_FOLDER_CONTRACT_TOTAL - float(signed_folders_sum) - float(manual_sum)
-
-    # ТЗ Якименко А.И., 15.09.2026 — на /dashboard остаток по контракту
-    # считается от денег, закрытых по КС-2 (кумулятивно, все акты, а не
-    # только акт текущего периода — в БД нет поля отчётного периода,
-    # только ks2_date/ks2_no), не от суммы подписанных папок. Это
-    # намеренно ДРУГОЕ число, чем money_remaining выше (используется на
-    # /id-folders) — см. KNOWN_ISSUES.md, п. «два остатка».
-    ks2_folders_sum = query_one(
-        "select coalesce(sum(amount_smeta_rub), 0) as s from id_folder where ks2_date is not null"
-    )["s"]
-    money_remaining_by_ks2 = ID_FOLDER_CONTRACT_TOTAL - float(ks2_folders_sum) - float(manual_sum)
-
-    # Продолжение 10.09.2026: "Подписано, ₽" упало до 0,00 — честно, но
-    # читатель не может отличить "ещё ничего не подписано" от "данные не
-    # внесены". Две плитки-счётчика без текста-пояснения (запрещено
-    # правилом "заголовок — и сразу содержимое"), делают эту разницу
-    # видимой: сколько папок ждёт ввода сметной стоимости (подписаны, но
-    # amount_smeta_rub ещё пуст) и сколько ещё вообще не подписано.
-    awaiting_smeta_count = query_one(
-        "select count(*) as n from id_folder where signed_date is not null and amount_smeta_rub is null"
-    )["n"]
-    not_signed_count = query_one(
-        "select count(*) as n from id_folder where signed_date is null"
-    )["n"]
+    # «Остаток по контракту, ₽» — единственный остаток теперь (закрывает
+    # KNOWN_ISSUES.md §42, «два разных остатка» — та развилка была ДО
+    # этого ТЗ; тайл один и тот же на обеих страницах).
+    money_remaining = (
+        ID_FOLDER_CONTRACT_TOTAL - signed_before_sum - ks2_sum - float(manual_sum)
+    )
 
     funnel = compute_id_folder_funnel()
     return {
         "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,
         "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
-        "signed_folders_sum": signed_folders_sum, "money_remaining": money_remaining,
         "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
-        "ks2_folders_sum": ks2_folders_sum, "money_remaining_by_ks2": money_remaining_by_ks2,
-        "signed_folders_sum_old_by_transfer_estimate": signed_folders_sum_old_by_transfer_estimate,
+        "signed_before_sum": signed_before_sum, "signed_before_count": signed_before_count,
+        "signed_before_boundary": boundary,
+        "ks2_sum": ks2_sum, "ks2_count": ks2_count, "overlap_count": overlap_count,
+        "money_remaining": money_remaining,
         "funnel": funnel,
         "pipe": compute_id_folder_pipe(funnel),
-        "awaiting_smeta_count": awaiting_smeta_count, "not_signed_count": not_signed_count,
     }
 
 
 @app.get("/id-folders")
 def id_folders_page(request: Request, status: str = "all", sort: str = "desc"):
-    # Координатор, 17.09.2026: «Папки» и «Реестр папок» — один и тот же
-    # id_folder под разными именами колонок, найдено кликом по обоим из
-    # меню. Слито в одну страницу — реестр (фильтр/сортировка/CSV/два
-    # столбца СДО) переехал сюда целиком, /id-folders/registry ниже стал
-    # редиректом. Восемь колонок таблицы — одно имя на каждую, см.
-    # id_folders.html.
+    # ТЗ Якименко А.И., 16.09.2026 — секции сверху вниз: Деньги → Воронка
+    # → Разделы → Список папок (было Воронка → Деньги → Разделы, см.
+    # id_folders.html). Список — те же 6 колонок и тот же список статусов,
+    # что теперь и в выпадающем списке ниже: один пункт на стадию трубы
+    # (formed/checking/signed/ks2_current/ks2_next через
+    # ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE — тот же классификатор, что
+    # рисует саму трубу, не отдельно написанные условия) плюс отдельное
+    # значение "Неподписано" (signed_date is null — пересекается с
+    # formed/checking, это НЕ шестая стадия трубы, а отдельный срез, ТЗ
+    # называет его "отдельным значением").
     folders = query_id_folders(order=sort)
     for f in folders:
         f["stage"] = id_folder_stage(f)
         f["stage_label"] = ID_FOLDER_STAGE_LABELS[f["stage"]]
+        f["cost"] = id_folder_cost(f)
 
     stats = compute_id_folder_stats()
-    totals = {
-        "folders_count": len(folders),
-        "transferred_count": sum(1 for f in folders if f["sdo_transfer_date"]),
-        "amount_total": sum(float(f["amount_sum"] or 0) for f in folders),
-        # Та же сумма, что stats["signed_folders_sum"] — один вызов
-        # compute_id_folder_stats() на страницу, не два (было по одному в
-        # каждом из прежних двух маршрутов).
-        "amount_signed": float(stats["signed_folders_sum"]),
-    }
 
-    # Заход 7, 11.09.2026: было `formed`/`transferred` как две отдельные
-    # ad-hoc проверки (не sdo_transfer_date / sdo_transfer_date задан) —
-    # "transferred" на деле означало "дошла минимум до передачи",
-    # пересекаясь с checking/signed/ks2, а фильтров на сами эти три
-    # стадии не было вовсе. Заменено на точное совпадение с
-    # id_folder_stage() (уже вычислен в f["stage"] строкой выше) — нужно,
-    # чтобы клик по стадии трубы на /dashboard и /id-folders вёл сюда на
-    # РОВНО ту же стадию, что показана в трубе, а не на более широкое
-    # множество.
-    if status in ID_FOLDER_STAGES:
-        folders = [f for f in folders if f["stage"] == status]
-    elif status == "awaiting_smeta":
-        folders = [f for f in folders if f["signed_date"] and not f["amount_smeta_rub"]]
+    if status in ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE:
+        target_stage = ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE[status]
+        folders = [f for f in folders if id_folder_pipe_stage(f) == target_stage]
     elif status == "not_signed":
         folders = [f for f in folders if not f["signed_date"]]
-    elif status == "checking_all":
-        # Труба «Выполнение», стадия «На проверке» (ТЗ 15.09.2026) —
-        # объединяет канонические "transferred"+"checking", не то же
-        # самое множество, что фильтр status=checking (тот теперь
-        # называется «Проверка» в выпадающем списке — тот же текст, что
-        # и в колонке «Стадия», чтобы два «На проверке» не стояли рядом
-        # с разным смыслом, найдено координатором 17.09.2026).
-        folders = [f for f in folders if f["stage"] in ("transferred", "checking")]
-    elif status == "ks2_next":
-        # Труба «Выполнение», стадия «Следующая КС-2» — подписаны, КС-2
-        # ещё нет, сметная стоимость уже известна.
-        folders = [f for f in folders if f["signed_date"] and not f["ks2_date"] and f["amount_smeta_rub"] is not None]
+    elif status in ID_FOLDER_STAGES:
+        # Совместимость со старыми ссылками на /id-folders/registry (до
+        # слияния 17.09.2026) — они использовали канонические стадии
+        # id_folder_stage() ("signed", "transferred" и т. д.), которых нет
+        # среди шести значений нового выпадающего списка ТЗ 16.09.2026.
+        # "formed"/"ks2" уже покрыты веткой выше (совпадают с трубой),
+        # эта ветка достаёт "signed"/"transferred"/"checking" отдельно —
+        # нужно для критерия приёмки §6.5 (status=signed&sort=asc).
+        folders = [f for f in folders if id_folder_stage(f) == status]
 
     manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
     transitions = compute_id_folder_transitions()
-    # "Активных ИЗМ (ДПР)" — строка 3 воронки (задача 3, ночной прогон):
-    # тот же признак "активная" (не завершена/не архивна), что и на
-    # /changes и в change_stats_row (home_v2) — не отдельное правило.
+    # "Активных ИЗМ (ДПР)" — тот же признак "активная" (не завершена/не
+    # архивна), что и на /changes и в change_stats_row (home_v2) — не
+    # отдельное правило.
     active_changes = query_one(
         "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
     )["n"]
 
     return render(request, "id_folders.html", "id-folders",
-                  folders=folders, totals=totals, status=status, sort=sort,
+                  folders=folders, status=status, sort=sort,
                   stats=stats, manual_volumes=manual_volumes,
                   transitions=transitions, active_changes=active_changes)
 
@@ -5420,26 +5435,30 @@ def id_folders_registry_redirect(status: str = "all", sort: str = "desc"):
 
 @app.get("/export/id-folders.csv")
 def export_id_folders_csv(status: str = "all"):
+    # ТЗ Якименко А.И., 16.09.2026 — те же 6 колонок и тот же фильтр
+    # статуса, что в таблице /id-folders (было — свой, более старый
+    # фильтр по formed/transferred, не совпадавший с тем, что реально
+    # показано под текущим значением "Статус" на экране: CSV мог отдать
+    # не то же самое, что видно перед скачиванием).
     folders = query_id_folders()
-    if status == "formed":
-        folders = [f for f in folders if not f["sdo_transfer_date"]]
-    elif status == "transferred":
-        folders = [f for f in folders if f["sdo_transfer_date"]]
-    # Порядок и подписи колонок — те же 8 имён, что в таблице /id-folders
-    # (координатор, 17.09.2026, слияние с бывшим /id-folders/registry):
-    # раньше здесь была третья формулировка ("Стоимость (оценка), ₽") для
-    # того же amount_rub, что на экране называлось то «Оценка ПТО, ₽», то
-    # «Стоимость, ₽» — теперь везде одно имя на колонку.
+    if status in ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE:
+        target_stage = ID_FOLDER_REGISTRY_STATUS_TO_PIPE_STAGE[status]
+        folders = [f for f in folders if id_folder_pipe_stage(f) == target_stage]
+    elif status == "not_signed":
+        folders = [f for f in folders if not f["signed_date"]]
+    elif status in ID_FOLDER_STAGES:
+        # см. тот же fallback в id_folders_page() — CSV должен отдавать
+        # ровно то же множество, что видно на экране перед скачиванием.
+        folders = [f for f in folders if id_folder_stage(f) == status]
     out = [
-        (f["name"], _csv_dmy(f["folder_date"]), f["row_count"], f["amount_sum"] or 0,
-         f["amount_smeta_rub"] or "", f["sdo_signer_name"] or "",
-         _csv_dmy(f["sdo_transfer_date"]), ID_FOLDER_STAGE_LABELS[id_folder_stage(f)])
+        (f["name"], _csv_dmy(f["folder_date"]), f["row_count"], id_folder_cost(f),
+         f["sdo_signer_name"] or "", ID_FOLDER_STAGE_LABELS[id_folder_stage(f)])
         for f in folders
     ]
     return _csv_response(
         "id_folders.csv",
-        ["Номер папки", "Дата формирования", "Разделов", "Оценка ПТО, ₽",
-         "Сметная стоимость, ₽", "Подписант реестра передачи", "Дата передачи в СДО", "Стадия"],
+        ["Номер папки", "Дата создания", "Разделов", "Стоимость, ₽",
+         "Подписант реестра", "Статус"],
         out,
     )
 
@@ -5540,7 +5559,8 @@ def id_folder_detail_page(request: Request, folder_id: int):
     return render(request, "id_folder_detail.html", "id-folders",
                   folder=folder, rows_in_folder=rows_in_folder,
                   available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS,
-                  stage=id_folder_stage(folder), stage_label=ID_FOLDER_STAGE_LABELS[id_folder_stage(folder)])
+                  stage=id_folder_stage(folder), stage_label=ID_FOLDER_STAGE_LABELS[id_folder_stage(folder)],
+                  folder_cost=id_folder_cost(folder))
 
 
 @app.post("/api/id-folder/{folder_id}/rows")
@@ -5753,19 +5773,19 @@ def api_id_folder_smeta(request: Request, folder_id: int, amount_smeta_rub: str 
     # мог бы занести сметную стоимость до подписания.
     if not folder["signed_date"]:
         return RedirectResponse(
-            url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость вводится только после подписания папки."),
+            url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания вводится только после подписания папки."),
             status_code=303,
         )
     try:
         amt = float(amount_smeta_rub.replace(",", "."))
     except ValueError:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость указана некорректно."), status_code=303)
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания указана некорректно."), status_code=303)
     if amt <= 0:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Сметная стоимость должна быть больше нуля."), status_code=303)
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания должна быть больше нуля."), status_code=303)
     run_in_transaction(lambda cur: cur.execute(
         "update id_folder set amount_smeta_rub=%s where id=%s", (amt, folder_id),
     ))
-    ok_msg = urllib.parse.quote(f"Сметная стоимость папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽.")
+    ok_msg = urllib.parse.quote(f"Стоимость после подписания папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽.")
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 

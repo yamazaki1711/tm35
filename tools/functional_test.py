@@ -550,20 +550,26 @@ def test_id_progress_drilldown(page, base_url):
 
 
 # ---------------------------------------------------------------------
-# Ясность денежных плиток ИД (продолжение прогона 10.09.2026, задача 1) —
-# не полагаться на playwright, доступный в этой сессии (см. оговорку выше).
+# Ясность денежных плиток ИД (ТЗ Якименко А.И., 16.09.2026, §3 — пять
+# денежных тайлов, одинаковых на /dashboard и /id-folders; старые тайлы
+# «ждёт сметной стоимости»/«Ещё не подписано»/«Ручной объём»/«Остаток в
+# деньгах» удалены целиком, см. run log 17.09.2026) — не полагаться на
+# playwright, доступный в этой сессии (см. оговорку выше).
 # ---------------------------------------------------------------------
 
-@scenario("/id-folders: счётчики «ждёт сметной стоимости»/«ещё не подписано» видны и это числа")
+@scenario("/id-folders: все пять денежных тайлов на месте")
 def test_id_folders_money_clarity_tiles(page, base_url):
     page.goto(base_url + "/id-folders", wait_until="networkidle")
     page.wait_for_timeout(300)
     labels = page.locator(".kpi-label").all_inner_texts()
-    have_smeta = any("ждёт сметной стоимости" in t for t in labels)
-    have_unsigned = any("Ещё не подписано" in t for t in labels)
-    if not (have_smeta and have_unsigned):
-        return False, f"есть смета={have_smeta}, есть неподписано={have_unsigned}"
-    return True, "обе плитки на месте"
+    expected = [
+        "Всего по контракту, ₽", "Подписано ранее, ₽", "Подписано по КС-2, ₽",
+        "Невыбираемый остаток, ₽", "Остаток по контракту, ₽",
+    ]
+    missing = [label for label in expected if label not in labels]
+    if missing:
+        return False, f"нет тайлов: {missing}"
+    return True, "все пять тайлов на месте"
 
 
 # ---------------------------------------------------------------------

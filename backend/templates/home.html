@@ -69,7 +69,11 @@
       <div class="kpi-label">Всего по контракту, ₽</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.ks2_folders_sum|ru_money }}</div>
+      <div class="kpi-num">{{ folder_stats.signed_before_sum|ru_money }}</div>
+      <div class="kpi-label">Подписано ранее, ₽</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-num">{{ folder_stats.ks2_sum|ru_money }}</div>
       <div class="kpi-label">Подписано по КС-2, ₽</div>
     </div>
     <div class="kpi">
@@ -77,7 +81,7 @@
       <div class="kpi-label">Невыбираемый остаток, ₽</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num {{ 'danger' if folder_stats.money_remaining_by_ks2 < 0 else '' }}">{{ folder_stats.money_remaining_by_ks2|ru_money }}</div>
+      <div class="kpi-num {{ 'danger' if folder_stats.money_remaining < 0 else '' }}">{{ folder_stats.money_remaining|ru_money }}</div>
       <div class="kpi-label">Остаток по контракту, ₽</div>
     </div>
   </div>
@@ -88,20 +92,19 @@
   <div class="kpi-row kpi-small">
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.total_rows }}</div>
-      <div class="kpi-label">Всего разделов ИД</div>
+      <div class="kpi-label">Всего разделов</div>
     </div>
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.signed_total }}</div>
       <div class="kpi-label">Подписано</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.signed_not_in_folder }}</div>
-      <div class="kpi-label">Готово к сборке</div>
-      <div class="kpi-sub">подписано, ещё не в папке</div>
+      <div class="kpi-num {{ 'warn' if folder_stats.unsigned_count > 0 else '' }}">{{ folder_stats.unsigned_count }}</div>
+      <div class="kpi-label">Неподписано</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num {{ 'warn' if folder_stats.unsigned_count > 0 else '' }}">{{ folder_stats.unsigned_count }}</div>
-      <div class="kpi-label">Остаток неподписанных разделов</div>
+      <div class="kpi-num">{{ folder_stats.signed_not_in_folder }}</div>
+      <div class="kpi-label">Готово к сборке</div>
     </div>
   </div>
 

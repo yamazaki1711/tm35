@@ -19,9 +19,9 @@
 <div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
 {% endif %}
 
-<h3>Оценка ПТО при сборке</h3>
+<h3>Стоимость при сборке</h3>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/amount" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
-  <label style="flex:1">Оценка, ₽
+  <label style="flex:1">Стоимость при сборке, ₽
     <input type="number" name="amount_rub" min="0.01" step="0.01" value="{{ folder.amount_rub or '' }}" required>
   </label>
   <button type="submit">Сохранить</button>
@@ -48,12 +48,8 @@
     <div class="kpi-label">Разделов в папке</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ (folder.amount_rub or 0)|ru_money }}</div>
-    <div class="kpi-label">Оценка ПТО, ₽</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'ok' if folder.amount_smeta_rub else '' }}">{{ folder.amount_smeta_rub|ru_money if folder.amount_smeta_rub is not none else '—' }}</div>
-    <div class="kpi-label">Сметная стоимость, ₽</div>
+    <div class="kpi-num">{{ folder_cost|ru_money }}</div>
+    <div class="kpi-label">Стоимость, ₽</div>
   </div>
 </div>
 
@@ -171,15 +167,15 @@
 </form>
 
 {% if folder.signed_date %}
-<h3>Сметная стоимость</h3>
+<h3>Стоимость после подписания</h3>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/smeta" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
-  <label style="flex:1">Сметная стоимость, ₽
+  <label style="flex:1">Стоимость после подписания, ₽
     <input type="number" name="amount_smeta_rub" min="0.01" step="0.01" value="{{ folder.amount_smeta_rub or '' }}" required>
   </label>
   <button type="submit">Сохранить</button>
 </form>
 {% else %}
-<h3>Сметная стоимость</h3>
+<h3>Стоимость после подписания</h3>
 <div class="empty-note">Станет доступна после подписания папки (см. раздел «Подписание» выше).</div>
 {% endif %}
 {% endblock %}

@@ -164,14 +164,17 @@ def main_check():
         "folders_count", folder_stats["folders_count"],
     )
 
-    # --- 5. Деньги: контракт − подписано − ручной объём = остаток ---
+    # --- 5. Деньги: контракт − подписано ранее − подписано по КС-2 − ручной
+    # объём = остаток (ТЗ Якименко А.И., 16.09.2026 — единственный остаток,
+    # закрывает KNOWN_ISSUES.md §42; см. compute_id_folder_stats()).
     identity_remaining = (
         float(folder_stats["contract_total"])
-        - float(folder_stats["signed_folders_sum"])
+        - float(folder_stats["signed_before_sum"])
+        - float(folder_stats["ks2_sum"])
         - float(folder_stats["manual_sum"])
     )
     check(
-        "Деньги: контракт − подписано − ручной объём vs money_remaining",
+        "Деньги: контракт − подписано ранее − подписано по КС-2 − ручной объём vs money_remaining",
         "пересчитано", round(identity_remaining, 2),
         "compute_id_folder_stats()['money_remaining']", round(float(folder_stats["money_remaining"]), 2),
         tolerance=0.01,
@@ -196,18 +199,38 @@ def main_check():
         "/dashboard", change_stats_row["total"],
     )
 
-    # --- 7. Продолжение прогона 10.09.2026: awaiting_smeta_count/not_signed_count vs прямой SQL ---
+    # --- 7. ТЗ Якименко А.И., 16.09.2026 — «Подписано ранее» (папки,
+    # signed_date раньше границы app_setting['id_signed_before_boundary_date'])
+    # и «Подписано по КС-2» не должны считать одну папку дважды (см.
+    # compute_id_folder_stats()) — сверка count() против прямого SQL по
+    # обоим множествам плюс отдельно overlap_count (папки, которые попали в
+    # «ранее», но у них уже есть и ks2_date).
+    boundary = folder_stats["signed_before_boundary"]
     check(
-        "Ждут сметную стоимость: compute_id_folder_stats() vs прямой SQL",
-        "compute_id_folder_stats()", folder_stats["awaiting_smeta_count"],
+        "Подписано ранее: compute_id_folder_stats() vs прямой SQL",
+        "compute_id_folder_stats()", folder_stats["signed_before_count"],
         "прямой SQL", m.query_one(
-            "select count(*) as n from id_folder where signed_date is not null and amount_smeta_rub is null"
+            "select count(*) as n from id_folder where signed_date is not null and signed_date < %(b)s",
+            {"b": boundary},
         )["n"],
     )
     check(
-        "Ещё не подписано: compute_id_folder_stats() vs прямой SQL",
-        "compute_id_folder_stats()", folder_stats["not_signed_count"],
-        "прямой SQL", m.query_one("select count(*) as n from id_folder where signed_date is null")["n"],
+        "Подписано по КС-2: compute_id_folder_stats() vs прямой SQL",
+        "compute_id_folder_stats()", folder_stats["ks2_count"],
+        "прямой SQL", m.query_one(
+            "select count(*) as n from id_folder where ks2_date is not null "
+            "and not (signed_date is not null and signed_date < %(b)s)",
+            {"b": boundary},
+        )["n"],
+    )
+    check(
+        "Пересечение «Подписано ранее» и КС-2 (overlap_count): compute_id_folder_stats() vs прямой SQL",
+        "compute_id_folder_stats()", folder_stats["overlap_count"],
+        "прямой SQL", m.query_one(
+            "select count(*) as n from id_folder where signed_date is not null and signed_date < %(b)s "
+            "and ks2_date is not null",
+            {"b": boundary},
+        )["n"],
     )
 
     # --- 8. Блоки 1-2 "График ИД — прогресс": tiles (один агрегат) vs stream
@@ -295,14 +318,19 @@ def main_check():
             "compute_id_progress_stream()", tile_green,
         )
 
-    # --- 10. /id-folders (список папок, бывший /id-folders/registry —
-    # слито в одну страницу 17.09.2026) amount_signed vs compute_id_folder_stats() ---
+    # --- 10. Единая «Стоимость, ₽» (координатор, 16.09.2026, ТЗ Якименко) —
+    # сумма id_folder_cost() по списку /id-folders (столбец «Стоимость, ₽»)
+    # обязана совпасть с суммой того же выражения, посчитанной прямым SQL:
+    # один coalesce(amount_smeta_rub, amount_rub), не два разных пути к числу.
     reg_folders = m.query_id_folders(order="desc")
-    reg_amount_signed = float(m.compute_id_folder_stats()["signed_folders_sum"])
+    list_cost_sum = round(sum(m.id_folder_cost(f) for f in reg_folders), 2)
+    direct_cost_sum = round(float(m.query_one(
+        "select coalesce(sum(coalesce(amount_smeta_rub, amount_rub)), 0) as s from id_folder"
+    )["s"]), 2)
     check(
-        "Список папок /id-folders (amount_signed) vs compute_id_folder_stats()['signed_folders_sum']",
-        "/id-folders", reg_amount_signed,
-        "compute_id_folder_stats()", float(folder_stats["signed_folders_sum"]),
+        "Стоимость, ₽: сумма id_folder_cost() по списку /id-folders vs прямой SQL coalesce()",
+        "/id-folders (id_folder_cost)", list_cost_sum,
+        "прямой SQL coalesce(amount_smeta_rub, amount_rub)", direct_cost_sum,
         tolerance=0.01,
     )
 
@@ -429,39 +457,46 @@ def main_check():
         "/status", status_forecast_m.group(1) if status_forecast_m else None,
     )
 
-    # ИД: деньги — /dashboard ("Всего по контракту"/"Остаток") vs
-    # /id-folders ("Контракт, ₽ (с НДС)"/"Остаток в деньгах, ₽") — разные
-    # подписи, то же самое compute_id_folder_stats(), число обязано
-    # совпасть буквально в отрендеренном виде (включая форматирование
-    # ru_money — если бы кто-то поменял разделитель разрядов в одном
-    # шаблоне и не в другом, это тоже расхождение).
-    dash_contract_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Всего по контракту, ₽</div>', dashboard_html)
-    folders_contract_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Контракт, ₽ \(с НДС\)</div>', id_folders_html)
-    check(
-        "Контракт по ИД, ₽: /dashboard vs /id-folders",
-        "/dashboard", dash_contract_m.group(1).strip() if dash_contract_m else None,
-        "/id-folders", folders_contract_m.group(1).strip() if folders_contract_m else None,
-    )
+    # ИД: деньги — ТЗ Якименко А.И., 16.09.2026 (§3) — пять денежных тайлов
+    # ИДЕНТИЧНЫ на /dashboard и /id-folders (одна и та же подпись, одно и то
+    # же число), не просто "то же значение под разными подписями", как было
+    # до этого ТЗ. Сверяем все пять тайл-в-тайл на отрендеренном HTML.
+    id_money_tile_labels = [
+        "Всего по контракту, ₽", "Подписано ранее, ₽", "Подписано по КС-2, ₽",
+        "Невыбираемый остаток, ₽", "Остаток по контракту, ₽",
+    ]
+    id_money_tile_values = {}
+    for label in id_money_tile_labels:
+        pattern = re.compile(
+            r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">' + re.escape(label) + r"</div>"
+        )
+        dash_m = pattern.search(dashboard_html)
+        folders_m = pattern.search(id_folders_html)
+        dash_v = _parse_ru_money(dash_m.group(1).strip()) if dash_m else None
+        folders_v = _parse_ru_money(folders_m.group(1).strip()) if folders_m else None
+        id_money_tile_values[label] = dash_v
+        check(
+            f"ИД, тайл «{label}»: /dashboard vs /id-folders",
+            "/dashboard", round(dash_v, 2) if dash_v is not None else None,
+            "/id-folders", round(folders_v, 2) if folders_v is not None else None,
+            tolerance=0.01,
+        )
 
-    # ТЗ Якименко А.И., 15.09.2026 (§3, §7): "Остаток, ₽" на /dashboard
-    # переименован и сменил формулу — теперь "Остаток по контракту, ₽",
-    # это заведомо ДРУГОЕ число, чем "Остаток в деньгах, ₽" на
-    # /id-folders (см. KNOWN_ISSUES.md, "два остатка"), сравнивать между
-    # страницами больше нельзя. Взамен — тождество трёх денежных тайлов
-    # ОДНОЙ и той же строки /dashboard, как реально нарисовано на экране.
-    dash_ks2_tile_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Подписано по КС-2, ₽</div>', dashboard_html)
-    dash_manual_tile_m = re.search(r'<div class="kpi-num">([^<]+)</div>\s*<div class="kpi-label">Невыбираемый остаток, ₽</div>', dashboard_html)
-    dash_remaining_contract_m = re.search(r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">Остаток по контракту, ₽</div>', dashboard_html)
-    contract_v = _parse_ru_money(dash_contract_m.group(1).strip()) if dash_contract_m else None
-    ks2_tile_v = _parse_ru_money(dash_ks2_tile_m.group(1).strip()) if dash_ks2_tile_m else None
-    manual_tile_v = _parse_ru_money(dash_manual_tile_m.group(1).strip()) if dash_manual_tile_m else None
-    remaining_contract_v = _parse_ru_money(dash_remaining_contract_m.group(1).strip()) if dash_remaining_contract_m else None
+    # ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано
+    # ранее» − «Подписано по КС-2» − «Невыбираемый остаток» — как реально
+    # нарисовано на экране /dashboard (KNOWN_ISSUES.md §42, "два остатка",
+    # закрыто этим ТЗ: остаток теперь один и тот же на обеих страницах).
+    contract_v = id_money_tile_values["Всего по контракту, ₽"]
+    signed_before_tile_v = id_money_tile_values["Подписано ранее, ₽"]
+    ks2_tile_v = id_money_tile_values["Подписано по КС-2, ₽"]
+    manual_tile_v = id_money_tile_values["Невыбираемый остаток, ₽"]
+    remaining_contract_v = id_money_tile_values["Остаток по контракту, ₽"]
     computed_remaining = (
-        contract_v - ks2_tile_v - manual_tile_v
-        if None not in (contract_v, ks2_tile_v, manual_tile_v) else None
+        contract_v - signed_before_tile_v - ks2_tile_v - manual_tile_v
+        if None not in (contract_v, signed_before_tile_v, ks2_tile_v, manual_tile_v) else None
     )
     check(
-        "ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано по КС-2» − «Невыбираемый остаток» (как на экране /dashboard)",
+        "ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано ранее» − «Подписано по КС-2» − «Невыбираемый остаток» (как на экране /dashboard)",
         "пересчитано из тайлов", round(computed_remaining, 2) if computed_remaining is not None else None,
         "тайл «Остаток по контракту, ₽»", round(remaining_contract_v, 2) if remaining_contract_v is not None else None,
         tolerance=0.01,
@@ -470,7 +505,7 @@ def main_check():
     # ИД: headline "N из M папок с КС-2" убран (ТЗ 15.09.2026) — взамен
     # сверка ₽ стадии трубы «Текущая КС-2» с тайлом «Подписано по КС-2, ₽»
     # на той же странице (оба должны показывать одну и ту же сумму
-    # ks2_folders_sum, но верстка не переиспользует текст друг друга).
+    # ks2_sum, но верстка не переиспользует текст друг друга).
     ks2_current_label = m.ID_FOLDER_PIPE_STAGE_LABELS["ks2_current"]
     dash_ks2_pipe_money_m = re.search(
         r'<span class="id-pipe-label"[^>]*>' + re.escape(ks2_current_label) + r"</span>\s*"

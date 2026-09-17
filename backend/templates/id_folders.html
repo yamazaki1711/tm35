@@ -12,37 +12,36 @@
 <div class="flash flash-err">Часть выбранных разделов уже была в другой папке — не добавлена, остальное сохранено.</div>
 {% endif %}
 
-<h3 style="margin-top:0">Воронка папок по стадиям</h3>
-{% with pipe=stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
-
-<h3>Деньги</h3>
+{# ТЗ Якименко А.И., 16.09.2026 — порядок секций сверху вниз: Деньги →
+   Воронка папок по стадиям → Разделы → Список папок (было: Воронка →
+   Деньги → Разделы). Пять денежных плиток — те же самые, что на
+   /dashboard (Обзор ИД), см. compute_id_folder_stats(). #}
+<h3 style="margin-top:0">Деньги</h3>
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ stats.contract_total|ru_money }}</div>
-    <div class="kpi-label">Контракт, ₽ (с НДС)</div>
+    <div class="kpi-label">Всего по контракту, ₽</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ stats.signed_folders_sum|ru_money }}</div>
-    <div class="kpi-label">Подписано, ₽</div>
-    <div class="kpi-sub">по сметной стоимости подписанных папок</div>
+    <div class="kpi-num">{{ stats.signed_before_sum|ru_money }}</div>
+    <div class="kpi-label">Подписано ранее, ₽</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num">{{ stats.ks2_sum|ru_money }}</div>
+    <div class="kpi-label">Подписано по КС-2, ₽</div>
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ stats.manual_sum|ru_money }}</div>
-    <div class="kpi-label">Ручной объём, ₽</div>
+    <div class="kpi-label">Невыбираемый остаток, ₽</div>
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
-    <div class="kpi-label">Остаток в деньгах, ₽</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'warn' if stats.awaiting_smeta_count > 0 else '' }}">{{ stats.awaiting_smeta_count }}</div>
-    <div class="kpi-label">Подписано, ждёт сметной стоимости</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'warn' if stats.not_signed_count > 0 else '' }}">{{ stats.not_signed_count }}</div>
-    <div class="kpi-label">Ещё не подписано</div>
+    <div class="kpi-label">Остаток по контракту, ₽</div>
   </div>
 </div>
+
+<h3>Воронка папок по стадиям</h3>
+{% with pipe=stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
 <h3>Разделы</h3>
 <div class="kpi-row kpi-small">
@@ -52,16 +51,15 @@
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ stats.signed_total }}</div>
-    <div class="kpi-label">Подписано разделов</div>
+    <div class="kpi-label">Подписано</div>
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'warn' if stats.unsigned_count > 0 else '' }}">{{ stats.unsigned_count }}</div>
-    <div class="kpi-label">Остаток неподписанных</div>
+    <div class="kpi-label">Неподписано</div>
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ stats.signed_not_in_folder }}</div>
     <div class="kpi-label">Готово к сборке</div>
-    <div class="kpi-sub">подписано, ещё не в папке</div>
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'warn' if active_changes > 0 else '' }}">{{ active_changes }}</div>
@@ -95,38 +93,24 @@
 <h3>Список папок</h3>
 <p class="subtitle"><a href="/export/id-folders.csv?status={{ status }}">Скачать CSV</a></p>
 
-<div class="kpi-row kpi-small">
-  <div class="kpi">
-    <div class="kpi-num">{{ totals.folders_count }}</div>
-    <div class="kpi-label">Всего папок</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ totals.transferred_count }}</div>
-    <div class="kpi-label">Передано в СДО</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ totals.amount_total|ru_money }}</div>
-    <div class="kpi-label">Сумма оценок ПТО, ₽</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ totals.amount_signed|ru_money }}</div>
-    <div class="kpi-label">Сметная стоимость подписанных, ₽</div>
-  </div>
-</div>
-
+{# ТЗ 16.09.2026 — два выпадающих списка одним блоком. «Статус» — ровно
+   пять стадий трубы (одно значение на стадию, через ту же функцию
+   id_folder_pipe_stage(), что рисует саму трубу — не отдельные условия)
+   плюс отдельное значение «Неподписано». «Все» среди значений нет — в
+   задании их ровно шесть, без варианта «показать все»; если ссылка
+   пришла без status (или status=all) — список ниже честно показывает
+   все папки, а select визуально подсвечивает первый пункт (браузерное
+   поведение при отсутствии выбранного option) — известное расхождение,
+   решение координатора, см. run log. #}
 <form method="get" action="/id-folders" class="form-box" style="max-width:520px;display:flex;gap:1rem;align-items:flex-end;">
   <label style="flex:1">Статус
     <select name="status" onchange="this.form.submit()">
-      <option value="all" {{ 'selected' if status=='all' }}>Все</option>
-      <option value="formed" {{ 'selected' if status=='formed' }}>Сформированные</option>
-      <option value="transferred" {{ 'selected' if status=='transferred' }}>Переданные в СДО</option>
-      <option value="checking" {{ 'selected' if status=='checking' }}>Проверка</option>
-      <option value="signed" {{ 'selected' if status=='signed' }}>Подписанные</option>
-      <option value="ks2" {{ 'selected' if status=='ks2' }}>С оформленным КС-2</option>
-      <option value="not_signed" {{ 'selected' if status=='not_signed' }}>Ещё не подписаны</option>
-      <option value="awaiting_smeta" {{ 'selected' if status=='awaiting_smeta' }}>Ждут сметную стоимость</option>
+      <option value="formed" {{ 'selected' if status=='formed' }}>Сформировано</option>
       <option value="checking_all" {{ 'selected' if status=='checking_all' }}>На проверке</option>
+      <option value="awaiting_smeta" {{ 'selected' if status=='awaiting_smeta' }}>Подписано</option>
+      <option value="ks2" {{ 'selected' if status=='ks2' }}>Текущая КС-2</option>
       <option value="ks2_next" {{ 'selected' if status=='ks2_next' }}>Следующая КС-2</option>
+      <option value="not_signed" {{ 'selected' if status=='not_signed' }}>Неподписано</option>
     </select>
   </label>
   <label style="flex:1">Сортировка по номеру
@@ -142,13 +126,11 @@
   <thead>
     <tr>
       <th class="nowrap">Номер папки</th>
-      <th class="nowrap">Дата формирования</th>
+      <th class="nowrap">Дата создания</th>
       <th class="nowrap">Разделов</th>
-      <th class="nowrap">Оценка ПТО, ₽</th>
-      <th class="nowrap">Сметная стоимость, ₽</th>
-      <th>Подписант реестра передачи</th>
-      <th class="nowrap">Дата передачи в СДО</th>
-      <th class="nowrap">Стадия</th>
+      <th class="nowrap">Стоимость, ₽</th>
+      <th>Подписант реестра</th>
+      <th class="nowrap">Статус</th>
     </tr>
   </thead>
   <tbody>
@@ -157,14 +139,12 @@
       <td class="nowrap"><a href="/id-folders/{{ f.id }}">{{ f.name }}</a></td>
       <td class="nowrap">{{ f.folder_date|fmt_dmy if f.folder_date else '—' }}</td>
       <td class="nowrap">{{ f.row_count }}</td>
-      <td class="nowrap">{{ (f.amount_sum or 0)|ru_money }}</td>
-      <td class="nowrap">{{ f.amount_smeta_rub|ru_money if f.amount_smeta_rub is not none else '—' }}</td>
+      <td class="nowrap">{{ f.cost|ru_money }}</td>
       <td>{{ f.sdo_signer_name or '—' }}</td>
-      <td class="nowrap">{{ f.sdo_transfer_date|fmt_dmy if f.sdo_transfer_date else '—' }}</td>
       <td class="nowrap"><span class="badge {{ 'badge-ok' if f.stage in ('signed', 'ks2') else 'badge-neutral' }}">{{ f.stage_label }}</span></td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="empty-note">Папок с таким статусом нет.</td></tr>
+    <tr><td colspan="6" class="empty-note">Папок с таким статусом нет.</td></tr>
     {% endfor %}
   </tbody>
 </table>
