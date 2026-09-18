@@ -336,7 +336,13 @@
       var dmText = dateHidden.parentElement.querySelector('.dm-text');
       if (dmText) dmText.value = TM35_RU_DATE.fmtDMY(data.date);
     }
-    if (dateChanged) setFactDate(data.date);
+    // factForm/setFactDate существуют только при праве записи (форма не
+    // рендерится вовсе для доступа только на чтение, условие вокруг
+    // #fact-form в разметке выше) — без охраны здесь /shift падал целиком
+    // (TypeError) для любого пользователя без права записи, найдено
+    // живым прогоном ui_audit.py при деплое 18.09.2026 (таблица не
+    // рисовалась вообще).
+    if (dateChanged && factForm) setFactDate(data.date);
 
     populateWorkSelect();
     populateReasonSelect();
