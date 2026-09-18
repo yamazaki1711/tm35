@@ -7,6 +7,25 @@
   .shift-controls input[type="text"].search { min-width: 14rem; }
   #shift-count { font-size: .82rem; color: var(--c-text-3); align-self: center; margin-left: auto; }
 
+  /* Форма «Ввод факта» — координатор, 18.09.2026: обратно на страницу,
+     не модалка. Тот же .form-box, что и везде на сайте (см. style.css),
+     только с двумя правками именно здесь: подписи не мельче 14px (сайтовый
+     .form-box label — .85rem = 13.6px, известный долг KNOWN_ISSUES §44,
+     не трогаем его глобально — поднимаем только в этой форме, отдельным
+     селектором) и попарная раскладка (flex-wrap, не CSS grid) для части
+     строк, чтобы на 1366×768 таблица под формой не уходила за экран
+     целиком. */
+  #fact-form { max-width: 900px; margin-bottom: 2rem; }
+  #fact-form label { font-size: 1rem; }
+  .fact-form-row { display: flex; flex-wrap: wrap; gap: 0 1.5rem; }
+  .fact-form-row > label { flex: 1 1 240px; margin-top: 1rem; }
+  .fact-form-row > label:first-child { margin-top: 1rem; }
+  #fact-form label.chk { display: flex; flex-direction: row; align-items: center; gap: .5rem; }
+  #fact-form label.chk input { width: auto; margin-top: 0; }
+  #nf-subcontractor-name { margin-top: .5rem; }
+  #existing-note { font-size: .85rem; margin-top: .8rem; }
+  #nf-errors ul { margin: .4rem 0 0; padding-left: 1.2rem; }
+
   /* table-layout:fixed без явной min-width на самой таблице сжимает
      колонки ПРОПОРЦИОНАЛЬНО ширине контейнера, а не по объявленным rem —
      на планшетах (найдено 29.08.2026, ~640-768px) колонка «Наименование»
@@ -59,19 +78,6 @@
   .planned-hint { display: block; margin-top: .2rem; font-size: .74rem; color: var(--c-text-3); white-space: nowrap; }
   .work-optgroup-done { color: var(--c-text-3); }
 
-  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(16,24,40,.5); z-index: 50; align-items: center; justify-content: center; }
-  .modal-overlay.open { display: flex; }
-  .modal-box { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--r-lg); padding: 1.25rem 1.5rem; width: 460px; max-width: 92vw; max-height: 88vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
-  .modal-box h3 { margin: 0 0 .75rem; font-size: 1.05rem; }
-  .modal-box label { display: block; margin-top: .8rem; font-size: .85rem; font-weight: 600; color: var(--c-text-2); }
-  .modal-box input, .modal-box select { width: 100%; margin-top: .3rem; }
-  .modal-box label.chk { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin-top: 1rem; }
-  .modal-box label.chk input { width: auto; margin-top: 0; }
-  .modal-fieldset { display: grid; grid-template-columns: 1fr 1fr; gap: 0 .8rem; }
-  .modal-errors { color: var(--c-danger); font-size: .82rem; margin-top: .6rem; min-height: 1em; }
-  .modal-actions { display: flex; gap: .5rem; margin-top: 1.1rem; justify-content: flex-end; }
-  #existing-note { font-size: .82rem; margin-top: .8rem; }
-
   #toast {
     position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--c-success); color: #fff;
     padding: .6rem 1rem; border-radius: var(--r-sm); font-size: .88rem; font-weight: 600;
@@ -82,7 +88,7 @@
 <h1>Экран смены</h1>
 <p class="subtitle">Строки — работы, не завершённые физически (по умолчанию). Сохранение — по уходу из ячейки, каждое поле независимо.
 Клавиатура: Tab/Shift+Tab между ячейками, Enter/↓/↑ — по столбцу вниз/вверх.
-Нужно внести только одну запись — кнопка «+ ввод факта» ниже открывает то же самое одной формой.
+Нужно внести только одну запись — форма «Ввод факта» ниже открыта постоянно, ничего не нажимать, чтобы её увидеть.
 По умолчанию открывается вчерашний день — дату можно сменить.</p>
 
 {% if not can_write %}
@@ -106,11 +112,65 @@
     <label for="inp-search" style="font-size:.8rem;font-weight:600;color:var(--c-text-2)">Поиск по шифру/наименованию</label>
     <input type="text" id="inp-search" class="search" placeholder="например, УТ13 или герметизация">
   </div>
-  <button type="button" id="btn-add-fact" class="btn-secondary">+ ввод факта</button>
   <button type="button" id="btn-refresh-schedule" class="btn-secondary">Обновить график СМР</button>
   <span id="shift-count"></span>
 </div>
 
+{% if can_write %}
+<h3 style="margin-top:1.5rem">Ввод факта</h3>
+<form class="form-box" id="fact-form">
+  <label>Работа
+    <select id="nf-work" required></select>
+  </label>
+  <label>Дата
+    <span class="dm-picker" data-dm-picker>
+      <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+      <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <input type="hidden" id="nf-date">
+      <div class="dm-cal" hidden></div>
+    </span>
+  </label>
+  <div id="existing-note" class="empty-note" style="display:none"></div>
+  <div class="fact-form-row">
+    <label>План людей (0–50)<input type="number" id="nf-planned" min="0" max="50"></label>
+    <label>Факт людей (0–50)<input type="number" id="nf-actual" min="0" max="50"></label>
+  </div>
+  <label>Процент выполнения, % (0–100)
+    <input type="number" id="nf-pct" min="0" max="100" step="1" placeholder="например, 65">
+  </label>
+  <div class="fact-form-row">
+    <label>Дата начала работ
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" id="nf-sched-start">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+    <label>Дата окончания работ
+      <span class="dm-picker" data-dm-picker>
+        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
+        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+        <input type="hidden" id="nf-sched-finish">
+        <div class="dm-cal" hidden></div>
+      </span>
+    </label>
+  </div>
+  <label>Причина простоя (если был)
+    <select id="nf-reason"><option value="">— не указана —</option></select>
+  </label>
+  <label>Комментарий (обязателен, если причина «Иное»)
+    <textarea id="nf-comment" rows="3"></textarea>
+  </label>
+  <label class="chk" style="margin-top:1rem"><input type="checkbox" id="nf-subcontractor"> Подрядчик</label>
+  <input type="text" id="nf-subcontractor-name" placeholder="название" style="display:none">
+
+  <div id="nf-errors" class="flash flash-err" style="display:none"></div>
+  <button type="button" id="nf-save">Сохранить</button>
+</form>
+{% endif %}
+
+<h3>Список на день</h3>
 <div class="table-wrap" style="margin-top:1rem{{ ';pointer-events:none' if not can_write }}">
   <table class="shift">
     <colgroup>
@@ -131,65 +191,6 @@
   </table>
 </div>
 
-<!-- Модалка: ввод факта (ТЗ Якименко 16.09.2026, задача 3, §2 — заменяет
-     собой отдельную страницу /form и кнопку "+ добавить работу"; новую
-     работу по-прежнему заводят на /gantt, этот путь не тронут). -->
-<div class="modal-overlay" id="modal-fact">
-  <div class="modal-box">
-    <h3>Ввод факта</h3>
-    <label>Работа
-      <select id="nf-work"></select>
-    </label>
-    <label>Дата
-      <span class="dm-picker" data-dm-picker>
-        <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-        <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-        <input type="hidden" id="nf-date">
-        <div class="dm-cal" hidden></div>
-      </span>
-    </label>
-    <div id="nf-existing-note" class="empty-note" style="display:none"></div>
-    <div class="modal-fieldset">
-      <label>План людей (0–50)<input type="number" id="nf-planned" min="0" max="50"></label>
-      <label>Факт людей (0–50)<input type="number" id="nf-actual" min="0" max="50"></label>
-    </div>
-    <label>Процент выполнения, % (0–100)<input type="number" id="nf-pct" min="0" max="100" step="1" placeholder="например, 65"></label>
-    <label>Причина простоя (если был)
-      <select id="nf-reason"><option value="">— не указана —</option></select>
-    </label>
-    <label>Комментарий (обязателен, если причина «Иное»)<input type="text" id="nf-comment"></label>
-
-    <p class="subtitle" style="margin:1rem 0 0">Сроки по графику (необязательно) — сохранение сразу отражается на /gantt.</p>
-    <div class="modal-fieldset">
-      <label>Дата начала работ
-        <span class="dm-picker" data-dm-picker>
-          <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-          <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-          <input type="hidden" id="nf-sched-start">
-          <div class="dm-cal" hidden></div>
-        </span>
-      </label>
-      <label>Дата окончания работ
-        <span class="dm-picker" data-dm-picker>
-          <input type="text" class="dm-text" placeholder="ДД.ММ.ГГГГ" autocomplete="off">
-          <button type="button" class="dm-btn" tabindex="-1" aria-label="Открыть календарь"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-          <input type="hidden" id="nf-sched-finish">
-          <div class="dm-cal" hidden></div>
-        </span>
-      </label>
-    </div>
-
-    <label class="chk"><input type="checkbox" id="nf-subcontractor"> Подрядчик</label>
-    <input type="text" id="nf-subcontractor-name" placeholder="название" style="margin-top:.4rem;display:none">
-
-    <div class="modal-errors" id="nf-errors"></div>
-    <div class="modal-actions">
-      <button type="button" class="btn-secondary" data-close="modal-fact">Отмена</button>
-      <button type="button" class="btn-ok" id="nf-save">Сохранить</button>
-    </div>
-  </div>
-</div>
-
 <div id="toast"></div>
 
 <script>
@@ -199,7 +200,7 @@
   var order = [];          // порядок id работ в текущей отрисовке — для навигации стрелками
   var lastSaved = {};      // "id:field" -> последнее сохранённое строковое значение
   var reasonCodes = [];    // приходит в каждом ответе /api/shift
-  var workRows = [];       // приходит в каждом ответе /api/shift — для модалки «Ввод факта»
+  var workRows = [];       // приходит в каждом ответе /api/shift — для формы «Ввод факта»
 
   function toast(msg, ok) {
     var t = document.getElementById('toast');
@@ -209,15 +210,6 @@
     clearTimeout(t._h);
     t._h = setTimeout(function () { t.style.display = 'none'; }, 2500);
   }
-
-  function openModal(id) { document.getElementById(id).classList.add('open'); }
-  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-  document.querySelectorAll('[data-close]').forEach(function (btn) {
-    btn.addEventListener('click', function () { closeModal(btn.getAttribute('data-close')); });
-  });
-  document.querySelectorAll('.modal-overlay').forEach(function (ov) {
-    ov.addEventListener('click', function (e) { if (e.target === ov) ov.classList.remove('open'); });
-  });
 
   function postForm(url, data) {
     var body = new URLSearchParams(data);
@@ -278,6 +270,45 @@
     }).catch(function (e) { toast('Ошибка сети — сроки не сохранены: ' + e, false); });
   }
 
+  // ====== Форма «Ввод факта» — на странице, не модалка (координатор,
+  // 18.09.2026). Список работ обновляется вместе с таблицей (тот же
+  // /api/shift), текущий выбор сохраняется, если выбранная работа всё
+  // ещё есть в списке — план/факт/поиск не должны сбрасывать форму,
+  // которую человек уже заполняет. ======
+  function workOptionsHtml() {
+    var html = '<option value="" selected disabled>— выбрать —</option>';
+    var open = workRows.filter(function (w) { return !w.is_done; });
+    var done = workRows.filter(function (w) { return w.is_done; });
+    open.forEach(function (w) {
+      html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
+    });
+    if (done.length) {
+      html += '<optgroup label="Выполнены физически" class="work-optgroup-done">';
+      done.forEach(function (w) {
+        html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
+      });
+      html += '</optgroup>';
+    }
+    return html;
+  }
+
+  function populateWorkSelect() {
+    var sel = document.getElementById('nf-work');
+    if (!sel) return;
+    var prevVal = sel.value;
+    sel.innerHTML = workOptionsHtml();
+    if (prevVal && sel.querySelector('option[value="' + prevVal + '"]')) sel.value = prevVal;
+  }
+
+  function populateReasonSelect() {
+    var sel = document.getElementById('nf-reason');
+    if (!sel) return;
+    var prevVal = sel.value;
+    sel.innerHTML = '<option value="">— не указана —</option>' +
+      reasonCodes.map(function (rc) { return '<option value="' + rc[0] + '">' + rc[1] + '</option>'; }).join('');
+    sel.value = prevVal;
+  }
+
   function render(data) {
     reasonCodes = data.reason_codes;
     workRows = data.work_rows;
@@ -296,12 +327,19 @@
     // календарю объекта), не клиентские часы браузера. Синхронизируем
     // виджет с тем, что реально загружено, включая видимый текст
     // (datepicker.js не даёт внешнего доступа к своей синхронизации).
+    // Форма «Ввод факта» — часть этого экрана, не отдельная страница:
+    // её дата следует за датой смены (координатор, 18.09.2026).
+    var dateChanged = state.date !== data.date;
     state.date = data.date;
     if (dateHidden.value !== data.date) {
       dateHidden.value = data.date;
       var dmText = dateHidden.parentElement.querySelector('.dm-text');
       if (dmText) dmText.value = TM35_RU_DATE.fmtDMY(data.date);
     }
+    if (dateChanged) setFactDate(data.date);
+
+    populateWorkSelect();
+    populateReasonSelect();
 
     if (!data.items.length) {
       document.getElementById('shift-body').innerHTML =
@@ -499,123 +537,120 @@
     toast('График обновлён');
   });
 
-  // ====== Модалка «Ввод факта» ======
-  function workOptionsHtml() {
-    var html = '<option value="" selected disabled>— выбрать —</option>';
-    var open = workRows.filter(function (w) { return !w.is_done; });
-    var done = workRows.filter(function (w) { return w.is_done; });
-    open.forEach(function (w) {
-      html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
-    });
-    if (done.length) {
-      html += '<optgroup label="Выполнены физически" class="work-optgroup-done">';
-      done.forEach(function (w) {
-        html += '<option value="' + w.id + '">' + w.code + ' — ' + w.name + '</option>';
-      });
-      html += '</optgroup>';
+  // ====== Форма «Ввод факта» (координатор, 18.09.2026 — обратно на
+  // страницу, была модалкой). При can_write=false разметки формы на
+  // странице вообще нет (см. условие вокруг #fact-form в шаблоне выше),
+  // весь код ниже выполняется только когда форма реально на странице. ======
+  var factForm = document.getElementById('fact-form');
+  if (factForm) {
+    function setHiddenDate(id, iso) {
+      var hidden = document.getElementById(id);
+      hidden.value = iso || '';
+      var text = hidden.parentElement.querySelector('.dm-text');
+      if (text) text.value = iso ? TM35_RU_DATE.fmtDMY(iso) : '';
     }
-    return html;
-  }
 
-  function setHiddenDate(id, iso) {
-    var hidden = document.getElementById(id);
-    hidden.value = iso || '';
-    var text = hidden.parentElement.querySelector('.dm-text');
-    if (text) text.value = iso ? TM35_RU_DATE.fmtDMY(iso) : '';
-  }
+    function setFactDate(iso) {
+      setHiddenDate('nf-date', iso);
+      checkExistingForForm();
+    }
 
-  function checkExistingForModal() {
-    var workId = document.getElementById('nf-work').value;
-    var date = document.getElementById('nf-date').value;
-    var note = document.getElementById('nf-existing-note');
-    if (!workId || !date) { note.style.display = 'none'; return; }
-    fetch('/api/existing-entry?work_id=' + encodeURIComponent(workId) + '&date=' + encodeURIComponent(date))
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (data.exists) {
-          note.style.display = 'block';
-          var pctTxt = data.fact_pct === null || data.fact_pct === undefined ? '—' : data.fact_pct + '%';
-          note.innerHTML = 'На эту дату по этой работе уже есть запись: план ' +
-            (data.planned_crew === null ? '—' : data.planned_crew) + ', факт ' +
-            (data.actual_crew === null ? '—' : data.actual_crew) +
-            ', % выполнения: ' + pctTxt +
-            '. Сохранение перезапишет её (время последнего изменения: ' + TM35_RU_DATE.fmtDMYHM(data.updated_at) + ').';
-          document.getElementById('nf-planned').value = data.planned_crew === null ? '' : data.planned_crew;
-          document.getElementById('nf-actual').value = data.actual_crew === null ? '' : data.actual_crew;
-          if (data.fact_pct !== null && data.fact_pct !== undefined) document.getElementById('nf-pct').value = data.fact_pct;
-          document.getElementById('nf-reason').value = data.reason_code || '';
-          document.getElementById('nf-comment').value = data.comment || '';
+    function resetFactForm() {
+      document.getElementById('nf-work').value = '';
+      setFactDate(state.date);
+      document.getElementById('nf-planned').value = '';
+      document.getElementById('nf-actual').value = '';
+      document.getElementById('nf-pct').value = '';
+      populateReasonSelect();
+      document.getElementById('nf-reason').value = '';
+      document.getElementById('nf-comment').value = '';
+      setHiddenDate('nf-sched-start', null);
+      setHiddenDate('nf-sched-finish', null);
+      document.getElementById('nf-subcontractor').checked = false;
+      document.getElementById('nf-subcontractor-name').value = '';
+      document.getElementById('nf-subcontractor-name').style.display = 'none';
+      document.getElementById('existing-note').style.display = 'none';
+      document.getElementById('nf-errors').style.display = 'none';
+    }
+
+    function checkExistingForForm() {
+      var workId = document.getElementById('nf-work').value;
+      var date = document.getElementById('nf-date').value;
+      var note = document.getElementById('existing-note');
+      if (!workId || !date) { note.style.display = 'none'; return; }
+      fetch('/api/existing-entry?work_id=' + encodeURIComponent(workId) + '&date=' + encodeURIComponent(date))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data.exists) {
+            note.style.display = 'block';
+            var pctTxt = data.fact_pct === null || data.fact_pct === undefined ? '—' : data.fact_pct + '%';
+            note.innerHTML = 'На эту дату по этой работе уже есть запись: план ' +
+              (data.planned_crew === null ? '—' : data.planned_crew) + ', факт ' +
+              (data.actual_crew === null ? '—' : data.actual_crew) +
+              ', % выполнения: ' + pctTxt +
+              '. Сохранение перезапишет её (время последнего изменения: ' + TM35_RU_DATE.fmtDMYHM(data.updated_at) + ').';
+            document.getElementById('nf-planned').value = data.planned_crew === null ? '' : data.planned_crew;
+            document.getElementById('nf-actual').value = data.actual_crew === null ? '' : data.actual_crew;
+            if (data.fact_pct !== null && data.fact_pct !== undefined) document.getElementById('nf-pct').value = data.fact_pct;
+            document.getElementById('nf-reason').value = data.reason_code || '';
+            document.getElementById('nf-comment').value = data.comment || '';
+          } else {
+            note.style.display = 'none';
+          }
+          // Сроки и подрядчик — свойства РАБОТЫ, не дня: показываются
+          // независимо от того, есть ли факт на выбранную дату (см.
+          // /api/existing-entry, main.py).
+          setHiddenDate('nf-sched-start', data.current_start);
+          setHiddenDate('nf-sched-finish', data.current_finish);
+          document.getElementById('nf-subcontractor').checked = !!data.subcontractor;
+          document.getElementById('nf-subcontractor-name').value = data.subcontractor_name || '';
+          document.getElementById('nf-subcontractor-name').style.display = data.subcontractor ? 'block' : 'none';
+        })
+        .catch(function () { note.style.display = 'none'; });
+    }
+
+    document.getElementById('nf-work').addEventListener('change', checkExistingForForm);
+    document.getElementById('nf-date').addEventListener('change', checkExistingForForm);
+    document.getElementById('nf-subcontractor').addEventListener('change', function () {
+      document.getElementById('nf-subcontractor-name').style.display = this.checked ? 'block' : 'none';
+    });
+
+    document.getElementById('nf-save').addEventListener('click', function () {
+      var errEl = document.getElementById('nf-errors');
+      errEl.style.display = 'none';
+      postForm('/api/shift/fact', {
+        work_id: document.getElementById('nf-work').value,
+        date: document.getElementById('nf-date').value,
+        planned_crew: document.getElementById('nf-planned').value,
+        actual_crew: document.getElementById('nf-actual').value,
+        fact_pct: document.getElementById('nf-pct').value,
+        current_start: document.getElementById('nf-sched-start').value,
+        current_finish: document.getElementById('nf-sched-finish').value,
+        reason_code: document.getElementById('nf-reason').value,
+        comment: document.getElementById('nf-comment').value,
+        subcontractor: document.getElementById('nf-subcontractor').checked ? '1' : '',
+        subcontractor_name: document.getElementById('nf-subcontractor-name').value,
+      }).then(function (res) {
+        if (res.body.ok) {
+          var warn = res.body.warnings && res.body.warnings.length ? ' ' + res.body.warnings.join(' ') : '';
+          toast('Факт сохранён.' + warn);
+          resetFactForm();
+          load();
         } else {
-          note.style.display = 'none';
+          errEl.innerHTML = '<b>Не сохранено — исправьте:</b><ul>' +
+            (res.body && Array.isArray(res.body.errors) ? res.body.errors : [formatErrors(res)])
+              .map(function (e) { return '<li>' + e + '</li>'; }).join('') + '</ul>';
+          errEl.style.display = 'block';
         }
-        // Сроки и подрядчик — свойства РАБОТЫ, не дня: показываются
-        // независимо от того, есть ли факт на выбранную дату (см.
-        // /api/existing-entry, main.py).
-        setHiddenDate('nf-sched-start', data.current_start);
-        setHiddenDate('nf-sched-finish', data.current_finish);
-        document.getElementById('nf-subcontractor').checked = !!data.subcontractor;
-        document.getElementById('nf-subcontractor-name').value = data.subcontractor_name || '';
-        document.getElementById('nf-subcontractor-name').style.display = data.subcontractor ? 'block' : 'none';
-      })
-      .catch(function () { note.style.display = 'none'; });
-  }
+      }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; errEl.style.display = 'block'; });
+    });
 
-  document.getElementById('btn-add-fact').addEventListener('click', function () {
-    document.getElementById('nf-work').innerHTML = workOptionsHtml();
-    document.getElementById('nf-work').value = '';
+    // Дата по умолчанию — та же, что уже открыта в таблице (координатор,
+    // 18.09.2026: форма — часть этого экрана, не отдельная страница).
+    // Устанавливается один раз здесь и затем в каждом render() при
+    // смене даты смены (см. setFactDate внутри render()).
     setHiddenDate('nf-date', state.date);
-    document.getElementById('nf-planned').value = '';
-    document.getElementById('nf-actual').value = '';
-    document.getElementById('nf-pct').value = '';
-    document.getElementById('nf-reason').innerHTML = '<option value="">— не указана —</option>' +
-      reasonCodes.map(function (rc) { return '<option value="' + rc[0] + '">' + rc[1] + '</option>'; }).join('');
-    document.getElementById('nf-comment').value = '';
-    setHiddenDate('nf-sched-start', null);
-    setHiddenDate('nf-sched-finish', null);
-    document.getElementById('nf-subcontractor').checked = false;
-    document.getElementById('nf-subcontractor-name').value = '';
-    document.getElementById('nf-subcontractor-name').style.display = 'none';
-    document.getElementById('nf-existing-note').style.display = 'none';
-    document.getElementById('nf-errors').textContent = '';
-    // Дата-пикеры модалки — статическая разметка страницы, уже
-    // инициализированы общим DOMContentLoaded-сканом datepicker.js при
-    // загрузке страницы; повторный init() здесь не нужен (и удвоил бы
-    // обработчики событий) — только setHiddenDate() выше меняет значения.
-    openModal('modal-fact');
-  });
-
-  document.getElementById('nf-work').addEventListener('change', checkExistingForModal);
-  document.getElementById('nf-date').addEventListener('change', checkExistingForModal);
-  document.getElementById('nf-subcontractor').addEventListener('change', function () {
-    document.getElementById('nf-subcontractor-name').style.display = this.checked ? 'block' : 'none';
-  });
-
-  document.getElementById('nf-save').addEventListener('click', function () {
-    var errEl = document.getElementById('nf-errors');
-    errEl.textContent = '';
-    postForm('/api/shift/fact', {
-      work_id: document.getElementById('nf-work').value,
-      date: document.getElementById('nf-date').value,
-      planned_crew: document.getElementById('nf-planned').value,
-      actual_crew: document.getElementById('nf-actual').value,
-      fact_pct: document.getElementById('nf-pct').value,
-      current_start: document.getElementById('nf-sched-start').value,
-      current_finish: document.getElementById('nf-sched-finish').value,
-      reason_code: document.getElementById('nf-reason').value,
-      comment: document.getElementById('nf-comment').value,
-      subcontractor: document.getElementById('nf-subcontractor').checked ? '1' : '',
-      subcontractor_name: document.getElementById('nf-subcontractor-name').value,
-    }).then(function (res) {
-      if (res.body.ok) {
-        closeModal('modal-fact');
-        var warn = res.body.warnings && res.body.warnings.length ? ' ' + res.body.warnings.join(' ') : '';
-        toast('Факт сохранён.' + warn);
-        load();
-      } else {
-        errEl.textContent = formatErrors(res);
-      }
-    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
-  });
+  }
 
   // Инициализация: дата по умолчанию — ВЧЕРА по календарю объекта
   // (регламент: заполняем до 11:00 за предыдущий день). Не считаем на

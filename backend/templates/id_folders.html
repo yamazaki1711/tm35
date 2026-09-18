@@ -40,7 +40,7 @@
   </div>
 </div>
 
-<h3>Воронка папок по стадиям</h3>
+<h3>Выполнение</h3>
 {% with pipe=stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
 
 <h3>Разделы</h3>
@@ -93,18 +93,22 @@
 <h3>Список папок</h3>
 <p class="subtitle"><a href="/export/id-folders.csv?status={{ status }}">Скачать CSV</a></p>
 
-{# ТЗ 16.09.2026 — два выпадающих списка одним блоком. «Статус» — ровно
-   пять стадий трубы (одно значение на стадию, через ту же функцию
+{# ТЗ 16.09.2026 — два выпадающих списка одним блоком. «Статус» — пять
+   стадий трубы (одно значение на стадию, через ту же функцию
    id_folder_pipe_stage(), что рисует саму трубу — не отдельные условия)
-   плюс отдельное значение «Неподписано». «Все» среди значений нет — в
-   задании их ровно шесть, без варианта «показать все»; если ссылка
-   пришла без status (или status=all) — список ниже честно показывает
-   все папки, а select визуально подсвечивает первый пункт (браузерное
-   поведение при отсутствии выбранного option) — известное расхождение,
-   решение координатора, см. run log. #}
+   плюс отдельное значение «Неподписано». Правка координатора
+   18.09.2026: без явного status список ниже честно показывает все
+   папки без фильтра (маршрут id_folders_page() уже так и работал,
+   status="all" по умолчанию не подпадает ни под одну ветку фильтра) —
+   раньше select при этом визуально подсвечивал первый пункт
+   («Сформировано»), хотя список фильтром не сужен, что и было
+   расхождением. Теперь «Все» — отдельный явный пункт, первый и
+   выбранный по умолчанию, ветка фильтра для него не нужна: значение
+   "all" уже само никуда не попадает выше по функции id_folders_page(). #}
 <form method="get" action="/id-folders" class="form-box" style="max-width:520px;display:flex;gap:1rem;align-items:flex-end;">
   <label style="flex:1">Статус
     <select name="status" onchange="this.form.submit()">
+      <option value="all" {{ 'selected' if status=='all' }}>Все</option>
       <option value="formed" {{ 'selected' if status=='formed' }}>Сформировано</option>
       <option value="checking_all" {{ 'selected' if status=='checking_all' }}>На проверке</option>
       <option value="awaiting_smeta" {{ 'selected' if status=='awaiting_smeta' }}>Подписано</option>
@@ -150,7 +154,7 @@
 </table>
 </div>
 
-<h3>Незакрытый / невыбираемый объём работ</h3>
+<h3>Невыбираемый остаток</h3>
 <form class="form-box" method="post" action="/api/manual-volume" style="max-width:600px;">
   <label>Описание
     <input type="text" name="description" required placeholder="например, разделы вне 15 категорий">
