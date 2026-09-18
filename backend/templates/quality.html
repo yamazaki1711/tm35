@@ -2,40 +2,35 @@
 {% block content %}
 <h1>Качество данных</h1>
 
-<h3>Работы, требующие проверки ({{ flagged_works|length }})</h3>
-{% if flagged_works %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th class="nowrap">Шифр</th><th>Наименование</th><th>Замечание</th></tr></thead>
-  <tbody>
-  {% for w in flagged_works %}
-  <tr><td class="nowrap"><code>{{ w.code }}</code></td><td class="wrap">{{ w.name }}</td><td class="wrap">{{ w.data_quality_note or '—' }}</td></tr>
+{% set contour_order = ['СМР', 'ИД', 'РСК'] %}
+{% for contour in contour_order %}
+  {% set contour_checks = checks|selectattr('contour', 'equalto', contour)|list %}
+  {% if contour_checks %}
+  <h2>{{ contour }}</h2>
+  {% for c in contour_checks %}
+  <h3>{{ c.title }} ({{ c.rows|length }})</h3>
+  {% if c.rows %}
+  <div class="table-wrap">
+  <table>
+    <tbody>
+    {% for row in c.rows %}
+    <tr><td><a href="{{ row.link }}">{{ row.text }}</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="empty-note">Ничего не найдено.</div>
+  {% endif %}
   {% endfor %}
-  </tbody>
-</table>
-</div>
-{% else %}
-<div class="empty-note">Работ, требующих проверки, нет.</div>
-{% endif %}
+  {% endif %}
+{% endfor %}
 
-<h3>Записи плана/факта, требующие проверки ({{ flagged_daily|length }})</h3>
-{% if flagged_daily %}
-<div class="table-wrap">
-<table>
-  <thead><tr><th class="nowrap">Дата</th><th class="nowrap">Шифр</th><th>Замечание</th></tr></thead>
-  <tbody>
-  {% for r in flagged_daily %}
-  <tr><td class="nowrap">{{ r.date|dmy }}</td><td class="nowrap"><code>{{ r.code }}</code></td><td class="wrap">{{ r.data_quality_note or '—' }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
+<h2>Архив импорта</h2>
+<h3>Нераспознанные ячейки — разовый архив импорта Excel ({{ unresolved|length }}, {{ unresolved_date_label }})</h3>
+{% if not unresolved %}
+<div class="empty-note">Записей нет — дату архива взять не из чего, таблица пуста.</div>
 {% else %}
-<div class="empty-note">Записей плана/факта, требующих проверки, нет.</div>
-{% endif %}
-
-<h3>Нераспознанные ячейки при импорте ({{ unresolved|length }})</h3>
-{% if unresolved %}
 <div class="table-wrap">
 <table>
   <thead><tr><th class="nowrap">Лист</th><th class="nowrap">Ячейка</th><th class="nowrap">Шифр работы</th><th>Тип проблемы</th><th class="wrap">Сырые данные</th><th class="nowrap">Статус</th></tr></thead>
@@ -50,7 +45,5 @@
   </tbody>
 </table>
 </div>
-{% else %}
-<div class="empty-note">Нераспознанных ячеек при импорте нет.</div>
 {% endif %}
 {% endblock %}

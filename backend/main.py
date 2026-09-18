@@ -2411,33 +2411,255 @@ def executor(request: Request):
 
 
 # ---------------------------------------------------------------------
-# Качество данных
+# Качество данных — задание координатора 18.09.2026: страница была
+# архивом одного Excel-импорта (29.08.2026), не проверкой. Три источника
+# страницы до этой правки — `work.data_quality_flag`,
+# `daily_progress.data_quality_flag`, `import_unresolved_cell` — пишутся
+# ТОЛЬКО `import/load_to_postgres.py` (офлайн-скрипт импорта, не часть
+# работающего приложения — ни один веб-маршрут их не устанавливает) и
+# ничем не снимаются: с 01.09.2026 Excel вообще не источник (см.
+# CLAUDE.md, «Принятые решения» — единственный канал теперь формы),
+# поэтому эти три метки не могут показать ни один дефект, появившийся
+# после 29.08.2026, и не могут перестать показывать уже исправленный.
+# Проверено на боевой БД 18.09.2026: 7 строк `work` с меткой (последняя
+# `updated_at` — 29.08.2026 03:47 UTC, тот самый прогон импорта), 0 строк
+# `daily_progress` с меткой, `import_unresolved_cell` — 0 строк вообще
+# (таблица пуста, дату архива взять не из чего — см. `quality_-
+# import_archive()` ниже, честно говорит об этом на экране, а не
+# подставляет правдоподобную дату). Разбор — `docs/RUN_20260918_-
+# quality_page_and_data_freshness.md`, §1.
+#
+# Первые два раздела страницы заменены живыми проверками ниже — каждая
+# СЧИТАЕТСЯ заново при каждом заходе на страницу против текущих таблиц,
+# не читает никакую метку. Третий раздел (архив нераспознанных ячеек)
+# остаётся, но переехал вниз под заголовком, честно говорящим, что это
+# такое и когда сделано.
 # ---------------------------------------------------------------------
+
+def compute_quality_checks():
+    """Живые проверки качества данных, СМР/ИД/РСК — каждая пишется так,
+    чтобы её мог нарушить ДЕЙСТВУЮЩИЙ канал ввода (веб-форма), не только
+    архив снятого Excel-импорта. Общая для /quality и тизера на /data —
+    правило проекта «хаб вызывает ту же функцию, что и страница»
+    (координатор, 31.08.2026), не пишет счётчик заново."""
+    checks = []
+
+    # === СМР ===
+    checks.append({
+        "contour": "СМР", "key": "smr_outside_period",
+        "title": "Запись плана/факта вне директивного периода (01.09.2026–28.11.2026)",
+        "rows": [
+            {
+                "text": f"{r['code']} — {r['date'].strftime('%d.%m.%Y')} ({RU_DP_SOURCE.get(r['source'], r['source'])})",
+                "link": f"/shift?date={r['date'].isoformat()}&q={r['code']}&all=1",
+            }
+            for r in query(
+                "select dp.date, w.code, dp.source from daily_progress dp "
+                "join work w on w.id=dp.work_id "
+                "where dp.date < '2026-09-01' or dp.date > '2026-11-28' "
+                "order by dp.date"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "СМР", "key": "smr_crew_mismatch",
+        "title": "Факт людей превышает план минимум на 3 человека в один день по одной работе",
+        "rows": [
+            {
+                "text": f"{r['code']} — {r['date'].strftime('%d.%m.%Y')}: план {r['planned_crew']}, факт {r['actual_crew']}",
+                "link": f"/shift?date={r['date'].isoformat()}&q={r['code']}&all=1",
+            }
+            for r in query(
+                "select dp.date, w.code, dp.planned_crew, dp.actual_crew "
+                "from daily_progress dp join work w on w.id=dp.work_id "
+                "where dp.planned_crew is not null and dp.actual_crew is not null "
+                "and dp.actual_crew - dp.planned_crew >= 3 "
+                "order by dp.date desc"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "СМР", "key": "smr_pct_decrease",
+        "title": "«% выполнения» уменьшился по сравнению с предыдущей введённой записью по той же работе",
+        "rows": [
+            {
+                "text": f"{r['code']} — {r['d1'].strftime('%d.%m.%Y')}: {r['pct1']}% → {r['d2'].strftime('%d.%m.%Y')}: {r['pct2']}%",
+                "link": f"/shift?date={r['d2'].isoformat()}&q={r['code']}&all=1",
+            }
+            for r in query(
+                "select w.code, a.date as d1, a.fact_pct as pct1, b.date as d2, b.fact_pct as pct2 "
+                "from daily_progress a "
+                "join daily_progress b on b.work_id = a.work_id and b.date > a.date "
+                "join work w on w.id = a.work_id "
+                "where a.fact_pct is not null and b.fact_pct is not null and b.fact_pct < a.fact_pct "
+                "and not exists (select 1 from daily_progress c where c.work_id = a.work_id "
+                "and c.date > a.date and c.date < b.date and c.fact_pct is not null) "
+                "order by w.code, a.date"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "СМР", "key": "smr_facts_after_100",
+        "title": "Работа продолжает получать записи факта после того, как процент по ней уже достиг 100",
+        "rows": [
+            {
+                "text": f"{r['code']} — запись {r['date'].strftime('%d.%m.%Y')} (% работы уже {r['work_pct']})",
+                "link": f"/shift?date={r['date'].isoformat()}&q={r['code']}&all=1",
+            }
+            for r in query(
+                "select w.code, w.fact_pct as work_pct, dp.date "
+                "from daily_progress dp join work w on w.id = dp.work_id "
+                "where w.fact_pct >= 100 and dp.fact_pct is not null "
+                "and dp.date > (select min(d2.date) from daily_progress d2 "
+                "where d2.work_id = w.id and d2.fact_pct >= 100) "
+                "order by dp.date desc"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "СМР", "key": "smr_no_schedule",
+        "title": "Нет плановых сроков ни в графике СМР, ни в исходном плане",
+        "rows": [
+            {"text": f"{r['code']} — {r['name']}", "link": f"/shift?q={r['code']}&all=1"}
+            for r in query(
+                "select w.code, w.name from work w "
+                "left join current_schedule cs on cs.work_id = w.id "
+                "left join baseline_schedule bs on bs.work_id = w.id "
+                "where cs.id is null and bs.id is null order by w.code"
+            )
+        ],
+    })
+
+    # === ИД ===
+    checks.append({
+        "contour": "ИД", "key": "id_no_worktype",
+        "title": "Запись раздела без вида работ, хотя вкладка виды работ поддерживает",
+        "rows": [
+            {
+                "text": f"{r['tab_label']} — {r['section_label']} ({r['created_at'].strftime('%d.%m.%Y')})",
+                "link": "/id-progress",
+            }
+            for r in query(
+                "select e.id, t.label as tab_label, r.section_label, e.created_at "
+                "from id_form_entry e join id_form_row r on r.id = e.row_id "
+                "join id_form_tab t on t.id = r.tab_id "
+                "where e.work_type_id is null "
+                "and exists (select 1 from id_form_work_type wt where wt.tab_id = r.tab_id) "
+                "order by e.created_at desc"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "ИД", "key": "id_future_status",
+        "title": "Дата статуса раздела — в будущем",
+        "rows": [
+            {"text": f"{r['label']} — {r['section_label']} ({r['status_date'].strftime('%d.%m.%Y')})", "link": "/id-progress"}
+            for r in query(
+                LATEST_ID_FORM_ENTRY_CTE + """
+                select t.label, r.section_label, le.status_date
+                from latest_id_entry le
+                join id_form_row r on r.id = le.row_id
+                join id_form_tab t on t.id = r.tab_id
+                where le.status_date > current_date
+                """
+            )
+        ],
+    })
+    checks.append({
+        "contour": "ИД", "key": "id_impossible_chain",
+        "title": "Невозможная последовательность дат папки (КС-2 раньше подписания, подписание раньше начала проверки)",
+        "rows": [
+            {"text": f"{r['name']} — проверка {r['check_start_date']}, подписано {r['signed_date']}, КС-2 {r['ks2_date']}", "link": f"/id-folders/{r['id']}"}
+            for r in query(
+                "select id, name, check_start_date, signed_date, ks2_date from id_folder "
+                "where (ks2_date is not null and signed_date is not null and ks2_date < signed_date) "
+                "or (signed_date is not null and check_start_date is not null and signed_date < check_start_date)"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "ИД", "key": "id_ks2_no_cost",
+        "title": "КС-2 оформлен, а стоимость папки не указана",
+        "rows": [
+            {"text": f"{r['name']} — КС-2 {r['ks2_date']}", "link": f"/id-folders/{r['id']}"}
+            for r in query(
+                "select id, name, ks2_date from id_folder "
+                "where ks2_date is not null and amount_rub is null and amount_smeta_rub is null"
+            )
+        ],
+    })
+    checks.append({
+        "contour": "ИД", "key": "id_zero_sections",
+        "title": "Папка без единого раздела внутри",
+        "rows": [
+            {"text": r["name"], "link": f"/id-folders/{r['id']}"}
+            for r in query(
+                "select f.id, f.name from id_folder f "
+                "left join id_folder_row fr on fr.folder_id = f.id "
+                "group by f.id having count(fr.id) = 0"
+            )
+        ],
+    })
+
+    # === РСК ===
+    latest_act = query_one("select id, act_no from rsk_act order by act_date desc, id desc limit 1")
+    resolved_still_open_rows = []
+    if latest_act:
+        resolved_still_open_rows = query(
+            "select v.sys_no, ai.item_no from rsk_processing rp "
+            "join rsk_violation v on v.id = rp.violation_id "
+            "join rsk_act_item ai on ai.violation_id = v.id and ai.act_id = %s "
+            "where rp.resolved = true order by v.sys_no",
+            (latest_act["id"],),
+        )
+    checks.append({
+        "contour": "РСК", "key": "rsk_resolved_still_in_act",
+        "title": f"Отмечено «Устранено», но нарушение всё ещё в последнем акте"
+                 + (f" (№ {latest_act['act_no']})" if latest_act else ""),
+        "rows": [
+            {"text": f"№ {r['sys_no']} (п. {r['item_no']} акта)", "link": f"/rsk/processing?sys_no={r['sys_no']}"}
+            for r in resolved_still_open_rows
+        ],
+    })
+    checks.append({
+        "contour": "РСК", "key": "rsk_orphan_processing",
+        "title": "Отработка ссылается на нарушение, которого нет ни в одном акте",
+        "rows": [
+            {"text": f"внутренний id обработки {r['id']}", "link": "/rsk"}
+            for r in query(
+                "select rp.id, rp.violation_id from rsk_processing rp "
+                "left join rsk_act_item ai on ai.violation_id = rp.violation_id "
+                "where ai.id is null"
+            )
+        ],
+    })
+
+    return checks
+
+
+def quality_import_archive():
+    """Раздел «Нераспознанные ячейки» — архив ОДНОГО Excel-импорта, не
+    живая проверка (см. комментарий выше compute_quality_checks). Дата
+    архива — из данных, не подставляется: если строк нет, `created_date`
+    остаётся None и шаблон обязан сказать это честно, не промолчать."""
+    unresolved = query(
+        "select sheet, cell_ref, work_code, issue_type, raw_payload, resolved, created_at "
+        "from import_unresolved_cell order by id"
+    )
+    for row in unresolved:
+        row["raw_payload"] = _clean_none_for_display(row["raw_payload"])
+    created_date = min((r["created_at"] for r in unresolved), default=None)
+    return unresolved, created_date
+
 
 @app.get("/quality")
 def quality(request: Request):
-    flagged_works = query(
-        "select code, name, data_quality_note from work "
-        "where data_quality_flag='needs_review' order by code"
-    )
-    flagged_daily = query(
-        "select dp.date, w.code, dp.data_quality_note from daily_progress dp "
-        "join work w on w.id=dp.work_id "
-        "where dp.data_quality_flag='needs_review' order by dp.date"
-    )
-    unresolved = query(
-        "select sheet, cell_ref, work_code, issue_type, raw_payload, resolved "
-        "from import_unresolved_cell order by id"
-    )
-    # Подготовка пилота, 30.08.2026: raw_payload — JSONB, шаблон печатал
-    # его как есть (str() от Python-словаря) — "'month': None" и т.п.
-    # видел живой посетитель. Чистим None рекурсивно ТОЛЬКО для показа,
-    # сами данные в БД не трогаем.
-    for row in unresolved:
-        row["raw_payload"] = _clean_none_for_display(row["raw_payload"])
+    checks = compute_quality_checks()
+    unresolved, unresolved_date = quality_import_archive()
+    unresolved_date_label = _fmt_dmy(unresolved_date) if unresolved_date else "дата не восстановима — таблица пуста"
     return render(
         request, "quality.html", "data",
-        flagged_works=flagged_works, flagged_daily=flagged_daily, unresolved=unresolved,
+        checks=checks, unresolved=unresolved, unresolved_date_label=unresolved_date_label,
     )
 
 
@@ -3499,9 +3721,7 @@ def data_hub(request: Request):
         "materials": query_one("select count(*) as n from material")["n"],
         "blockers": query_one("select count(*) as n from blocker where status='active'")["n"],
         "executor": query_one("select count(*) as n from work where executor_type='subcontract'")["n"],
-        "quality": query_one(
-            "select count(*) as n from work where data_quality_flag='needs_review'"
-        )["n"],
+        "quality": sum(len(c["rows"]) for c in compute_quality_checks()),
         "gantt": query_one("select count(*) as n from work")["n"],
         "ssr_norms": query_one("select count(*) as n from ssr_norm")["n"],
         "norm_plan": query_one("select count(*) as n from norm_plan_item")["n"],
