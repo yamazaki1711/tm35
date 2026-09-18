@@ -2457,7 +2457,12 @@ def compute_quality_checks():
                 "select dp.date, w.code, dp.source from daily_progress dp "
                 "join work w on w.id=dp.work_id "
                 "where dp.date < '2026-09-01' or dp.date > '2026-11-28' "
-                "order by dp.date"
+                # web_form первыми — это записи через действующий канал,
+                # не застывший Excel-импорт (594 из 835 здесь — просто
+                # даты исходного графика 18.06–31.08.2026, до начала
+                # директивного периода, не дефект; 216 web_form — то, что
+                # реально стоит посмотреть первым), см. run log.
+                "order by (dp.source != 'web_form'), dp.date desc"
             )
         ],
     })
