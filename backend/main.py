@@ -2639,6 +2639,18 @@ def compute_quality_checks():
         ],
     })
 
+    # Показ ограничен разумным числом строк на проверку — не сокрытие:
+    # заголовок и `total` всегда несут ПОЛНОЕ число (см. `data_hub()`,
+    # который суммирует именно `total`, не длину показанного среза).
+    # Найдено сегодня же, живьём: без предела браузер реально подвисал
+    # на отрисовке 835 строк одной проверки («вне директивного периода»)
+    # при широком окне — не эстетика, а измеренный таймаут рендера.
+    QUALITY_CHECK_ROW_LIMIT = 150
+    for c in checks:
+        c["total"] = len(c["rows"])
+        if c["total"] > QUALITY_CHECK_ROW_LIMIT:
+            c["rows"] = c["rows"][:QUALITY_CHECK_ROW_LIMIT]
+
     return checks
 
 
@@ -3726,7 +3738,7 @@ def data_hub(request: Request):
         "materials": query_one("select count(*) as n from material")["n"],
         "blockers": query_one("select count(*) as n from blocker where status='active'")["n"],
         "executor": query_one("select count(*) as n from work where executor_type='subcontract'")["n"],
-        "quality": sum(len(c["rows"]) for c in compute_quality_checks()),
+        "quality": sum(c["total"] for c in compute_quality_checks()),
         "gantt": query_one("select count(*) as n from work")["n"],
         "ssr_norms": query_one("select count(*) as n from ssr_norm")["n"],
         "norm_plan": query_one("select count(*) as n from norm_plan_item")["n"],

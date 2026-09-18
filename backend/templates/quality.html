@@ -8,8 +8,11 @@
   {% if contour_checks %}
   <h2>{{ contour }}</h2>
   {% for c in contour_checks %}
-  <h3>{{ c.title }} ({{ c.rows|length }})</h3>
+  <h3>{{ c.title }} ({{ c.total }})</h3>
   {% if c.rows %}
+  {% if c.total > c.rows|length %}
+  <div class="empty-note">Показаны первые {{ c.rows|length }} из {{ c.total }} — список не сокращён в базе, только на экране.</div>
+  {% endif %}
   <div class="table-wrap">
   <table>
     <tbody>
