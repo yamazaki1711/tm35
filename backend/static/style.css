@@ -441,18 +441,29 @@ h3 {
 .hero-stat-sub { font-size: .875rem; color: var(--c-text-3); font-weight: 500; white-space: normal; margin-left: .4rem; }
 
 /* ── Дашборд: KPI ряд ── */
+/* Было grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) —
+   auto-fit считает, сколько колонок ПОМЕЩАЕТСЯ по 200px, не сколько
+   плиток реально в строке: ряд из шести плиток на широком экране, где
+   помещается только пять по 200px, разъезжался на 5+1 с пустым хвостом
+   рядом с последней (найдено координатором, 19.09.2026 — «Обзор РСК»).
+   Flex с flex:1 на каждой плитке и БЕЗ переноса всегда делит ширину
+   блока строго на N (сколько бы плиток ни было — 2 или 6), одной
+   строкой; на ширинах ниже телефонного разлома правило ниже
+   (.kpi-row{grid-template-columns:1fr}) заменяется на flex-wrap. */
 .kpi-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   gap: 1rem;
   margin-bottom: 1.75rem;
 }
 .kpi {
-  /* min-width:0 — без этого грид-колонка не может сжаться уже минимальной
-     ширины содержимого (умолчание grid-item — min-width:auto = min-content),
-     и длинное неразрывное значение (сумма в рублях) раздувает всю строку
-     плиток шире экрана вместо того, чтобы просто не поместиться в СВОЮ
-     плитку. Найдено 09.09.2026 при проверке адаптивности телефона/планшета. */
+  flex: 1 1 0;
+  /* min-width:0 — без этого flex-элемент не может сжаться уже
+     минимальной ширины содержимого (умолчание — min-width:auto =
+     min-content), и длинное неразрывное значение (сумма в рублях)
+     раздувает всю строку плиток шире экрана вместо того, чтобы просто
+     не поместиться в СВОЮ плитку. Найдено 09.09.2026 при проверке
+     адаптивности телефона/планшета. */
   min-width: 0;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
@@ -916,7 +927,8 @@ code {
   h1 { font-size: 1.3rem; }
   .kpi-num { font-size: 1.5rem; }
   .quick-nav { grid-template-columns: repeat(2, 1fr); }
-  .kpi-row { grid-template-columns: 1fr 1fr; }
+  .kpi-row { flex-wrap: wrap; }
+  .kpi-row .kpi { flex: 1 1 calc(50% - .5rem); }
   th, td { padding: .45rem; font-size: .82rem; }
   .form-box { padding: 1rem; }
   .report-doc { padding: 1.25rem; }
@@ -953,7 +965,7 @@ code {
      значение не переносится). Один столбец на самых узких телефонах —
      плитка получает всю ширину экрана, значению есть куда поместиться.
      Найдено 09.09.2026 на "Остаток в деньгах" (блок "Выполнение", ИД). */
-  .kpi-row { grid-template-columns: 1fr; }
+  .kpi-row .kpi { flex: 1 1 100%; }
 }
 
 /* Подготовка пилота, 30.08.2026 — /losses (шаблон был только локально,

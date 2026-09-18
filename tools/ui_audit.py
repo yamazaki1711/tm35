@@ -294,6 +294,36 @@ def audit_page(page):
             "match": c["text"], "context": f"<{c['tag']} class=\"{c['cls']}\">", "fatal": True,
         })
 
+    # --- Координатор, 19.09.2026: строка плиток .kpi-row перенеслась
+    # ("хвост") — auto-fit считал, сколько колонок ПОМЕЩАЕТСЯ по
+    # 200px, не сколько плиток реально в строке (см. style.css). Ряд
+    # плиток обязан быть одной строкой — offsetTop у всех .kpi внутри
+    # одного .kpi-row должен совпадать; больше одного различного
+    # значения = перенос, с "хвостом" или без.
+    kpi_wraps = page.evaluate(
+        """
+        () => {
+          const bad = [];
+          document.querySelectorAll('.kpi-row').forEach((row, ri) => {
+            const tops = Array.from(row.querySelectorAll(':scope > .kpi'))
+              .map(el => el.offsetTop);
+            const distinct = Array.from(new Set(tops));
+            if (distinct.length > 1) {
+              bad.push({row: ri, count: tops.length, distinctTops: distinct.length,
+                        text: (row.innerText || '').trim().slice(0, 60)});
+            }
+          });
+          return bad;
+        }
+        """
+    )
+    for k in kpi_wraps:
+        issues.append({
+            "type": "kpi_row_wrap",
+            "label": f"строка плиток перенеслась: {k['distinctTops']} разных offsetTop у {k['count']} плиток",
+            "match": k["text"], "context": f".kpi-row #{k['row']}", "fatal": True,
+        })
+
     # --- Информационная находка (не дефект переноса, не проваливает прогон) ---
     short_rows = page.evaluate(
         """
