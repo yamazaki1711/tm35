@@ -27,6 +27,7 @@ import urllib.request
 
 sys.path.insert(0, "/app")
 import main as m  # noqa: E402
+import db  # noqa: E402 — get_conn() для живой UPDATE+ROLLBACK проверки триггеров, main.py его не реэкспортирует
 
 CHECKS = []
 FAILED = False
@@ -609,6 +610,71 @@ def main_check():
         + (f" (расходятся: work_id {mismatched[:5]})" if mismatched else ""),
         "количество расхождений", len(mismatched),
         "ожидается", 0,
+    )
+
+    # --- Задание координатора 18.09.2026, §4 — механическая защита от
+    # повторения дефекта KNOWN_ISSUES.md §53: триггер `daily_progress_-
+    # audit_trap_trg` полтора суток молча ссылался на несуществующую
+    # таблицу (её унесло в схему `archive` вместе с реальными backup-
+    # таблицами при уборке 15.09.2026) — обнаружено случайно, при
+    # постороннем откате тестовой записи, не проверкой. Два слоя:
+    # (а) статический — читает текст КАЖДОЙ триггерной функции в БД и
+    # проверяет, что каждая таблица, в которую она пишет
+    # (insert into/update/delete from), реально существует — ловит
+    # будущий такой же триггер на любой другой таблице, не только на
+    # daily_progress; (б) живой — реальный UPDATE+ROLLBACK на самой
+    # daily_progress, тем же путём, каким чинился и проверялся дефект
+    # (ничего не остаётся в БД — транзакция обязательно откатывается).
+    trigger_funcs = m.query("""
+        select distinct p.oid::regprocedure::text as func, pg_get_functiondef(p.oid) as src
+        from pg_trigger t
+        join pg_proc p on p.oid = t.tgfoid
+        where not t.tgisinternal
+    """)
+    known_relations = {
+        r["relname"] for r in m.query(
+            "select relname from pg_class where relkind in ('r','v','m','p') "
+            "and relnamespace = (select oid from pg_namespace where nspname='public')"
+        )
+    }
+    ref_pattern = re.compile(
+        r'\b(?:insert\s+into|update|delete\s+from)\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?', re.IGNORECASE
+    )
+    missing_refs = []
+    for row in trigger_funcs:
+        for tbl in set(m.group(1) for m in ref_pattern.finditer(row["src"])):
+            if tbl not in known_relations:
+                missing_refs.append(f"{row['func']} -> {tbl}")
+    check(
+        "Триггерные функции не ссылаются на несуществующие таблицы (статический разбор текста функции)",
+        "найдено ссылок на отсутствующие таблицы", len(missing_refs),
+        "ожидается", 0,
+    )
+    if missing_refs:
+        print("  Подробности:", "; ".join(missing_refs))
+
+    # (б) живая проверка — та же таблица, тот же класс операции (UPDATE),
+    # что уронил прод 16.09.2026; выполняется и тут же откатывается.
+    conn = db.get_conn()
+    live_error = None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select id from daily_progress limit 1")
+            sample = cur.fetchone()
+            if sample:
+                cur.execute(
+                    "update daily_progress set updated_at = updated_at where id = %s",
+                    (sample["id"],),
+                )
+    except Exception as e:  # noqa: BLE001 — фиксируем факт ошибки для отчёта, не даём ей всплыть
+        live_error = str(e).strip()
+    finally:
+        conn.rollback()
+        conn.close()
+    check(
+        "Живая проверка: UPDATE на daily_progress проходит без ошибки БД (откатывается, ничего не остаётся)",
+        "ошибка", live_error or "нет",
+        "ожидается", "нет",
     )
 
 
