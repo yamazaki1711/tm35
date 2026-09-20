@@ -6962,6 +6962,14 @@ RSK_LIST_SELECT_SQL = f"""
     select v.id, v.sys_no, v.is_active, v.first_act_no, v.first_detected_date,
            i.content, i.remedy, i.due_date, i.is_repeat, i.control_section,
            a.act_no, a.act_date,
+           -- closed_act_date: столбец «Снято» убран с экрана и из CSV
+           -- (координатор, 20.09.2026) — дублировал СТАТУС (нарушение,
+           -- отсутствующее в последнем акте, уже получает бейдж «Снято»
+           -- там). Проверено: `grep -n closed_act_date backend/main.py`
+           -- после правки — ни template, ни export больше не читают
+           -- это поле. Оставлено в SELECT (не в JOIN/модели закрытия —
+           -- `v.is_active`/`v.closed_in_act_id` не тронуты) на случай,
+           -- если понадобится снова; лишнего вреда не несёт.
            ca.act_date as closed_act_date,
            coalesce(p.track_phys, 'unknown') as track_phys,
            coalesce(p.track_design, 'unknown') as track_design,
@@ -7064,12 +7072,17 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
 
 @app.get("/export/rsk.csv")
 def export_rsk_csv():
+    # «Снято» убрана и здесь вслед за экраном (координатор, 20.09.2026) —
+    # экран и выгрузка не должны расходиться в том, что показывает
+    # реестр. Ничего внешнего этот столбец не читало (единственный
+    # потребитель rsk_registry.csv — сама эта функция и ссылка на неё
+    # в rsk_registry.html, проверено grep по репозиторию).
     rows = query(RSK_LIST_SELECT_SQL + " order by v.sys_no")
     out = [
         (r["sys_no"], RU_RSK_STATUS.get(rsk_pseudo_status(r), ""), r["content"], r["responsible_names"],
          RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
          RU_RSK_TRACK.get(r["track_id"], ""),
-         r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]), _csv_dmy(r["closed_act_date"]),
+         r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]),
          _csv_dmy(r["resolved_date"]) if r["resolved"] else "",
          "да" if r["is_repeat"] else "нет")
         for r in rows
@@ -7077,7 +7090,7 @@ def export_rsk_csv():
     return _csv_response(
         "rsk_registry.csv",
         ["№", "Статус", "Содержание", "Ответственные", "Физика", "Проект", "ИД",
-         "Акт", "Проверка", "Срок", "Снято", "Устранено", "Повторно"],
+         "Акт", "Проверка", "Срок", "Устранено", "Повторно"],
         out,
     )
 

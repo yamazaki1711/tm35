@@ -85,7 +85,6 @@
       <th class="nowrap">ИД</th>
       <th class="nowrap">Проверка</th>
       <th class="nowrap">Срок</th>
-      <th class="nowrap">Снято</th>
       <th class="nowrap">Устранено</th>
       <th>Ответственный</th>
     </tr>
@@ -103,7 +102,6 @@
       <td class="nowrap">{{ ru_track.get(r.track_id, r.track_id) }}</td>
       <td class="nowrap">{{ r.act_date|fmt_dmy if r.act_date else '—' }}</td>
       <td class="nowrap">{{ r.due_date|fmt_dmy if r.due_date else '—' }}</td>
-      <td class="nowrap">{{ r.closed_act_date|fmt_dmy if r.closed_act_date else '—' }}</td>
       <td class="nowrap">{{ r.resolved_date|fmt_dmy if r.resolved and r.resolved_date else ('да' if r.resolved else '—') }}</td>
       <td>{{ r.responsible_names }}</td>
     </tr>
