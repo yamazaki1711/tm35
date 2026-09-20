@@ -174,7 +174,40 @@ def collect_text_and_forbidden(page):
     return [{"type": "forbidden_text", "label": label, "match": match, "context": ctx} for label, match, ctx in hits]
 
 
-def audit_page(page):
+# Таблицы, которым разрешено быть шире своей рамки — растут с числом
+# дней/недель/категорий по конструкции экрана, каждая уже прокручивается
+# САМА в своём контейнере (см. IN_SCROLL_CONTAINER_JS выше), не ломая
+# страницу вокруг. Первые три — сайтовое правило CLAUDE.md §7
+# ("сетка «Раздел × Этап» на /id-progress, /gantt, /shift"), четвёртая
+# (`/id-grafik/category-mapping`, колонка на категорию, тот же принцип)
+# найдена ЭТОЙ проверкой 21.09.2026 и в CLAUDE.md ещё не внесена —
+# оставлена не проваливающей прогон до решения координатора, не тихо
+# забыта: см. run log 21.09.2026, "требует решения координатора".
+# `/baseline`/`/form` — чистые редиректы на `/shift` (см. main.py),
+# аудит идёт по итоговому URL, попадает в тот же список по той же причине.
+TABLE_OVERFLOW_ALLOWED_ROUTES = {
+    "/gantt", "/shift", "/baseline", "/form",
+    "/id-progress",
+    "/id-grafik/category-mapping",
+}
+
+MEASURE_TEXT_JS = """
+  function tm35MeasureText(text, style) {
+    const s = document.createElement('span');
+    s.style.position = 'absolute'; s.style.visibility = 'hidden';
+    s.style.whiteSpace = 'nowrap'; s.style.left = '-99999px';
+    s.style.fontSize = style.fontSize; s.style.fontFamily = style.fontFamily;
+    s.style.fontWeight = style.fontWeight; s.style.letterSpacing = style.letterSpacing;
+    s.textContent = text;
+    document.body.appendChild(s);
+    const w = s.getBoundingClientRect().width;
+    document.body.removeChild(s);
+    return w;
+  }
+"""
+
+
+def audit_page(page, path=""):
     issues = collect_text_and_forbidden(page)
 
     # --- ТЗ 16.09.2026, дефект 1: любой видимый текст мельче 14px ---
@@ -324,6 +357,109 @@ def audit_page(page):
             "match": k["text"], "context": f".kpi-row #{k['row']}", "fatal": True,
         })
 
+    # --- Координатор, 21.09.2026: таблица обязана помещаться в свой
+    # `.table-wrap`, не только не ломать страницу вокруг (то и другое
+    # разные вещи — /rsk прокручивался технически исправно, но выглядел
+    # как "Физика занимает вдвое больше", когда на деле десять честных
+    # минимумов не помещались суммарно). Разрешённый список — см.
+    # TABLE_OVERFLOW_ALLOWED_ROUTES выше; для них та же находка
+    # записывается информационной (видна в отчёте, не проваливает).
+    table_overflow = page.evaluate(
+        """
+        () => {
+          const bad = [];
+          document.querySelectorAll('table').forEach((table, idx) => {
+            let wrap = table.parentElement;
+            while (wrap && wrap !== document.body) {
+              const cs = getComputedStyle(wrap);
+              if (cs.overflowX === 'auto' || cs.overflowX === 'scroll') break;
+              wrap = wrap.parentElement;
+            }
+            if (!wrap || wrap === document.body) return;
+            const overflow = table.scrollWidth - wrap.clientWidth;
+            if (overflow > 2) {
+              const headerRow = table.rows.length ? table.rows[0] : null;
+              const headers = headerRow
+                ? Array.from(headerRow.cells).map(c => c.textContent.trim()).join('/')
+                : '';
+              bad.push({idx, overflow: Math.round(overflow), headers: headers.slice(0, 80)});
+            }
+          });
+          return bad;
+        }
+        """
+    )
+    is_allowed_route = path in TABLE_OVERFLOW_ALLOWED_ROUTES
+    for t in table_overflow:
+        issues.append({
+            "type": "table_overflow",
+            "label": f"таблица #{t['idx']} шире рамки на {t['overflow']}px",
+            "match": t["headers"], "context": path,
+            "fatal": not is_allowed_route,
+        })
+
+    # --- Координатор, 21.09.2026: колонка шире, чем нужно её содержимому
+    # плюс двойной паддинг ячейки, — "over-allocated". Не дефект сам по
+    # себе (информационная находка), но именно отсутствие такой колонки
+    # на /rsk (проверено — ни одна не была over-allocated) опровергло
+    # предположение "Физика занимает вдвое больше" и указало на настоящую
+    # причину (десять паддингов подряд), не на одну колонку. Проверяем
+    # впредь измерением, не спором на глаз. Первые 60 строк на таблицу —
+    # достаточно для честного максимума, не разгоняет прогон на больших
+    # реестрах.
+    column_alloc = page.evaluate(
+        """
+        () => {
+        """ + MEASURE_TEXT_JS + """
+          const bad = [];
+          document.querySelectorAll('table').forEach((table, tIdx) => {
+            const headerCells = table.rows.length ? Array.from(table.rows[0].cells) : [];
+            const bodyRows = Array.from(table.rows).slice(1, 60);
+            headerCells.forEach((th, colIdx) => {
+              const allocated = th.getBoundingClientRect().width;
+              if (allocated < 20) return;
+              const cellsInCol = [th, ...bodyRows.map(r => r.cells[colIdx])].filter(Boolean);
+              if (!cellsInCol.length) return;
+              const style0 = getComputedStyle(cellsInCol[0]);
+              const isNowrap = style0.whiteSpace === 'nowrap';
+              let maxContent = 0;
+              cellsInCol.forEach(cell => {
+                const style = getComputedStyle(cell);
+                const text = (cell.textContent || '').trim();
+                if (!text || cell.querySelector('select')) return;  // <select> textContent — сумма ВСЕХ option, не то, что видно
+                if (isNowrap) {
+                  const w = tm35MeasureText(text, style);
+                  if (w > maxContent) maxContent = w;
+                } else {
+                  text.split(/\\s+/).forEach(word => {
+                    const w = tm35MeasureText(word, style);
+                    if (w > maxContent) maxContent = w;
+                  });
+                }
+              });
+              if (maxContent === 0) return;
+              const padLeft = parseFloat(style0.paddingLeft) || 0;
+              const padRight = parseFloat(style0.paddingRight) || 0;
+              const needed = maxContent + padLeft + padRight;
+              if (allocated > needed + padLeft + padRight + 4) {
+                bad.push({
+                  tIdx, colIdx, label: th.textContent.trim().slice(0, 30),
+                  allocated: Math.round(allocated), needed: Math.round(needed),
+                });
+              }
+            });
+          });
+          return bad;
+        }
+        """
+    )
+    for c in column_alloc:
+        issues.append({
+            "type": "column_over_allocated",
+            "label": f"колонка «{c['label']}» шире содержимого+паддинга: {c['allocated']}px vs {c['needed']}px",
+            "match": c["label"], "context": f"{path}, таблица #{c['tIdx']}",
+        })
+
     # --- Информационная находка (не дефект переноса, не проваливает прогон) ---
     short_rows = page.evaluate(
         """
@@ -406,7 +542,7 @@ def main():
                 except Exception:
                     pass
                 page.wait_for_timeout(150)
-                issues = audit_page(page)
+                issues = audit_page(page, path)
                 report[path]["by_viewport"][f"{w}x{h}"] = issues
                 n_forbidden = sum(1 for i in issues if i["type"] == "forbidden_text")
                 n_fatal = sum(1 for i in issues if i.get("fatal"))

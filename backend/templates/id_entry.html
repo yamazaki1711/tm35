@@ -406,7 +406,11 @@
     html += '<td class="nowrap">' + (r.planned_rsk_date ? TM35_RU_DATE.fmtDMY(r.planned_rsk_date) : '—') + '</td>';
     html += '<td>' + (r.rsk_signer_name || '—') + '</td>';
     if (r.block_id) {
-      html += '<td class="nowrap"><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
+      // Не nowrap: "заблокировано — <причина>" — описательный текст, не
+      // атомарное значение (причина блокировки может быть предложением,
+      // не кодом) — форсированный nowrap раздвигал колонку «Блокировка»
+      // за рамку таблицы (найдено 21.09.2026, обход всех таблиц сайта).
+      html += '<td><span class="block-badge">заблокировано' + (r.change_ref ? ' — ' + r.change_ref : '') + '</span> '
         + '<a href="#" data-unblock="' + r.block_id + '">снять</a></td>';
     } else {
       html += '<td class="nowrap">—</td>';
