@@ -123,6 +123,6 @@ check(
   перед заменой, синтаксис-чек (`jinja2.Environment().parse()` /
   `ast.parse()`), `docker restart tm_backend`, лог `[deploy]` сверен с
   `git rev-parse HEAD`.
-- `check_consistency.py`: 83 проверки, 0 расхождений (было 82 — плюс проверка
+- `check_consistency.py`: 82 проверки, 0 расхождений (было 81 — плюс проверка
   этого задания).
 - `ui_audit.py --no-shots`: без новых фатальных категорий.
