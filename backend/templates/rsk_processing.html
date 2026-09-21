@@ -11,6 +11,22 @@
   .rsk-checkbox-row label { flex: 0 0 auto; flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; white-space: nowrap; }
   tr.rsk-row-selected td { background: var(--c-primary-bg); }
 
+  /* Группа «Ответственный» — раньше был <label> с несколькими вложенными
+     <label>/чекбоксами внутри: клик по пустому месту в его блоке (правее
+     последнего чекбокса, вся ширина формы, до .rsk-checkbox-row) отмечал
+     ПЕРВЫЙ чекбокс («ПТО») — implicit label-binding идёт по первому
+     labelable-потомку, а не по видимому смыслу подписи (найдено
+     координатором 21.09.2026). fieldset/legend — правильная HTML-
+     конструкция именно для «подпись группы контролов», legend физически
+     не может ничего «привязать» к себе. */
+  .rsk-fieldset { border: 0; padding: 0; margin: 1rem 0 0; }
+  .rsk-fieldset legend { padding: 0; font-size: .85rem; font-weight: 600; color: var(--c-text-2); margin-bottom: .4rem; }
+  .rsk-comment-block { margin-top: 1rem; }
+  .rsk-comment-block label { display: block; font-size: .85rem; font-weight: 600; color: var(--c-text-2); }
+  .rsk-comment-block textarea { width: 100%; min-height: 3.2rem; margin-top: .4rem; }
+  .rsk-standalone-check { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; font-size: .9rem; font-weight: 500; color: var(--c-text); }
+  .rsk-standalone-check input { width: auto; }
+
   /* "Содержание" — та же подсказка при наведении, что в реестре РСК
      (/rsk, .rsk-content-cell/.rsk-tooltip), для единообразия. Видимый
      текст здесь обрезается иначе — по первым двум предложениям, а не
@@ -49,6 +65,12 @@
   <p class="subtitle"><b>Мероприятие:</b> {{ v.remedy or '—' }} · <b>Срок:</b> {{ v.due_date|fmt_dmy if v.due_date else '—' }}</p>
   <input type="hidden" name="sys_no" value="{{ v.sys_no }}">
 
+  {# Сгруппировано по смыслу, не по исходному порядку полей (координатор,
+     21.09.2026): было — один общий rsk-form-grid на восемь элементов,
+     где auto-fit на трёх колонках раскидывал чекбоксы «Отклонено РСК»/
+     «Устранено» по разным строкам от того, к чему они относятся
+     («Устранено» — от «Дата снятия»). Каждая смысловая группа — теперь
+     свой grid-контейнер, перенос на узких экранах не смешивает группы. #}
   <div class="rsk-form-grid">
     <label>Физика
       <select name="track_phys">
@@ -79,6 +101,9 @@
         {% endfor %}
       </select>
     </label>
+  </div>
+
+  <div class="rsk-form-grid" style="margin-top:1rem">
     <label>Условие снятия
       <select name="close_condition_id">
         <option value="">— не задано —</option>
@@ -95,10 +120,11 @@
         <div class="dm-cal" hidden></div>
       </span>
     </label>
-    <label style="flex-direction:row;align-items:center;gap:.5rem">
-      <input type="checkbox" name="rejected" value="1" style="width:auto" {{ 'checked' if processing and processing.rejected }}>
-      Отклонено РСК
-    </label>
+  </div>
+
+  {# «Устранено» и «Дата снятия» — одна группа, чекбокс и его дата рядом
+     (не растащены auto-fit'ом по разным строкам, как раньше). #}
+  <div class="rsk-form-grid" style="margin-top:1rem">
     <label style="flex-direction:row;align-items:center;gap:.5rem">
       <input type="checkbox" name="resolved" value="1" style="width:auto" {{ 'checked' if processing and processing.resolved }}>
       Устранено
@@ -113,8 +139,21 @@
     </label>
   </div>
 
-  <label style="display:block;margin-top:1rem;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Ответственный
-    <div class="rsk-checkbox-row" style="margin-top:.4rem">
+  {# «Отклонено РСК» — само по себе, не втиснуто между списками. #}
+  <label class="rsk-standalone-check">
+    <input type="checkbox" name="rejected" value="1" {{ 'checked' if processing and processing.rejected }}>
+    Отклонено РСК
+  </label>
+
+  {# Группа контролов — fieldset/legend, не <label>, оборачивающий
+     несколько чекбоксов: implicit label-binding связывает подпись с
+     ПЕРВЫМ labelable-потомком, не с видимым смыслом текста — клик по
+     пустому месту внутри блока (правее «Лаборатория», вплоть до края
+     формы) отмечал «ПТО» (найдено координатором 21.09.2026). legend не
+     может ничего «привязать» к себе — структурно не воспроизводимо. #}
+  <fieldset class="rsk-fieldset">
+    <legend>Ответственный</legend>
+    <div class="rsk-checkbox-row">
       {# ИКС скрыта из выбора (координатор 16.09.2026, ИКС.active=false) —
          условие ниже держит её чекбокс в разметке ровно тогда, когда
          именно ЭТО нарушение уже отмечено на неё, иначе сохранение формы
@@ -124,11 +163,15 @@
       <label><input type="checkbox" name="responsible_ids" value="{{ r.id }}" style="width:auto" {{ 'checked' if r.id in responsible_ids }}> {{ r.name }}</label>
       {% endfor %}
     </div>
-  </label>
+  </fieldset>
 
-  <label style="display:block;margin-top:1rem;font-size:.85rem;font-weight:600;color:var(--c-text-2)">Комментарий
-    <textarea name="comment" style="width:100%;min-height:3.2rem;margin-top:.4rem">{{ processing.comment or '' }}</textarea>
-  </label>
+  {# Тот же класс дефекта, что у «Ответственный» выше, не воспроизведён
+     здесь заново по факту (одна textarea — не группа), но переведён на
+     тот же безопасный паттерн: label с явным for, а не обёртка. #}
+  <div class="rsk-comment-block">
+    <label for="rsk-processing-comment">Комментарий</label>
+    <textarea name="comment" id="rsk-processing-comment">{{ processing.comment or '' }}</textarea>
+  </div>
 
   <button type="submit" data-hotkey-save style="margin-top:1rem">Сохранить</button>
 </form>

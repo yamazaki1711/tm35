@@ -460,6 +460,42 @@ def audit_page(page, path=""):
             "match": c["label"], "context": f"{path}, таблица #{c['tIdx']}",
         })
 
+    # --- Координатор, 21.09.2026: <label>, оборачивающий группу
+    # контролов, — implicit label-binding уходит к ПЕРВОМУ labelable-
+    # потомку, не к видимому смыслу подписи. Найдено на /rsk/processing
+    # («Ответственный»: клик по пустому месту в блоке отмечал «ПТО») —
+    # тот же класс дефекта на /rsk/import («Файл акта (PDF)», вложенный
+    # <label for=...>). Правило: у <label> — не больше одного labelable-
+    # потомка (input не hidden, select, textarea) и ни одного вложенного
+    # <label>. Дата-пикер (`<label>Дата <span class="dm-picker">…`,
+    # текстовый input + hidden input + tabindex="-1" button) — законное
+    # исключение: это ОДИН видимый контрол, hidden-инпут в подсчёт не
+    # идёт по условию, кнопка календаря не labelable.
+    label_scope = page.evaluate(
+        """
+        () => {
+          const bad = [];
+          document.querySelectorAll('label').forEach((lbl, idx) => {
+            const controls = lbl.querySelectorAll('input:not([type=hidden]), select, textarea');
+            const nested = lbl.querySelectorAll('label');
+            if (controls.length > 1 || nested.length > 0) {
+              bad.push({
+                idx, controls: controls.length, nested: nested.length,
+                text: (lbl.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
+              });
+            }
+          });
+          return bad;
+        }
+        """
+    )
+    for lb in label_scope:
+        issues.append({
+            "type": "label_scope",
+            "label": f"<label> с {lb['controls']} контролами и {lb['nested']} вложенными <label>",
+            "match": lb["text"], "context": f"{path}, label #{lb['idx']}", "fatal": True,
+        })
+
     # --- Информационная находка (не дефект переноса, не проваливает прогон) ---
     short_rows = page.evaluate(
         """

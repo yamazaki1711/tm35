@@ -8,13 +8,21 @@
 
 {% if not preview %}
 <form class="form-box" method="post" action="/rsk/import" enctype="multipart/form-data" style="max-width:500px">
-  <label>Файл акта (PDF)
-    <span class="file-input-row">
-      <input type="file" name="act_pdf" accept="application/pdf,.pdf" required id="act-pdf-input" class="file-input-visually-hidden">
-      <label for="act-pdf-input" class="file-btn">Выбрать файл</label>
-      <span class="file-name" id="act-pdf-filename">Файл не выбран</span>
-    </span>
-  </label>
+  {# Было: внешний <label> оборачивал span с input+вложенным <label for=...>
+     — implicit binding у внешнего label уходит к первому labelable-
+     потомку (самому input), а не к видимому смыслу подписи; с вложенным
+     label внутри это ещё и невалидная вложенность (найдено 21.09.2026,
+     тот же класс дефекта, что и «Ответственный» на /rsk/processing).
+     Подпись теперь — свой <label for="act-pdf-input">, не обёртка:
+     указывает на тот же input явно, клик по тексту подписи по-прежнему
+     открывает диалог выбора файла, тем же штатным способом label+for,
+     что и кнопка «Выбрать файл» рядом. #}
+  <label for="act-pdf-input" style="display:block">Файл акта (PDF)</label>
+  <span class="file-input-row">
+    <input type="file" name="act_pdf" accept="application/pdf,.pdf" required id="act-pdf-input" class="file-input-visually-hidden">
+    <label for="act-pdf-input" class="file-btn">Выбрать файл</label>
+    <span class="file-name" id="act-pdf-filename">Файл не выбран</span>
+  </span>
   <button type="submit" style="margin-top:1rem">Разобрать и показать предпросмотр</button>
 </form>
 <script>
