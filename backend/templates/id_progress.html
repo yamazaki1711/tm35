@@ -67,12 +67,34 @@
 <h3>Матрица «Раздел × Этап»</h3>
 <form class="filter-bar" method="get" action="/id-progress">
   <label>Вкладка
-    <select name="tab_id" onchange="this.form.submit()">
+    {# Смена вкладки сбрасывает статус на «Все» (координатор, 21.09.2026):
+       id_form_status — своя копия строк НА КАЖДУЮ вкладку, один и тот же
+       числовой id на другой вкладке либо ничего не значит, либо (реже)
+       случайно совпадает с другим статусом — переносить значение через
+       смену вкладки нельзя. Окно недель (week_offset/show_all) переносится
+       — оно НЕ привязано к вкладке (общая сетка периода на все вкладки),
+       для этого сами поля продублированы ниже скрытыми input. #}
+    <select name="tab_id" onchange="document.getElementById('id-progress-status-select').value='all'; this.form.submit()">
       {% for t in tabs %}
       <option value="{{ t.id }}" {{ 'selected' if t.id==selected_tab_id }}>{{ t.label }}</option>
       {% endfor %}
     </select>
   </label>
+  <label>Статус
+    <select id="id-progress-status-select" name="status" onchange="this.form.submit()">
+      <option value="all" {{ 'selected' if selected_status=='all' }}>Все</option>
+      {% for s in status_options %}
+      <option value="{{ s.id }}" {{ 'selected' if selected_status==s.id|string }}>{{ s.label }}</option>
+      {% endfor %}
+      <option value="none" {{ 'selected' if selected_status=='none' }}>Без записи о статусе</option>
+    </select>
+  </label>
+  {% if matrix and not matrix.show_all %}
+  <input type="hidden" name="week_offset" value="{{ matrix.window_start }}">
+  {% endif %}
+  {% if matrix and matrix.show_all %}
+  <input type="hidden" name="show_all" value="1">
+  {% endif %}
 </form>
 
 <div class="id-matrix-legend">
@@ -88,19 +110,19 @@
 <div class="matrix-nav">
   {% if not matrix.show_all %}
     {% if matrix.has_prev %}
-    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;week_offset={{ matrix.window_start - 4 }}">← Раньше</a>
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;status={{ selected_status }}&amp;week_offset={{ matrix.window_start - 4 }}">← Раньше</a>
     {% else %}
     <span class="btn-nav btn-nav-disabled">← Раньше</span>
     {% endif %}
-    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}">Текущая неделя</a>
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;status={{ selected_status }}">Текущая неделя</a>
     {% if matrix.has_next %}
-    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;week_offset={{ matrix.window_start + 4 }}">Позже →</a>
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;status={{ selected_status }}&amp;week_offset={{ matrix.window_start + 4 }}">Позже →</a>
     {% else %}
     <span class="btn-nav btn-nav-disabled">Позже →</span>
     {% endif %}
-    <a class="btn-nav btn-nav-secondary" href="/id-progress?tab_id={{ selected_tab_id }}&amp;show_all=1">Показать весь период ({{ matrix.total_weeks }} нед.)</a>
+    <a class="btn-nav btn-nav-secondary" href="/id-progress?tab_id={{ selected_tab_id }}&amp;status={{ selected_status }}&amp;show_all=1">Показать весь период ({{ matrix.total_weeks }} нед.)</a>
   {% else %}
-    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}">Свернуть до окна недель</a>
+    <a class="btn-nav" href="/id-progress?tab_id={{ selected_tab_id }}&amp;status={{ selected_status }}">Свернуть до окна недель</a>
     <span class="matrix-nav-note">Весь период — {{ matrix.total_weeks }} недель, доступна прокрутка сетки вбок.</span>
   {% endif %}
 </div>
@@ -127,7 +149,13 @@
       {% endfor %}
     </tr>
     {% else %}
-    <tr><td colspan="{{ matrix.weeks|length + 1 }}" class="empty-note">Разделов на этой вкладке нет.</td></tr>
+    <tr><td colspan="{{ matrix.weeks|length + 1 }}" class="empty-note">
+      {% if matrix.status_filter != 'all' and matrix.total_rows_unfiltered > 0 %}
+      На этой вкладке нет разделов со статусом «{{ selected_status_label }}» ({{ matrix.total_rows_unfiltered }} раздел(ов) всего на вкладке).
+      {% else %}
+      Разделов на этой вкладке нет.
+      {% endif %}
+    </td></tr>
     {% endfor %}
   </tbody>
 </table>

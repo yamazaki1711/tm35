@@ -4524,7 +4524,7 @@ def _id_matrix_cell_color(status_code, is_stopper, blocker_description):
     return None
 
 
-def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_WINDOW, show_all=False):
+def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_WINDOW, show_all=False, status_filter="all"):
     """Матрица «Раздел × Этап» для одной вкладки, заход 6/задача 3,
     11.09.2026 — полная переработка семантики ячейки (координатор:
     "функция возвращает строки" не было приёмкой, приёмка — что видно
@@ -4548,7 +4548,13 @@ def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_W
     цифрой". window_start/window_size — параметры окна (индексы в общем
     списке недель), show_all — показать весь период (тогда допустима
     горизонтальная прокрутка сетки — единственное разрешённое место по
-    CLAUDE.md)."""
+    CLAUDE.md).
+
+    status_filter (координатор, 21.09.2026) — отбор СТРОК (разделов) по
+    их текущему статусу: "all" без фильтра, "none" только разделы вовсе
+    без записи id_form_entry, иначе id_form_status.id этой вкладки
+    строкой. Ячейки отфильтрованной строки не меняются — это тот же
+    "current_color", уже вычислявшийся для замороженного столбца."""
     tab = query_one("select id, code, label from id_form_tab where id=%s", (tab_id,))
     if not tab:
         return None
@@ -4586,7 +4592,7 @@ def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_W
     # за O(log n), без похода в БД на каждую неделю.
     row_entries = query(
         """
-        select e.row_id, e.status_date, e.created_at, s.code as status_code, s.is_stopper,
+        select e.row_id, e.status_id, e.status_date, e.created_at, s.code as status_code, s.is_stopper,
                bl.description as blocker_description
         from id_form_entry e
         join id_form_status s on s.id = e.status_id
@@ -4638,9 +4644,20 @@ def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_W
                 n += 1
         return n
 
+    # Статус-фильтр (координатор, 21.09.2026): "текущий статус раздела" —
+    # та же величина, что уже вычисляется ниже как current_color
+    # (последняя ОТПРАВЛЕННАЯ запись по row_id, без разбивки по
+    # work_type_id) — тот же принцип, что и LATEST_ID_FORM_ENTRY_CTE,
+    # используемый везде в проекте для этого понятия. Новое правило не
+    # вводится, физически то же самое значение просто используется ещё
+    # и для отбора строк, не только для цвета замороженного столбца.
+    # status_filter: "all" — без фильтра (по умолчанию); "none" — только
+    # разделы вовсе без записи id_form_entry; иначе — id_form_status.id
+    # (строкой) этой вкладки.
+    total_rows_unfiltered = len(rows)
     matrix_rows = []
     for r in rows:
-        label = r["section_label"] or r["construction_label"] or f"#{r['id']}"
+        row_hist = row_history.get(r["id"])
         # "Текущий" цвет замороженного столбца — НЕ "состояние на конец
         # сегодняшней недели" (та же величина, что и любая другая ячейка),
         # а тот же принцип, что LATEST_ID_FORM_ENTRY_CTE использует везде
@@ -4648,8 +4665,15 @@ def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_W
         # запись (max created_at), а не последняя по дате события — те же
         # два понятия, что и раньше в этой матрице, просто теперь явно
         # разведены по имени (current_color vs cells[].color).
-        row_hist = row_history.get(r["id"])
         current_state = max(row_hist, key=lambda e: e["created_at"]) if row_hist else None
+        current_status_id = current_state["status_id"] if current_state else None
+        if status_filter == "none":
+            if current_status_id is not None:
+                continue
+        elif status_filter not in (None, "all"):
+            if current_status_id != int(status_filter):
+                continue
+        label = r["section_label"] or r["construction_label"] or f"#{r['id']}"
         current_color = _id_matrix_cell_color(
             current_state["status_code"] if current_state else None,
             current_state["is_stopper"] if current_state else None,
@@ -4676,6 +4700,8 @@ def compute_id_matrix(tab_id, window_start=None, window_size=ID_MATRIX_DEFAULT_W
         "has_prev": window_start > 0,
         "has_next": window_end < total_weeks,
         "show_all": show_all,
+        "status_filter": status_filter,
+        "total_rows_unfiltered": total_rows_unfiltered,
     }
 
 
@@ -4725,20 +4751,39 @@ def api_id_progress_drilldown(row_id: int):
 
 
 @app.get("/id-progress")
-def id_progress_page(request: Request, tab_id: int = 0, week_offset: int = None, show_all: int = 0):
+def id_progress_page(request: Request, tab_id: int = 0, week_offset: int = None, show_all: int = 0, status: str = "all"):
     tiles = compute_id_progress_tiles()
     stream = compute_id_progress_stream()
     tabs = query(
         "select id, label from id_form_tab where code not in ('opv', 'n') order by label"
     )
     selected_tab_id = tab_id or (tabs[0]["id"] if tabs else 0)
+    # Статус-фильтр (координатор, 21.09.2026): значения — id_form_status.id
+    # ЭТОЙ вкладки (строкой), справочник тут же и заводит справочник —
+    # ordered by display_order (тот же принцип, что раньше применили к
+    # стоп-факторам, вынеся их из константы в таблицу). id_form_status
+    # своя копия строк на каждую вкладку (свой tab_id), поэтому id из
+    # другой вкладки сюда не подходит по построению — просто не найдётся
+    # среди status_options и не пройдёт валидацию ниже.
+    status_options = query(
+        "select id, code, label from id_form_status where tab_id=%s order by display_order",
+        (selected_tab_id,),
+    ) if selected_tab_id else []
+    valid_status_values = {"all", "none"} | {str(s["id"]) for s in status_options}
+    selected_status = status if status in valid_status_values else "all"
     matrix = (
-        compute_id_matrix(selected_tab_id, window_start=week_offset, show_all=bool(show_all))
+        compute_id_matrix(selected_tab_id, window_start=week_offset, show_all=bool(show_all), status_filter=selected_status)
         if selected_tab_id else None
+    )
+    selected_status_label = (
+        "Все" if selected_status == "all"
+        else "Без записи о статусе" if selected_status == "none"
+        else next((s["label"] for s in status_options if str(s["id"]) == selected_status), "Все")
     )
     return render(
         request, "id_progress.html", "id-progress",
         tiles=tiles, stream=stream, tabs=tabs, selected_tab_id=selected_tab_id, matrix=matrix,
+        status_options=status_options, selected_status=selected_status, selected_status_label=selected_status_label,
     )
 
 
