@@ -30,39 +30,7 @@
   </div>
 </div>
 
-<h3>Поток по вкладкам</h3>
-<div class="bar-chart">
-  {% for r in stream %}
-  <div class="bar-row">
-    <div class="bar-label">{{ r.tab_label }}</div>
-    <div class="bar-track" style="display:flex; height:1.1rem;">
-      {% if r.green_n > 0 %}<div style="flex:{{ r.green_n }} 0 0; background:var(--c-success);" title="Подписано: {{ r.green_n }}"></div>{% endif %}
-      {% if r.yellow_n > 0 %}<div style="flex:{{ r.yellow_n }} 0 0; background:var(--c-warning);" title="В процессе подписания: {{ r.yellow_n }}"></div>{% endif %}
-      {% if r.red_n > 0 %}<div style="flex:{{ r.red_n }} 0 0; background:var(--c-danger);" title="Остальное: {{ r.red_n }}"></div>{% endif %}
-    </div>
-    <div class="bar-value nowrap">{{ r.green_n }} / {{ r.yellow_n }} / {{ r.red_n }}</div>
-  </div>
-  {% else %}
-  <div class="empty-note">Нет ни одной записи по видам работ.</div>
-  {% endfor %}
-</div>
-
-{# Легенда «Потока по вкладкам» — координатор, 21.09.2026: три цвета и
-   три числа без подписи. Тот же компонент, что у матрицы ниже
-   (.id-matrix-legend), не новый стиль. Внимание: цвета здесь означают
-   ДРУГОЕ, чем те же цвета в легенде матрицы — жёлтый там означает
-   только «Первичная проверка РСК», здесь — весь цикл РСК плюс
-   «Подписано в карандаше»; красный там — только реальный блокер
-   («Другая блокирующая причина»), здесь — любой статус вне
-   зелёного/жёлтого. Обе легенды однозначны каждая сама по себе, но
-   не совпадают друг с другом — сведение к одному словарю цветов не
-   входит в это задание, разбор — в run log 21.09.2026. #}
-<div class="id-matrix-legend">
-  <span><i class="id-matrix-swatch id-matrix-green"></i>Подписано</span>
-  <span><i class="id-matrix-swatch id-matrix-yellow"></i>В цикле РСК и подписано в карандаше</span>
-  <span><i class="id-matrix-swatch id-matrix-red"></i>Остальные статусы</span>
-  <span class="id-matrix-legend-fraction">Числа — связки «раздел + вид работы» с выставленным статусом, в порядке подписано / в цикле РСК / остальное; связки без единого статуса ни в одно из трёх не входят.</span>
-</div>
+{% include "_id_progress_stream.html" %}
 
 <h3>Матрица «Раздел × Этап»</h3>
 <form class="filter-bar" method="get" action="/id-progress">
@@ -167,16 +135,6 @@
 <div id="id-matrix-drilldown"></div>
 
 <style>
-.id-matrix-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; font-size: 14px; color: var(--muted); margin: .5rem 0 .75rem; }
-.id-matrix-legend span { display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; }
-.id-matrix-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; }
-.id-matrix-swatch.id-matrix-red    { background: var(--c-danger); }
-.id-matrix-swatch.id-matrix-yellow { background: var(--c-warning); }
-.id-matrix-swatch.id-matrix-green  { background: var(--c-success); }
-.id-matrix-swatch.id-matrix-blue   { background: var(--c-primary-light); }
-.id-matrix-swatch-empty { background: var(--c-surface-alt); border: 1px solid var(--c-border-strong); }
-.id-matrix-legend-fraction { font-variant-numeric: tabular-nums; color: var(--c-text); }
-
 .matrix-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-bottom: .75rem; }
 .btn-nav {
   display: inline-block; height: 36px; line-height: 36px; padding: 0 .8rem; border-radius: .4rem;

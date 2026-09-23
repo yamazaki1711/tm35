@@ -66,28 +66,27 @@
   <div class="kpi-row kpi-small">
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.contract_total|ru_money }}</div>
-      <div class="kpi-label">Всего по контракту, ₽</div>
+      <div class="kpi-label">Всего по контракту с НДС, ₽</div>
     </div>
     <div class="kpi">
-      <div class="kpi-num">{{ folder_stats.signed_before_sum|ru_money }}</div>
-      <div class="kpi-label">Подписано ранее, ₽</div>
+      <div class="kpi-num">{{ folder_stats.ks3_sum|ru_money }}</div>
+      <div class="kpi-label">Подписано по КС-3 с НДС, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.ks2_sum|ru_money }}</div>
-      <div class="kpi-label">Подписано по КС-2, ₽</div>
+      <div class="kpi-label">Подписано ИД с НДС, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num">{{ folder_stats.manual_sum|ru_money }}</div>
-      <div class="kpi-label">Невыбираемый остаток, ₽</div>
+      <div class="kpi-label">Невыбираемый остаток с НДС, ₽</div>
     </div>
     <div class="kpi">
       <div class="kpi-num {{ 'danger' if folder_stats.money_remaining < 0 else '' }}">{{ folder_stats.money_remaining|ru_money }}</div>
-      <div class="kpi-label">Остаток по контракту, ₽</div>
+      <div class="kpi-label">Остаток по контракту с НДС, ₽</div>
     </div>
   </div>
 
-  <h3>Выполнение</h3>
-  {% with pipe=folder_stats.pipe %}{% include "_id_folder_funnel.html" %}{% endwith %}
+  {% include "_id_progress_stream.html" %}
 
   <div class="kpi-row kpi-small">
     <div class="kpi">

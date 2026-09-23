@@ -2762,10 +2762,26 @@ SOURCE_LABELS = {
 @app.get("/gantt")
 def gantt_page(request: Request):
     can_write = has_permission(request.state.user, "smr:write")
-    window_start, _window_end = get_display_window()
+    window_start, window_end = get_display_window()
+    # ТЗ Якименко А.И. №10, 23.09.2026, п.6b — это, не бэкендовый дефолт
+    # в api_gantt(), и есть настоящая точка входа: фронт (gantt.html)
+    # всегда шлёт явный `start` в первом запросе, инициализируя
+    # state.start ЭТИМ значением при загрузке страницы — бэкендовая ветка
+    # "start не передан" в api_gantt() на обычной загрузке страницы не
+    # исполняется вовсе. Раньше сюда шёл голый window_start (01.08.2026),
+    # из-за чего страница всегда открывалась на полтора месяца в прошлом
+    # от текущей даты — тот же корень, что и у бэкендового дефолта, просто
+    # в другом месте; правится здесь, не там. "Сегодня-7" — то же
+    # выражение, что уже использует кнопка "Сегодня", зажатое в границы
+    # окна отображения тем же способом, что и в api_gantt().
+    default_start = object_today() - timedelta(days=7)
+    if default_start < window_start:
+        default_start = window_start
+    elif default_start > window_end:
+        default_start = window_end
     return render(
         request, "gantt.html", "gantt",
-        can_write=can_write, display_window_start_iso=window_start.isoformat(),
+        can_write=can_write, display_window_start_iso=default_start.isoformat(),
     )
 
 
@@ -2804,16 +2820,22 @@ def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: 
         except ValueError:
             start_date = get_display_window()[0]
     else:
-        # Правка 01.09.2026 (координатор): по умолчанию график открывался
-        # с "сегодня-7", а не с начала окна отображения — 25.08 вместо
-        # 01.08, при этом "сегодня-7" не была ни одной из двух дат,
-        # которые координатор считал допустимыми (01.08/01.09). Теперь
-        # дефолт — начало окна отображения (get_display_window()),
-        # которое совпадает с directive_start после правки вопроса 12.
-        # Кнопка "Сегодня" (frontend, gantt.html) намеренно не тронута —
-        # у неё другой смысл (показать текущий момент), не открытие
-        # страницы с нуля.
-        start_date = get_display_window()[0]
+        # ТЗ Якименко А.И. №10, 23.09.2026, п.6b — жалоба "график не
+        # обновляется после ввода факта/добавления работы" разобрана до
+        # конца живым тестом (добавление работы, смена сроков, ввод факта
+        # через /shift — во всех трёх случаях данные пишутся и отдаются
+        # API немедленно, без задержки и без расхождения колонок). Единственная
+        # найденная причина — этот дефолт: со правки 01.09.2026 страница
+        # ВСЕГДА открывалась с начала окна отображения (01.08.2026), а не с
+        # текущей даты, поэтому только что введённые за сегодня/вчера данные
+        # были не видны без явного клика "Сегодня", ничего не сообщавшего,
+        # что они вообще не в кадре — выглядело как "не сохранилось". Разрыв
+        # между 01.08 и сегодня к 23.09.2026 вырос до полутора месяцев,
+        # сделав симптом заметным. Правка 01.09.2026 явно отменена этим
+        # новым заданием (не тихо) — дефолт снова "сегодня-7", тем же
+        # выражением, что уже использует кнопка "Сегодня" (frontend,
+        # gantt.html), чтобы открытие страницы и клик "Сегодня" совпадали.
+        start_date = object_today() - timedelta(days=7)
     days = max(7, min(days, 90))
     end_date = start_date + timedelta(days=days - 1)
 
@@ -5475,20 +5497,6 @@ def compute_id_folder_transitions(limit=10):
     return events[:limit]
 
 
-def get_id_signed_before_boundary_date():
-    """Граница «подписано ранее» для тайла «Подписано ранее, ₽» — папки,
-    закрытые ДО того, как Якименко А.И. принял участок (координатор,
-    16.09.2026), уже вычтены из остатка раньше и не пересчитываются.
-    Дата — в app_setting, не литералом в коде: поправить можно прямым
-    UPDATE, без деплоя. 10.03.2026 — значение по умолчанию и текущее
-    (см. migrations/037_id_signed_before_boundary.sql)."""
-    v = get_app_setting("id_signed_before_boundary_date", "2026-03-10")
-    try:
-        return date_cls.fromisoformat(v)
-    except (TypeError, ValueError):
-        return date_cls(2026, 3, 10)
-
-
 def compute_id_folder_stats():
     """Общая сводка для /id-folders и плитки дашборда — один источник цифр,
     не считать дважды в двух местах по-разному."""
@@ -5513,36 +5521,34 @@ def compute_id_folder_stats():
 
     folders_count = query_one("select count(*) as n from id_folder")["n"]
 
-    # ТЗ Якименко А.И., 16.09.2026 — пять денежных плиток, одинаковых на
-    # /dashboard и /id-folders. «Подписано ранее» и «Подписано по КС-2»
-    # не должны считать одну папку дважды: папка, подписанная до границы,
-    # идёт в «ранее» и явно исключается из «по КС-2», даже если у неё
-    # тоже есть ks2_date (overlap_count — сколько таких, для отчёта).
-    # Денежная величина каждой папки — id_folder_cost() (coalesce
-    # amount_smeta_rub/amount_rub), не голая колонка.
-    boundary = get_id_signed_before_boundary_date()
-    money_rows = query("select signed_date, ks2_date, amount_rub, amount_smeta_rub from id_folder")
-    signed_before_sum = 0.0
-    signed_before_count = 0
+    # ТЗ Якименко А.И. №10, 23.09.2026, п.3/4 — «Подписано ранее» убрана
+    # целиком (была временной мерой границы 10.03.2026, см. историю в
+    # migrations/037, сама граница и app_setting больше не читаются).
+    # «Подписано ИД» (бывшая «Подписано по КС-2») — сумма id_folder_cost()
+    # по всем папкам с заполненным ks2_date, ТА ЖЕ величина, что и раньше
+    # (при снятии границы никакая папка не сдвинулась — на 23.09.2026
+    # `overlap_count` предыдущей версии формулы был 0, папок «подписано
+    # раньше границы» не было вовсе): совпадает с суммой стадии трубы
+    # «Текущая КС-2» (id_folder_pipe_stage() без учёта границы никогда её
+    # и не проверял).
+    money_rows = query("select ks2_date, amount_rub, amount_smeta_rub from id_folder")
     ks2_sum = 0.0
     ks2_count = 0
-    overlap_count = 0
     for f in money_rows:
-        if f["signed_date"] and f["signed_date"] < boundary:
-            signed_before_sum += id_folder_cost(f)
-            signed_before_count += 1
-            if f["ks2_date"]:
-                overlap_count += 1
-        elif f["ks2_date"]:
+        if f["ks2_date"]:
             ks2_sum += id_folder_cost(f)
             ks2_count += 1
 
     manual_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_manual_volume")["s"]
-    # «Остаток по контракту, ₽» — единственный остаток теперь (закрывает
-    # KNOWN_ISSUES.md §42, «два разных остатка» — та развилка была ДО
-    # этого ТЗ; тайл один и тот же на обеих страницах).
+    ks3_sum = query_one("select coalesce(sum(amount_rub), 0) as s from id_ks3_entry")["s"]
+    # «Остаток по контракту, ₽» — ТЗ №10, п.3: контракт − КС-3 −
+    # невыбираемый остаток. «Подписано ИД» больше НЕ вычитается —
+    # КС-3 (кумулятивная подписанная сумма) и «Подписано ИД» (та же
+    # подписанная сумма с точки зрения папки) — одни и те же деньги,
+    # увиденные с двух сторон; вычитать оба значило бы посчитать их
+    # дважды (координатор, фон задания, не для экрана).
     money_remaining = (
-        ID_FOLDER_CONTRACT_TOTAL - signed_before_sum - ks2_sum - float(manual_sum)
+        ID_FOLDER_CONTRACT_TOTAL - float(ks3_sum) - float(manual_sum)
     )
 
     funnel = compute_id_folder_funnel()
@@ -5550,9 +5556,8 @@ def compute_id_folder_stats():
         "total_rows": total_rows, "signed_total": signed_total, "unsigned_count": unsigned_count,
         "signed_not_in_folder": signed_not_in_folder, "folders_count": folders_count,
         "contract_total": ID_FOLDER_CONTRACT_TOTAL, "manual_sum": manual_sum,
-        "signed_before_sum": signed_before_sum, "signed_before_count": signed_before_count,
-        "signed_before_boundary": boundary,
-        "ks2_sum": ks2_sum, "ks2_count": ks2_count, "overlap_count": overlap_count,
+        "ks2_sum": ks2_sum, "ks2_count": ks2_count,
+        "ks3_sum": ks3_sum,
         "money_remaining": money_remaining,
         "funnel": funnel,
         "pipe": compute_id_folder_pipe(funnel),
@@ -5595,6 +5600,7 @@ def id_folders_page(request: Request, status: str = "all", sort: str = "desc"):
         folders = [f for f in folders if id_folder_stage(f) == status]
 
     manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
+    ks3_entries = query("select id, description, amount_rub, created_at, updated_at from id_ks3_entry order by id desc")
     transitions = compute_id_folder_transitions()
     # "Активных ИЗМ (ДПР)" — тот же признак "активная" (не завершена/не
     # архивна), что и на /changes и в change_stats_row (home_v2) — не
@@ -5605,7 +5611,7 @@ def id_folders_page(request: Request, status: str = "all", sort: str = "desc"):
 
     return render(request, "id_folders.html", "id-folders",
                   folders=folders, status=status, sort=sort,
-                  stats=stats, manual_volumes=manual_volumes,
+                  stats=stats, manual_volumes=manual_volumes, ks3_entries=ks3_entries,
                   transitions=transitions, active_changes=active_changes)
 
 
@@ -5642,7 +5648,7 @@ def export_id_folders_csv(status: str = "all"):
     ]
     return _csv_response(
         "id_folders.csv",
-        ["Номер папки", "Дата создания", "Разделов", "Стоимость, ₽",
+        ["Номер папки", "Дата создания", "Разделов", "Стоимость с НДС, ₽",
          "Подписант реестра", "Статус"],
         out,
     )
@@ -5809,7 +5815,7 @@ def api_id_folder_amount(request: Request, folder_id: int, amount_rub: str = For
     # Была точка вместо запятой в этом флеш-сообщении — тот же паттерн,
     # что уже правился в шаблонах (координатор, 08.09.2026), просто не
     # в Jinja-фильтре, а в Python-строке; заодно поймал по пути.
-    ok_msg = urllib.parse.quote(f"Сумма папки сохранена: {_ru_money(amt)} ₽.")
+    ok_msg = urllib.parse.quote(f"Сумма папки сохранена: {_ru_money(amt)} ₽ с НДС.")
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
@@ -5970,7 +5976,7 @@ def api_id_folder_smeta(request: Request, folder_id: int, amount_smeta_rub: str 
     run_in_transaction(lambda cur: cur.execute(
         "update id_folder set amount_smeta_rub=%s where id=%s", (amt, folder_id),
     ))
-    ok_msg = urllib.parse.quote(f"Стоимость после подписания папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽.")
+    ok_msg = urllib.parse.quote(f"Стоимость после подписания папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽ с НДС.")
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
@@ -6082,6 +6088,56 @@ def api_manual_volume_delete(request: Request, volume_id: int):
     if not has_permission(request.state.user, "id-folders:submit"):
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
     run_in_transaction(lambda cur: cur.execute("delete from id_manual_volume where id=%s", (volume_id,)))
+    return RedirectResponse(url="/id-folders", status_code=303)
+
+
+# ====== Сектор «КС-3» (ТЗ Якименко А.И. №10, 23.09.2026, п.5) ======
+# Та же модель и права, что «Невыбираемый остаток» (id_manual_volume) —
+# описание + сумма, тот же UI-паттерн, та же проверка id-folders:submit.
+# В отличие от «Невыбираемого остатка» задание явно требует ещё и
+# редактирование — добавлен /edit, id_manual_volume его не имеет
+# (не трогаю его, не входило в периметр этого пункта).
+@app.post("/api/ks3-entry")
+def api_ks3_entry_create(request: Request, description: str = Form(...), amount_rub: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    if not description.strip():
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Описание обязательно."), status_code=303)
+    try:
+        amt = float(amount_rub.replace(",", "."))
+    except ValueError:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Сумма указана некорректно."), status_code=303)
+    user_id = current_user_id_or_web_form()
+    run_in_transaction(lambda cur: cur.execute(
+        "insert into id_ks3_entry (description, amount_rub, created_by) values (%s, %s, %s)",
+        (description.strip(), amt, user_id),
+    ))
+    return RedirectResponse(url="/id-folders", status_code=303)
+
+
+@app.post("/api/ks3-entry/{entry_id}/edit")
+def api_ks3_entry_edit(request: Request, entry_id: int, description: str = Form(...), amount_rub: str = Form(...)):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    if not description.strip():
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Описание обязательно."), status_code=303)
+    try:
+        amt = float(amount_rub.replace(",", "."))
+    except ValueError:
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Сумма указана некорректно."), status_code=303)
+    user_id = current_user_id_or_web_form()
+    run_in_transaction(lambda cur: cur.execute(
+        "update id_ks3_entry set description=%s, amount_rub=%s, updated_by=%s, updated_at=now() where id=%s",
+        (description.strip(), amt, user_id, entry_id),
+    ))
+    return RedirectResponse(url="/id-folders", status_code=303)
+
+
+@app.post("/api/ks3-entry/{entry_id}/delete")
+def api_ks3_entry_delete(request: Request, entry_id: int):
+    if not has_permission(request.state.user, "id-folders:submit"):
+        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
+    run_in_transaction(lambda cur: cur.execute("delete from id_ks3_entry where id=%s", (entry_id,)))
     return RedirectResponse(url="/id-folders", status_code=303)
 
 
@@ -6400,6 +6456,13 @@ def home_v2(request: Request):
     evm = get_evm_data()
     rsk_dash = compute_rsk_dashboard_stats()
     folder_stats = compute_id_folder_stats()
+    # ТЗ Якименко А.И. №10, 23.09.2026, п.2 — труба «Выполнение» убрана из
+    # «Обзора ИД», на её месте «Поток по вкладкам» с /id-progress. ТА ЖЕ
+    # функция (compute_id_progress_stream()), не отдельный запрос — числа
+    # обязаны совпадать буквально, не просто «похоже». Партиал
+    # _id_progress_stream.html (та же разметка, что на /id-progress)
+    # ожидает переменную `stream` — то же имя в обоих шаблонах.
+    stream = compute_id_progress_stream()
 
     # ТЗ Якименко А.И., 15.09.2026: тайл «Активных ИЗМ (ДПР)» вернулся в
     # навигационную строку блока «Обзор ИД» — то же выражение, что уже
@@ -6419,6 +6482,7 @@ def home_v2(request: Request):
         crit=crit, evm=evm,
         rsk_dash=rsk_dash,
         folder_stats=folder_stats,
+        stream=stream,
         change_stats=change_stats_row,
     )
 

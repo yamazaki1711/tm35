@@ -131,6 +131,7 @@
   <button id="btn-apply">Применить</button>
   <span id="gantt-status"></span>
 </div>
+<div id="gantt-today-note" class="flash flash-err" style="display:none"></div>
 
 <div class="gantt-legend">
   <span><span class="legend-swatch" style="background:var(--accent)"></span>план без факта</span>
@@ -530,6 +531,21 @@
         document.getElementById('btn-prev').disabled = (data.start <= data.window_start);
         document.getElementById('btn-next').disabled = (data.end >= data.window_end);
         statusEl.textContent = TM35_RU_DATE.fmtDMY(data.start) + ' … ' + TM35_RU_DATE.fmtDMY(data.end);
+        // ТЗ №10, 23.09.2026, п.6b — если сегодняшняя дата вообще вне окна
+        // отображения (01.08-28.11 по умолчанию), дефолт "сегодня-7" её не
+        // спасёт — сервер зажмёт диапазон в границы окна, и только что
+        // введённые данные снова окажутся невидимы без предупреждения,
+        // тот же класс дефекта, что и было. Честно говорим об этом, а не
+        // показываем старые даты молча.
+        var todayNoteEl = document.getElementById('gantt-today-note');
+        if (data.today < data.window_start || data.today > data.window_end) {
+          todayNoteEl.textContent = 'Сегодня (' + TM35_RU_DATE.fmtDMY(data.today) + ') вне окна отображения ('
+            + TM35_RU_DATE.fmtDMY(data.window_start) + ' … ' + TM35_RU_DATE.fmtDMY(data.window_end)
+            + ') — новые записи по свежим датам сюда не попадут, пока окно не расширят на /settings.';
+          todayNoteEl.style.display = 'block';
+        } else {
+          todayNoteEl.style.display = 'none';
+        }
       })
       .catch(function (e) { statusEl.textContent = 'Ошибка загрузки: ' + e; });
   }

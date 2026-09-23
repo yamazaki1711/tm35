@@ -991,6 +991,20 @@ code {
 .bar-fill.bar-bad { background: var(--c-danger); }
 .bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--c-text); font-weight: 600; min-width: 4.5rem; }
 
+/* Легенда цветов/чисел — раньше жила только в <style> на id_progress.html,
+   перенесена сюда (ТЗ Якименко А.И. №10, 23.09.2026, п.2), т.к. партиал
+   _id_progress_stream.html теперь используется ещё и на /dashboard —
+   один компонент, одно место для его стиля, не дубль в двух файлах. */
+.id-matrix-legend { display: flex; flex-wrap: wrap; gap: 1.1rem; font-size: 14px; color: var(--muted); margin: .5rem 0 .75rem; }
+.id-matrix-legend span { display: inline-flex; align-items: center; gap: .35rem; white-space: nowrap; }
+.id-matrix-swatch { display: inline-block; width: .8rem; height: .8rem; border-radius: .2rem; }
+.id-matrix-swatch.id-matrix-red    { background: var(--c-danger); }
+.id-matrix-swatch.id-matrix-yellow { background: var(--c-warning); }
+.id-matrix-swatch.id-matrix-green  { background: var(--c-success); }
+.id-matrix-swatch.id-matrix-blue   { background: var(--c-primary-light); }
+.id-matrix-swatch-empty { background: var(--c-surface-alt); border: 1px solid var(--c-border-strong); }
+.id-matrix-legend-fraction { font-variant-numeric: tabular-nums; color: var(--c-text); }
+
 /* Кастомизация <input type="file"> — нативная подпись "Choose File / No
    file chosen" не переводится через HTML/CSS (берётся из локали
    браузера), поэтому input визуально скрыт (но остаётся в DOM и

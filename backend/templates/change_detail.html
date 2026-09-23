@@ -44,7 +44,7 @@
   <label>SLA, дней
     <input type="number" name="sla_days" min="1" value="{{ c.sla_days or 14 }}">
   </label>
-  <label>Сумма под блокировкой, ₽
+  <label>Сумма под блокировкой с НДС, ₽
     <input type="number" name="blocked_amount_rub" min="0" step="0.01" value="{{ c.blocked_amount_rub or '' }}">
   </label>
   <label>Комментарий
@@ -63,7 +63,7 @@
     <tr><th>Проектировщик</th><td>{{ c.designer_name or '—' }}</td></tr>
     <tr><th>Дата запроса</th><td class="nowrap">{{ c.request_date|fmt_dmy if c.request_date else '—' }}</td></tr>
     <tr><th>SLA, дней</th><td class="nowrap">{{ c.sla_days or '—' }}</td></tr>
-    <tr><th>Сумма под блокировкой, ₽</th><td class="nowrap">{{ c.blocked_amount_rub|ru_money if c.blocked_amount_rub else '—' }}</td></tr>
+    <tr><th>Сумма под блокировкой с НДС, ₽</th><td class="nowrap">{{ c.blocked_amount_rub|ru_money if c.blocked_amount_rub else '—' }}</td></tr>
     <tr><th>Комментарий</th><td class="wrap">{{ c.comment or '—' }}</td></tr>
   </tbody>
 </table>

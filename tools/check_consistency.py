@@ -166,17 +166,17 @@ def main_check():
         "folders_count", folder_stats["folders_count"],
     )
 
-    # --- 5. Деньги: контракт − подписано ранее − подписано по КС-2 − ручной
-    # объём = остаток (ТЗ Якименко А.И., 16.09.2026 — единственный остаток,
-    # закрывает KNOWN_ISSUES.md §42; см. compute_id_folder_stats()).
+    # --- 5. Деньги: контракт − подписано по КС-3 − ручной объём = остаток
+    # (ТЗ Якименко А.И. №10, 23.09.2026, п.3 — «Подписано ИД» больше не
+    # вычитается, КС-3 и «Подписано ИД» одни и те же деньги с двух сторон;
+    # см. compute_id_folder_stats()).
     identity_remaining = (
         float(folder_stats["contract_total"])
-        - float(folder_stats["signed_before_sum"])
-        - float(folder_stats["ks2_sum"])
+        - float(folder_stats["ks3_sum"])
         - float(folder_stats["manual_sum"])
     )
     check(
-        "Деньги: контракт − подписано ранее − подписано по КС-2 − ручной объём vs money_remaining",
+        "Деньги: контракт − подписано по КС-3 − ручной объём vs money_remaining",
         "пересчитано", round(identity_remaining, 2),
         "compute_id_folder_stats()['money_remaining']", round(float(folder_stats["money_remaining"]), 2),
         tolerance=0.01,
@@ -201,38 +201,22 @@ def main_check():
         "/dashboard", change_stats_row["total"],
     )
 
-    # --- 7. ТЗ Якименко А.И., 16.09.2026 — «Подписано ранее» (папки,
-    # signed_date раньше границы app_setting['id_signed_before_boundary_date'])
-    # и «Подписано по КС-2» не должны считать одну папку дважды (см.
-    # compute_id_folder_stats()) — сверка count() против прямого SQL по
-    # обоим множествам плюс отдельно overlap_count (папки, которые попали в
-    # «ранее», но у них уже есть и ks2_date).
-    boundary = folder_stats["signed_before_boundary"]
+    # --- 7. ТЗ Якименко А.И. №10, 23.09.2026 — «Подписано ИД» (бывшая
+    # «Подписано по КС-2», п.4: та же величина, только имя переименовано)
+    # — сверка count() против прямого SQL; и «Подписано по КС-3» (п.5,
+    # новый сектор id_ks3_entry) — сверка суммы против прямого SQL.
     check(
-        "Подписано ранее: compute_id_folder_stats() vs прямой SQL",
-        "compute_id_folder_stats()", folder_stats["signed_before_count"],
-        "прямой SQL", m.query_one(
-            "select count(*) as n from id_folder where signed_date is not null and signed_date < %(b)s",
-            {"b": boundary},
-        )["n"],
-    )
-    check(
-        "Подписано по КС-2: compute_id_folder_stats() vs прямой SQL",
+        "Подписано ИД (папок с ks2_date): compute_id_folder_stats() vs прямой SQL",
         "compute_id_folder_stats()", folder_stats["ks2_count"],
         "прямой SQL", m.query_one(
-            "select count(*) as n from id_folder where ks2_date is not null "
-            "and not (signed_date is not null and signed_date < %(b)s)",
-            {"b": boundary},
+            "select count(*) as n from id_folder where ks2_date is not null"
         )["n"],
     )
     check(
-        "Пересечение «Подписано ранее» и КС-2 (overlap_count): compute_id_folder_stats() vs прямой SQL",
-        "compute_id_folder_stats()", folder_stats["overlap_count"],
-        "прямой SQL", m.query_one(
-            "select count(*) as n from id_folder where signed_date is not null and signed_date < %(b)s "
-            "and ks2_date is not null",
-            {"b": boundary},
-        )["n"],
+        "Подписано по КС-3: compute_id_folder_stats()['ks3_sum'] vs прямой SQL sum(id_ks3_entry)",
+        "compute_id_folder_stats()", round(float(folder_stats["ks3_sum"]), 2),
+        "прямой SQL", round(float(m.query_one("select coalesce(sum(amount_rub),0) as s from id_ks3_entry")["s"]), 2),
+        tolerance=0.01,
     )
 
     # --- 8. Блоки 1-2 "График ИД — прогресс": tiles (один агрегат) vs stream
@@ -392,34 +376,16 @@ def main_check():
         "прямой SQL", direct_resolved,
     )
 
-    # --- 11. Труба папок ИД на /dashboard vs /id-folders — не текст кода, а
-    # то, что реально отдаёт HTTP-сервер (задание координатора: "смотреть на
-    # экран, не на код"). Обе страницы включают один и тот же шаблон
-    # _id_folder_funnel.html — здесь сверяются числа из ОТРЕНДЕРЕННОГО HTML
-    # обеих страниц, не повторный вызов той же Python-функции. Заход 7,
-    # 11.09.2026: разметка сменилась с плоских плиток (.kpi-num/.kpi-label)
-    # на трубу (.id-pipe-count/.id-pipe-label) — обновлён селектор, сама
-    # проверка (числа стадий сходятся между двумя страницами) не менялась.
-    # ТЗ 15.09.2026: труба сменила стадии на ID_FOLDER_PIPE_STAGE_LABELS
-    # (не каноническую ID_FOLDER_STAGE_LABELS — та осталась для колонки
-    # «Стадия» реестра, труба её больше не показывает) — обе страницы
-    # рендерят один и тот же партиал, обязаны совпасть по каждой стадии.
+    # --- 11. Труба папок ИД — ТЗ №10, 23.09.2026, п.2 убрал трубу с
+    # /dashboard (заменена «Потоком по вкладкам», см. проверку ниже),
+    # осталась только на /id-folders — сравнивать больше не с чем на
+    # уровне отрендеренного HTML между двумя страницами (внутренняя
+    # сходимость трубы — сумма по 5 стадиям vs count(*) — уже покрыта
+    # проверкой №4 выше через compute_id_folder_funnel(), той же функции,
+    # что рисует единственную оставшуюся трубу).
     dashboard_html = urllib.request.urlopen("http://localhost:8000/dashboard", timeout=15).read().decode("utf-8")
     id_folders_html = urllib.request.urlopen("http://localhost:8000/id-folders", timeout=15).read().decode("utf-8")
-    for stage, label in m.ID_FOLDER_PIPE_STAGE_LABELS.items():
-        pattern = re.compile(
-            r'<span class="id-pipe-count[^"]*"[^>]*>(\d+)</span>\s*'
-            r'<span class="id-pipe-label"[^>]*>' + re.escape(label) + r"</span>"
-        )
-        dash_match = pattern.search(dashboard_html)
-        folders_match = pattern.search(id_folders_html)
-        dash_n = int(dash_match.group(1)) if dash_match else None
-        folders_n = int(folders_match.group(1)) if folders_match else None
-        check(
-            f"Труба папок ИД (отрендеренный HTML), стадия «{label}»: /dashboard vs /id-folders",
-            "/dashboard", dash_n,
-            "/id-folders", folders_n,
-        )
+    id_progress_html = urllib.request.urlopen("http://localhost:8000/id-progress", timeout=15).read().decode("utf-8")
 
     # --- 12. Заход 4, задача 1: ни один id_form_row не должен состоять в
     # двух группах «Графика ИД» сразу. Уже гарантировано ограничением
@@ -491,13 +457,12 @@ def main_check():
         "/status", status_forecast_m.group(1) if status_forecast_m else None,
     )
 
-    # ИД: деньги — ТЗ Якименко А.И., 16.09.2026 (§3) — пять денежных тайлов
-    # ИДЕНТИЧНЫ на /dashboard и /id-folders (одна и та же подпись, одно и то
-    # же число), не просто "то же значение под разными подписями", как было
-    # до этого ТЗ. Сверяем все пять тайл-в-тайл на отрендеренном HTML.
+    # ИД: деньги — ТЗ Якименко А.И. №10, 23.09.2026 (п.3/4) — пять денежных
+    # тайлов ИДЕНТИЧНЫ на /dashboard и /id-folders (одна и та же подпись,
+    # одно и то же число). Сверяем все пять тайл-в-тайл на отрендеренном HTML.
     id_money_tile_labels = [
-        "Всего по контракту, ₽", "Подписано ранее, ₽", "Подписано по КС-2, ₽",
-        "Невыбираемый остаток, ₽", "Остаток по контракту, ₽",
+        "Всего по контракту с НДС, ₽", "Подписано по КС-3 с НДС, ₽", "Подписано ИД с НДС, ₽",
+        "Невыбираемый остаток с НДС, ₽", "Остаток по контракту с НДС, ₽",
     ]
     id_money_tile_values = {}
     for label in id_money_tile_labels:
@@ -516,50 +481,68 @@ def main_check():
             tolerance=0.01,
         )
 
-    # ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано
-    # ранее» − «Подписано по КС-2» − «Невыбираемый остаток» — как реально
-    # нарисовано на экране /dashboard (KNOWN_ISSUES.md §42, "два остатка",
-    # закрыто этим ТЗ: остаток теперь один и тот же на обеих страницах).
-    contract_v = id_money_tile_values["Всего по контракту, ₽"]
-    signed_before_tile_v = id_money_tile_values["Подписано ранее, ₽"]
-    ks2_tile_v = id_money_tile_values["Подписано по КС-2, ₽"]
-    manual_tile_v = id_money_tile_values["Невыбираемый остаток, ₽"]
-    remaining_contract_v = id_money_tile_values["Остаток по контракту, ₽"]
+    # ИД: «Остаток по контракту с НДС, ₽» = «Всего по контракту» −
+    # «Подписано по КС-3» − «Невыбираемый остаток» (ТЗ №10, п.3 — формула
+    # больше не вычитает «Подписано ИД», КС-3 и «Подписано ИД» — одни и те
+    # же деньги с двух сторон) — как реально нарисовано на /dashboard.
+    contract_v = id_money_tile_values["Всего по контракту с НДС, ₽"]
+    ks3_tile_v = id_money_tile_values["Подписано по КС-3 с НДС, ₽"]
+    manual_tile_v = id_money_tile_values["Невыбираемый остаток с НДС, ₽"]
+    remaining_contract_v = id_money_tile_values["Остаток по контракту с НДС, ₽"]
     computed_remaining = (
-        contract_v - signed_before_tile_v - ks2_tile_v - manual_tile_v
-        if None not in (contract_v, signed_before_tile_v, ks2_tile_v, manual_tile_v) else None
+        contract_v - ks3_tile_v - manual_tile_v
+        if None not in (contract_v, ks3_tile_v, manual_tile_v) else None
     )
     check(
-        "ИД: «Остаток по контракту, ₽» = «Всего по контракту» − «Подписано ранее» − «Подписано по КС-2» − «Невыбираемый остаток» (как на экране /dashboard)",
+        "ИД: «Остаток по контракту с НДС, ₽» = «Всего по контракту» − «Подписано по КС-3» − «Невыбираемый остаток» (как на экране /dashboard)",
         "пересчитано из тайлов", round(computed_remaining, 2) if computed_remaining is not None else None,
-        "тайл «Остаток по контракту, ₽»", round(remaining_contract_v, 2) if remaining_contract_v is not None else None,
+        "тайл «Остаток по контракту с НДС, ₽»", round(remaining_contract_v, 2) if remaining_contract_v is not None else None,
         tolerance=0.01,
     )
 
-    # ИД: headline "N из M папок с КС-2" убран (ТЗ 15.09.2026) — взамен
-    # сверка ₽ стадии трубы «Текущая КС-2» с тайлом «Подписано по КС-2, ₽»
-    # на той же странице (оба должны показывать одну и ту же сумму
-    # ks2_sum, но верстка не переиспользует текст друг друга).
+    # ИД: труба «Выполнение» убрана с /dashboard (ТЗ №10, п.2) — стадия
+    # «Текущая КС-2» теперь сверяется только на /id-folders, где труба
+    # осталась, против тайла «Подписано ИД» (та же сумма ks2_sum, что
+    # раньше называлась «Подписано по КС-2»).
+    ks2_tile_v = id_money_tile_values["Подписано ИД с НДС, ₽"]
     ks2_current_label = m.ID_FOLDER_PIPE_STAGE_LABELS["ks2_current"]
-    dash_ks2_pipe_money_m = re.search(
+    folders_ks2_pipe_money_m = re.search(
         r'<span class="id-pipe-label"[^>]*>' + re.escape(ks2_current_label) + r"</span>\s*"
         r'<span class="id-pipe-money"[^>]*>([^<]+)</span>',
-        dashboard_html,
+        id_folders_html,
     )
-    # «— ₽» на трубе (known_sum_count=0 — либо в стадии вообще нет папок,
-    # либо есть, но ни у одной ещё не заполнена сметная стоимость) в обоих
-    # случаях означает настоящую сумму 0, ту же, что coalesce(sum(...),0)
-    # в тайле — сравниваем как 0, не как "неизвестно" (это внутренняя
-    # сверка тождества, не то, что показывается пользователю "не изобретая
-    # число" — это правило про экран, не про эту проверку).
-    _ks2_pipe_raw = dash_ks2_pipe_money_m.group(1).replace("₽", "").strip() if dash_ks2_pipe_money_m else None
+    # «— ₽» на трубе (known_sum_count=0) означает настоящую сумму 0, ту же,
+    # что coalesce(sum(...),0) в тайле — сравниваем как 0 (внутренняя
+    # сверка тождества, не то, что видит пользователь).
+    _ks2_pipe_raw = folders_ks2_pipe_money_m.group(1).replace("₽", "").strip() if folders_ks2_pipe_money_m else None
     pipe_ks2_money_v = 0.0 if _ks2_pipe_raw == "—" else _parse_ru_money(_ks2_pipe_raw)
     check(
-        "ИД: труба «Текущая КС-2» (₽) = тайл «Подписано по КС-2, ₽» (на /dashboard)",
+        "ИД: труба «Текущая КС-2» (₽) = тайл «Подписано ИД с НДС, ₽» (на /id-folders)",
         "труба, Текущая КС-2", round(pipe_ks2_money_v, 2) if pipe_ks2_money_v is not None else None,
         "тайл", round(ks2_tile_v, 2) if ks2_tile_v is not None else None,
         tolerance=0.01,
     )
+
+    # ИД: «Поток по вкладкам» — ТЗ №10, п.2 — тот же партиал
+    # (_id_progress_stream.html) над той же функцией
+    # (compute_id_progress_stream()) на /dashboard и на /id-progress,
+    # числа обязаны совпадать буквально построчно, не просто «похоже».
+    stream_bar_re = re.compile(
+        r'<div class="bar-label">([^<]+)</div>.*?<div class="bar-value nowrap">([^<]+)</div>', re.S
+    )
+    dash_stream_rows = stream_bar_re.findall(dashboard_html)
+    progress_stream_rows = stream_bar_re.findall(id_progress_html)
+    check(
+        "«Поток по вкладкам»: число строк на /dashboard vs /id-progress",
+        "/dashboard", len(dash_stream_rows),
+        "/id-progress", len(progress_stream_rows),
+    )
+    for (dash_label, dash_val), (prog_label, prog_val) in zip(dash_stream_rows, progress_stream_rows):
+        check(
+            f"«Поток по вкладкам», вкладка «{dash_label}»: /dashboard vs /id-progress",
+            "/dashboard", f"{dash_label}: {dash_val}",
+            "/id-progress", f"{prog_label}: {prog_val}",
+        )
 
     # РСК: ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, ОДИНАКОВЫЕ
     # подпись и число на /dashboard и /rsk/dashboard (было — разные

@@ -563,8 +563,8 @@ def test_id_folders_money_clarity_tiles(page, base_url):
     page.wait_for_timeout(300)
     labels = page.locator(".kpi-label").all_inner_texts()
     expected = [
-        "Всего по контракту, ₽", "Подписано ранее, ₽", "Подписано по КС-2, ₽",
-        "Невыбираемый остаток, ₽", "Остаток по контракту, ₽",
+        "Всего по контракту с НДС, ₽", "Подписано по КС-3 с НДС, ₽", "Подписано ИД с НДС, ₽",
+        "Невыбираемый остаток с НДС, ₽", "Остаток по контракту с НДС, ₽",
     ]
     missing = [label for label in expected if label not in labels]
     if missing:

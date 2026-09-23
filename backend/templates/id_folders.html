@@ -20,23 +20,23 @@
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ stats.contract_total|ru_money }}</div>
-    <div class="kpi-label">Всего по контракту, ₽</div>
+    <div class="kpi-label">Всего по контракту с НДС, ₽</div>
   </div>
   <div class="kpi">
-    <div class="kpi-num">{{ stats.signed_before_sum|ru_money }}</div>
-    <div class="kpi-label">Подписано ранее, ₽</div>
+    <div class="kpi-num">{{ stats.ks3_sum|ru_money }}</div>
+    <div class="kpi-label">Подписано по КС-3 с НДС, ₽</div>
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ stats.ks2_sum|ru_money }}</div>
-    <div class="kpi-label">Подписано по КС-2, ₽</div>
+    <div class="kpi-label">Подписано ИД с НДС, ₽</div>
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ stats.manual_sum|ru_money }}</div>
-    <div class="kpi-label">Невыбираемый остаток, ₽</div>
+    <div class="kpi-label">Невыбираемый остаток с НДС, ₽</div>
   </div>
   <div class="kpi">
     <div class="kpi-num {{ 'danger' if stats.money_remaining < 0 else '' }}">{{ stats.money_remaining|ru_money }}</div>
-    <div class="kpi-label">Остаток по контракту, ₽</div>
+    <div class="kpi-label">Остаток по контракту с НДС, ₽</div>
   </div>
 </div>
 
@@ -132,7 +132,7 @@
       <th class="nowrap">Номер папки</th>
       <th class="nowrap">Дата создания</th>
       <th class="nowrap">Разделов</th>
-      <th class="nowrap">Стоимость, ₽</th>
+      <th class="nowrap">Стоимость с НДС, ₽</th>
       <th>Подписант реестра</th>
       <th class="nowrap">Статус</th>
     </tr>
@@ -159,14 +159,14 @@
   <label>Описание
     <input type="text" name="description" required placeholder="например, разделы вне 15 категорий">
   </label>
-  <label>Сумма, ₽
+  <label>Сумма с НДС, ₽
     <input type="number" name="amount_rub" min="0" step="0.01" required>
   </label>
   <button type="submit">Добавить</button>
 </form>
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th>Описание</th><th class="nowrap">Сумма, ₽</th><th class="nowrap"></th></tr></thead>
+  <thead><tr><th>Описание</th><th class="nowrap">Сумма с НДС, ₽</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for m in manual_volumes %}
     <tr>
@@ -183,6 +183,59 @@
     {% endfor %}
     {% if manual_volumes %}
     <tr><td class="nowrap"><b>Итого</b></td><td class="nowrap"><b>{{ stats.manual_sum|ru_money }}</b></td><td class="nowrap"></td></tr>
+    {% endif %}
+  </tbody>
+</table>
+</div>
+
+{# ТЗ Якименко А.И. №10, 23.09.2026, п.5 — сектор «КС-3», тот же паттерн,
+   что «Невыбираемый остаток» выше (то же право id-folders:submit, тот же
+   учёт автора/даты), плюс правка через <details> — раскрывающуюся форму
+   без JS, тем же способом, каким на сайте уже сворачиваются длинные
+   блоки, чтобы не заводить новый скрипт ради одной формы на строку. #}
+<h3>КС-3</h3>
+<form class="form-box" method="post" action="/api/ks3-entry" style="max-width:600px;">
+  <label>Описание
+    <input type="text" name="description" required placeholder="например, КС-2 №1">
+  </label>
+  <label>Сумма с НДС, ₽
+    <input type="number" name="amount_rub" min="0" step="0.01" required>
+  </label>
+  <button type="submit">Добавить</button>
+</form>
+<div class="table-wrap">
+<table class="data-table">
+  <thead><tr><th>Описание</th><th class="nowrap">Сумма с НДС, ₽</th><th class="nowrap"></th></tr></thead>
+  <tbody>
+    {% for k in ks3_entries %}
+    <tr>
+      <td class="wrap">
+        {{ k.description }}
+        <details style="margin-top:.35rem">
+          <summary class="btn-secondary" style="display:inline-block;cursor:pointer;font-size:.8rem;">Править</summary>
+          <form method="post" action="/api/ks3-entry/{{ k.id }}/edit" style="margin-top:.5rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end;">
+            <label>Описание
+              <input type="text" name="description" required value="{{ k.description }}">
+            </label>
+            <label>Сумма с НДС, ₽
+              <input type="number" name="amount_rub" min="0" step="0.01" required value="{{ k.amount_rub }}">
+            </label>
+            <button type="submit">Сохранить</button>
+          </form>
+        </details>
+      </td>
+      <td class="nowrap">{{ k.amount_rub|ru_money }}</td>
+      <td class="nowrap">
+        <form method="post" action="/api/ks3-entry/{{ k.id }}/delete" style="display:inline">
+          <button type="submit" class="btn-secondary">Убрать</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="empty-note">Записей нет.</td></tr>
+    {% endfor %}
+    {% if ks3_entries %}
+    <tr><td class="nowrap"><b>Итого</b></td><td class="nowrap"><b>{{ stats.ks3_sum|ru_money }}</b></td><td class="nowrap"></td></tr>
     {% endif %}
   </tbody>
 </table>

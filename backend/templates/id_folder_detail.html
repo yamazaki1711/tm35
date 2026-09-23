@@ -21,7 +21,7 @@
 
 <h3>Стоимость при сборке</h3>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/amount" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
-  <label style="flex:1">Стоимость при сборке, ₽
+  <label style="flex:1">Стоимость при сборке с НДС, ₽
     <input type="number" name="amount_rub" min="0.01" step="0.01" value="{{ folder.amount_rub or '' }}" required>
   </label>
   <button type="submit">Сохранить</button>
@@ -49,7 +49,7 @@
   </div>
   <div class="kpi">
     <div class="kpi-num">{{ folder_cost|ru_money }}</div>
-    <div class="kpi-label">Стоимость, ₽</div>
+    <div class="kpi-label">Стоимость с НДС, ₽</div>
   </div>
 </div>
 
@@ -169,7 +169,7 @@
 {% if folder.signed_date %}
 <h3>Стоимость после подписания</h3>
 <form class="form-box" method="post" action="/api/id-folder/{{ folder.id }}/smeta" style="max-width:420px;display:flex;gap:.6rem;align-items:flex-end;">
-  <label style="flex:1">Стоимость после подписания, ₽
+  <label style="flex:1">Стоимость после подписания с НДС, ₽
     <input type="number" name="amount_smeta_rub" min="0.01" step="0.01" value="{{ folder.amount_smeta_rub or '' }}" required>
   </label>
   <button type="submit">Сохранить</button>
