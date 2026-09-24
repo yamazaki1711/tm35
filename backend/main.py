@@ -2762,27 +2762,17 @@ SOURCE_LABELS = {
 @app.get("/gantt")
 def gantt_page(request: Request):
     can_write = has_permission(request.state.user, "smr:write")
-    window_start, window_end = get_display_window()
-    # ТЗ Якименко А.И. №10, 23.09.2026, п.6b — это, не бэкендовый дефолт
-    # в api_gantt(), и есть настоящая точка входа: фронт (gantt.html)
-    # всегда шлёт явный `start` в первом запросе, инициализируя
-    # state.start ЭТИМ значением при загрузке страницы — бэкендовая ветка
-    # "start не передан" в api_gantt() на обычной загрузке страницы не
-    # исполняется вовсе. Раньше сюда шёл голый window_start (01.08.2026),
-    # из-за чего страница всегда открывалась на полтора месяца в прошлом
-    # от текущей даты — тот же корень, что и у бэкендового дефолта, просто
-    # в другом месте; правится здесь, не там. "Сегодня-7" — то же
-    # выражение, что уже использует кнопка "Сегодня", зажатое в границы
-    # окна отображения тем же способом, что и в api_gantt().
-    default_start = object_today() - timedelta(days=7)
-    if default_start < window_start:
-        default_start = window_start
-    elif default_start > window_end:
-        default_start = window_end
-    return render(
-        request, "gantt.html", "gantt",
-        can_write=can_write, display_window_start_iso=default_start.isoformat(),
-    )
+    # Координатор, 24.09.2026, поправка к ТЗ №10, п.1 — предыдущая правка
+    # (заход 23.09.2026) отменяла решение координатора от 01.09.2026
+    # («дефолт — начало окна отображения, не сегодня-7») без нового явного
+    # указания на это — ошибка, исправлена. Страница больше НЕ передаёт
+    # фронту заранее вычисленную дату открытия вообще: gantt.html теперь
+    # шлёт первый запрос к /api/gantt без start/days, и весь расчёт
+    # диапазона по умолчанию («директивный период, расширенный при
+    # необходимости под фактические даты работ») сделан ОДИН раз, в
+    # _gantt_default_range() (см. api_gantt() ниже) — не дублируется
+    # здесь и там по-разному.
+    return render(request, "gantt.html", "gantt", can_write=can_write)
 
 
 @app.get("/api/gantt-metrics")
@@ -2810,47 +2800,74 @@ def api_gantt_metrics():
     }
 
 
+def _gantt_default_range():
+    """Диапазон дат /gantt по умолчанию — координатор, 24.09.2026,
+    поправка к ТЗ №10, п.1: «весь директивный период
+    (directive_start..directive_deadline), расширенный, если у
+    какой-то работы плановая дата выходит за эти границы — новая
+    работа/новая дата не должна оказаться вне показанного окна».
+
+    Источник границ — существующие настройки (app_setting), не
+    буквальные даты в коде: `get_directive_start()`/
+    `get_directive_deadline()`, с откатом на `get_display_window()`,
+    если директивные даты не заданы.
+
+    Расширение — по `current_schedule.current_start`/`current_finish`
+    (плановые/актуальные сроки РАБОТЫ, ровно то, что пишет форма
+    «Сроки» на /gantt и что заполняется вместе с фактом на /shift), не
+    по `daily_progress.date`: у daily_progress в БД есть записи с
+    18.06.2026 (задолго до директивного периода) — решение координатора
+    от 29.08.2026 прямо говорит "данные за июнь-июль не трогаются,
+    просто не показываются здесь"; включать их в расчёт диапазона
+    вернуло бы их на экран без нового явного указания на это. Сегодняшняя
+    дата тоже всегда входит в диапазон — гарантия, что отметка "сегодня"
+    в сетке всегда есть, без отдельного баннера на этот случай."""
+    directive_start = get_directive_start() or get_display_window()[0]
+    directive_end = get_directive_deadline() or get_display_window()[1]
+    today = object_today()
+
+    sched_bounds = query_one(
+        "select min(current_start) as min_d, max(current_finish) as max_d from current_schedule"
+    ) or {}
+
+    starts = [d for d in [directive_start, sched_bounds.get("min_d"), today] if d]
+    ends = [d for d in [directive_end, sched_bounds.get("max_d"), today] if d]
+    return min(starts), max(ends)
+
+
 @app.get("/api/gantt")
 def api_gantt(start: str = "", days: int = 30, active_only: str = "", location: str = "", started_only: str = ""):
     active_only = bool(active_only)
     started_only = bool(started_only)
+    window_start, window_end = _gantt_default_range()
+
     if start:
         try:
             start_date = date_cls.fromisoformat(start)
         except ValueError:
-            start_date = get_display_window()[0]
+            start_date = window_start
+        days = max(7, min(days or 30, 90))
+        if start_date < window_start:
+            start_date = window_start
+        end_date = start_date + timedelta(days=days - 1)
+        if end_date > window_end:
+            end_date = window_end
+            start_date = max(window_start, end_date - timedelta(days=days - 1))
+        days = (end_date - start_date).days + 1
     else:
-        # ТЗ Якименко А.И. №10, 23.09.2026, п.6b — жалоба "график не
-        # обновляется после ввода факта/добавления работы" разобрана до
-        # конца живым тестом (добавление работы, смена сроков, ввод факта
-        # через /shift — во всех трёх случаях данные пишутся и отдаются
-        # API немедленно, без задержки и без расхождения колонок). Единственная
-        # найденная причина — этот дефолт: со правки 01.09.2026 страница
-        # ВСЕГДА открывалась с начала окна отображения (01.08.2026), а не с
-        # текущей даты, поэтому только что введённые за сегодня/вчера данные
-        # были не видны без явного клика "Сегодня", ничего не сообщавшего,
-        # что они вообще не в кадре — выглядело как "не сохранилось". Разрыв
-        # между 01.08 и сегодня к 23.09.2026 вырос до полутора месяцев,
-        # сделав симптом заметным. Правка 01.09.2026 явно отменена этим
-        # новым заданием (не тихо) — дефолт снова "сегодня-7", тем же
-        # выражением, что уже использует кнопка "Сегодня" (frontend,
-        # gantt.html), чтобы открытие страницы и клик "Сегодня" совпадали.
-        start_date = object_today() - timedelta(days=7)
-    days = max(7, min(days, 90))
-    end_date = start_date + timedelta(days=days - 1)
-
-    # Ось /gantt ограничена окном отображения (решение координатора
-    # 29.08.2026) — навигация "пред./след." не должна уводить за 01.08/
-    # 28.11 (по умолчанию). Данные за июнь-июль в БД не трогаются,
-    # просто не показываются здесь. Не ограничивает ввод факта — это
-    # отдельная форма (/form, /shift), туда окно не применяется.
-    window_start, window_end = get_display_window()
-    if start_date < window_start:
+        # Координатор, 24.09.2026, поправка к ТЗ №10, п.1 — без явного
+        # `start` показываем ВЕСЬ диапазон _gantt_default_range() целиком
+        # (широкая таблица, горизонтальная прокрутка — уже разрешённое
+        # исключение CLAUDE.md §7 для этой страницы), не какой-то один
+        # фиксированный 30-дневный срез внутри него. Прошлая правка
+        # (заход 23.09.2026, "сегодня-7") была тем же классом ошибки, что
+        # и версия до неё ("начало окна отображения") — обе выбирали ТОЧКУ
+        # внутри диапазона по умолчанию вместо показа самого диапазона;
+        # первая к тому же тихо отменяла решение координатора от
+        # 01.09.2026 без нового явного указания на это — отменена.
         start_date = window_start
-    end_date = start_date + timedelta(days=days - 1)
-    if end_date > window_end:
         end_date = window_end
-        start_date = max(window_start, end_date - timedelta(days=days - 1))
+        days = (end_date - start_date).days + 1
 
     where_extra = ""
     params = []
@@ -5358,7 +5375,19 @@ def id_folder_cost(folder):
     Показываемое и суммируемое значение = coalesce(amount_smeta_rub,
     amount_rub) — единственное место с этой формулой, вызывается для
     каждой цифры о деньгах папки (список, карточка, плитки, труба,
-    выгрузка), второе выражение не заводится."""
+    выгрузка), второе выражение не заводится.
+
+    НДС (координатор, 24.09.2026, поправка к ТЗ №10): у `amount_rub`
+    нет фиксированного налогового базиса на уровне БД — обе колонки
+    заполняются вручную по каждой папке отдельно и остаются
+    редактируемыми в любой момент; старые Excel-импортированные
+    значения — это просто данные, которые пользователи сейчас
+    поправляют через интерфейс. Подпись «с НДС» в интерфейсе — решение
+    заказчика, не утверждение о том, что каждое хранимое число уже
+    содержит НДС. Прежняя запись здесь и в `docs/decisions_needed_-
+    grafik_id_export.md` §16 («без НДС») описывала терминологию ОДНОЙ
+    прошлой задачи (экспорт «График ИД»), не постоянное свойство
+    колонки — закрыто координатором, `KNOWN_ISSUES.md` §63."""
     smeta = folder.get("amount_smeta_rub")
     if smeta is not None:
         return float(smeta)

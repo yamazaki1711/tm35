@@ -120,8 +120,9 @@
   <button id="btn-today">Сегодня</button>
   <button id="btn-next">след. →</button>
   <select id="sel-days">
+    <option value="0">Весь период</option>
     <option value="14">14 дней</option>
-    <option value="30" selected>30 дней</option>
+    <option value="30">30 дней</option>
     <option value="45">45 дней</option>
     <option value="60">60 дней</option>
   </select>
@@ -131,7 +132,6 @@
   <button id="btn-apply">Применить</button>
   <span id="gantt-status"></span>
 </div>
-<div id="gantt-today-note" class="flash flash-err" style="display:none"></div>
 
 <div class="gantt-legend">
   <span><span class="legend-swatch" style="background:var(--accent)"></span>план без факта</span>
@@ -212,13 +212,15 @@
 
 <script>
 (function () {
-  var state = { start: null, days: 30, active: false, location: '', started: false };
-  // Правка 01.09.2026: открытие страницы с нуля показывает начало окна
-  // отображения (display_window_start, сейчас 01.08), не "сегодня-7" —
-  // координатор: "начальная дата - или 01.08, или 01.09, но никак не
-  // 25.08". Кнопка "Сегодня" ниже намеренно продолжает использовать
-  // "сегодня-7" — другой смысл, не тронута.
-  var GANTT_DEFAULT_START = "{{ display_window_start_iso }}";
+  // Правка 24.09.2026 (координатор, поправка к ТЗ №10): открытие страницы
+  // с нуля больше не задаёт ни start, ни days вовсе — оставляем оба null,
+  // и /api/gantt сам строит "весь директивный период, расширенный при
+  // необходимости" (см. _gantt_default_range() в main.py). Раньше здесь
+  // была фиксированная дата (сначала "сегодня-7", потом "начало окна
+  // отображения" 01.08) — обе оказались частным случаем одной и той же
+  // ошибки: жёстко выбранная ТОЧКА внутри диапазона, а не сам диапазон.
+  var state = { start: null, days: null, active: false, location: '', started: false };
+  var initialScrollDone = false;
   var RU_STATUS = {
     not_started: 'не начата', in_progress: 'в работе', suspended: 'приостановлена',
     limited: 'ограничена', done_physically: 'выполнена физически', submitted: 'предъявлена',
@@ -350,8 +352,22 @@
     html += '</tr>';
 
     html += '</tbody></table>';
-    document.getElementById('gantt-scroll').innerHTML = html;
+    var scrollEl = document.getElementById('gantt-scroll');
+    scrollEl.innerHTML = html;
     wireGridEvents();
+    // ТЗ №10, правка 24.09.2026, п.1 — по умолчанию показан весь
+    // директивный период целиком (широкая таблица, прокрутка вбок —
+    // разрешённое исключение CLAUDE.md §7 для этой страницы), поэтому
+    // "сегодня" не обязательно в начале экрана. Один раз, при первой
+    // отрисовке, прокручиваем к сегодняшней колонке — дальше пользователь
+    // прокручивает сам, автопрокрутка не мешает его собственной позиции.
+    if (!initialScrollDone) {
+      var todayCell = scrollEl.querySelector('.daycol.today');
+      if (todayCell) {
+        scrollEl.scrollLeft = Math.max(0, todayCell.offsetLeft - scrollEl.clientWidth / 2 + todayCell.offsetWidth / 2);
+      }
+      initialScrollDone = true;
+    }
   }
 
   function wireGridEvents() {
@@ -511,7 +527,13 @@
   function load() {
     var statusEl = document.getElementById('gantt-status');
     statusEl.textContent = 'Загрузка…';
-    var paramsObj = { start: fmtDate(state.start), days: state.days };
+    // state.start/state.days отсутствуют (null) до первой загрузки и
+    // сразу после выбора "Весь период" — тогда параметры вообще не
+    // передаются, и /api/gantt сам строит весь директивный период,
+    // расширенный при необходимости (main.py, _gantt_default_range()).
+    var paramsObj = {};
+    if (state.start) paramsObj.start = fmtDate(state.start);
+    if (state.days) paramsObj.days = state.days;
     if (state.active) paramsObj.active_only = '1';
     if (state.location) paramsObj.location = state.location;
     if (state.started) paramsObj.started_only = '1';
@@ -520,32 +542,20 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         render(data);
-        // Сервер зажимает диапазон в окно отображения (01.08-28.11 по
-        // умолчанию) — синхронизируем состояние клиента с тем, что
-        // РЕАЛЬНО вернулось, иначе повторный клик "пред./след." будет
-        // считать от старого, уже не актуального значения и визуально
-        // ничего не менять.
+        // Синхронизируем состояние клиента с тем, что РЕАЛЬНО вернулось
+        // (диапазон мог быть расширен сервером под фактические даты
+        // работ) — иначе повторный клик "пред./след." считал бы от
+        // устаревшего значения и визуально ничего не менял.
         state.start = new Date(data.start + 'T00:00:00Z');
+        state.days = data.days;
         state.windowStart = data.window_start;
         state.windowEnd = data.window_end;
         document.getElementById('btn-prev').disabled = (data.start <= data.window_start);
         document.getElementById('btn-next').disabled = (data.end >= data.window_end);
         statusEl.textContent = TM35_RU_DATE.fmtDMY(data.start) + ' … ' + TM35_RU_DATE.fmtDMY(data.end);
-        // ТЗ №10, 23.09.2026, п.6b — если сегодняшняя дата вообще вне окна
-        // отображения (01.08-28.11 по умолчанию), дефолт "сегодня-7" её не
-        // спасёт — сервер зажмёт диапазон в границы окна, и только что
-        // введённые данные снова окажутся невидимы без предупреждения,
-        // тот же класс дефекта, что и было. Честно говорим об этом, а не
-        // показываем старые даты молча.
-        var todayNoteEl = document.getElementById('gantt-today-note');
-        if (data.today < data.window_start || data.today > data.window_end) {
-          todayNoteEl.textContent = 'Сегодня (' + TM35_RU_DATE.fmtDMY(data.today) + ') вне окна отображения ('
-            + TM35_RU_DATE.fmtDMY(data.window_start) + ' … ' + TM35_RU_DATE.fmtDMY(data.window_end)
-            + ') — новые записи по свежим датам сюда не попадут, пока окно не расширят на /settings.';
-          todayNoteEl.style.display = 'block';
-        } else {
-          todayNoteEl.style.display = 'none';
-        }
+        var selEl = document.getElementById('sel-days');
+        var matched = Array.prototype.some.call(selEl.options, function (o) { return parseInt(o.value, 10) === data.days; });
+        selEl.value = matched ? String(data.days) : '0';
       })
       .catch(function (e) { statusEl.textContent = 'Ошибка загрузки: ' + e; });
   }
@@ -557,10 +567,24 @@
     state.start = addDays(state.start, state.days); load();
   });
   document.getElementById('btn-today').addEventListener('click', function () {
-    state.start = addDays(window.TM35_OBJECT_TODAY || new Date(), -7); load();
+    // "Сегодня" — узкое окно вокруг текущей даты (30 дней), в отличие от
+    // дефолта "Весь период"; не трогать без явной причины, отдельный
+    // смысл кнопки, как и раньше.
+    state.start = addDays(window.TM35_OBJECT_TODAY || new Date(), -7);
+    state.days = 30;
+    load();
   });
   function applyFilters() {
-    state.days = parseInt(document.getElementById('sel-days').value, 10);
+    var daysVal = parseInt(document.getElementById('sel-days').value, 10);
+    if (daysVal === 0) {
+      // "Весь период" — сбрасываем на null, чтобы /api/gantt снова сам
+      // построил полный директивный диапазон, а не прислал буквально 0 дней.
+      state.start = null;
+      state.days = null;
+    } else {
+      if (!state.start) state.start = window.TM35_OBJECT_TODAY ? addDays(window.TM35_OBJECT_TODAY, -7) : new Date();
+      state.days = daysVal;
+    }
     state.active = document.getElementById('chk-active').checked;
     state.location = document.getElementById('inp-location').value;
     state.started = document.getElementById('chk-started').checked;
@@ -578,7 +602,6 @@
     if (e.key === 'Enter') applyFilters();
   });
 
-  state.start = new Date(GANTT_DEFAULT_START + 'T00:00:00Z');
   load();
   loadMetrics();
 })();
