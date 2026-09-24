@@ -7064,6 +7064,34 @@ RSK_LIST_SELECT_SQL = f"""
 """
 
 
+# Координатор, 24.09.2026 — сообщено в 3-й раз: «Реестр предписаний
+# РСК → Состояние → Снятые → Найдено: 0», хотя строки с «Устранено» =
+# «да»/дата РЕАЛЬНО существуют (16 на 24.09.2026). Прошлая правка
+# определяла «снято» ТОЛЬКО как структурное закрытие (отсутствие в
+# следующем акте) — при одном загруженном акте это всегда 0, определение
+# было неполным, не сам фильтр был сломан. Координатор, решение
+# 24.09.2026: нарушение «снято», если ЛИБО (а) структурно закрыто
+# (`not v.is_active` — существующая логика, не трогать), ЛИБО (б) в
+# `rsk_processing.resolved` стоит true («Устранено», слой 2 — это
+# структурированное булево поле формы отработки, не свободный текст и
+# не комментарий, использовать его не нарушает правило «закрытие не
+# парсится из комментариев»). Два слоя остаются раздельными в модели
+# (эта строка ничего не пишет и не читает иначе, чем раньше) —
+# объединяется только ПОКАЗЫВАЕМОЕ состояние, и только в одном месте:
+# везде, где раньше проверялось "not v.is_active"/"v.is_active" для
+# смысла "снято/активно" (не для смысла "нужно ли ещё структурно
+# закрыть", это отдельный, не тронутый вопрос — см. rsk_dashboard).
+RSK_VIOLATION_REMOVED_SQL = "(not v.is_active or coalesce(p.resolved, false))"
+
+
+def rsk_violation_is_removed(row):
+    """Тот же критерий, что RSK_VIOLATION_REMOVED_SQL, но над уже
+    прочитанной строкой (Python dict/Row), а не в SQL WHERE — используется
+    и там, и там, чтобы не завести второе, тихо разъезжающееся
+    определение «снято». row обязан иметь ключи is_active/resolved."""
+    return (not row["is_active"]) or bool(row.get("resolved"))
+
+
 def rsk_pseudo_status(row):
     """Статус для отображения — вычисляется, не хранится (докс: "статусы
     из [комментария] не выводить"; здесь то же самое, но из треков).
@@ -7074,8 +7102,15 @@ def rsk_pseudo_status(row):
     больше не может определяться исключительно им — иначе плитка
     навсегда встала бы в 0. Признак перенесён на трек «Проект»:
     невыполненный проектный трек — и есть ожидание корректировки ПД/РД;
-    старые строки с track_phys='fact' по-прежнему считаются сюда же."""
-    if not row["is_active"]:
+    старые строки с track_phys='fact' по-прежнему считаются сюда же.
+
+    Координатор, 24.09.2026 — «closed»/«Снято» теперь тот же критерий,
+    что и фильтр «Состояние» на /rsk (rsk_violation_is_removed()), а не
+    только структурное закрытие — иначе строка попадала бы в список
+    «Снятые», но её собственный бейдж статуса продолжал бы показывать
+    «В работе»/«Готово к снятию», что и было бы новым расхождением
+    «список vs факт» того же класса, что уже чинили раньше."""
+    if rsk_violation_is_removed(row):
         return "closed"
     if row["rejected"]:
         return "rejected"
@@ -7123,9 +7158,9 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
         where.append("coalesce(p.track_id, 'unknown') = %s")
         params.append(track_id_)
     if state == "active":
-        where.append("v.is_active")
+        where.append("not " + RSK_VIOLATION_REMOVED_SQL)
     elif state == "closed":
-        where.append("not v.is_active")
+        where.append(RSK_VIOLATION_REMOVED_SQL)
 
     rows = query(RSK_LIST_SELECT_SQL + " where " + " and ".join(where) + " order by v.sys_no desc", tuple(params))
     for r in rows:
@@ -7159,7 +7194,10 @@ def export_rsk_csv():
          RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
          RU_RSK_TRACK.get(r["track_id"], ""),
          r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]),
-         _csv_dmy(r["resolved_date"]) if r["resolved"] else "",
+         # Тот же формат, что и в таблице реестра (rsk_registry.html):
+         # дата, если она есть, иначе «да» (координатор, 24.09.2026 —
+         # CSV и экран не должны расходиться в том, что показывают).
+         (_csv_dmy(r["resolved_date"]) if r["resolved_date"] else "да") if r["resolved"] else "",
          "да" if r["is_repeat"] else "нет")
         for r in rows
     ]
@@ -7248,6 +7286,7 @@ def rsk_violation_detail(request: Request, sys_no: int):
                   ru_track=RU_RSK_TRACK,
                   status_key=rsk_pseudo_status({**(latest or {}), "is_active": v["is_active"],
                                                  "rejected": processing["rejected"] if processing else False,
+                                                 "resolved": processing["resolved"] if processing else False,
                                                  "track_phys": processing["track_phys"] if processing else "unknown",
                                                  "track_design": processing["track_design"] if processing else "unknown",
                                                  "track_id": processing["track_id"] if processing else "unknown"}),

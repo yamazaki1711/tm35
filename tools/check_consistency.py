@@ -376,6 +376,46 @@ def main_check():
         "прямой SQL", direct_resolved,
     )
 
+    # --- 11e. Координатор, 24.09.2026 (баг сообщён в 3-й раз) — «Снятые»
+    # на /rsk?state=closed были всегда 0, потому что «снято» считалось
+    # только структурным закрытием (нет во втором акте — при одном акте
+    # всегда 0). Новое определение — rsk_violation_is_removed() /
+    # RSK_VIOLATION_REMOVED_SQL в main.py: структурно ИЛИ resolved=true
+    # («Устранено», слой 2). Проверяем и то, что реестр реально фильтрует
+    # по этому правилу (HTTP, не повторный вызов той же функции), и что
+    # «Снятые» + «Активные» дают ровно total (полное дополнение, без
+    # пересечения и без пропуска).
+    rsk_removed_direct = m.query_one(
+        "select count(*) as n from rsk_violation v left join rsk_processing p on p.violation_id = v.id "
+        "where not v.is_active or coalesce(p.resolved, false)"
+    )["n"]
+    rsk_total = m.query_one("select count(*) as n from rsk_violation")["n"]
+    rsk_active_direct = rsk_total - rsk_removed_direct
+
+    rsk_closed_html = urllib.request.urlopen("http://localhost:8000/rsk?state=closed", timeout=15).read().decode("utf-8")
+    rsk_active_html = urllib.request.urlopen("http://localhost:8000/rsk?state=active", timeout=15).read().decode("utf-8")
+    found_re = re.compile(r"Найдено:\s*(\d+)")
+    closed_found_m = found_re.search(rsk_closed_html)
+    active_found_m = found_re.search(rsk_active_html)
+    rsk_closed_shown = int(closed_found_m.group(1)) if closed_found_m else None
+    rsk_active_shown = int(active_found_m.group(1)) if active_found_m else None
+
+    check(
+        "РСК «Снятые»: /rsk?state=closed («Найдено») vs прямой SQL (структурно ИЛИ Устранено)",
+        "/rsk?state=closed", rsk_closed_shown,
+        "прямой SQL", rsk_removed_direct,
+    )
+    check(
+        "РСК «Активные»: /rsk?state=active («Найдено») vs прямой SQL (НЕ снято)",
+        "/rsk?state=active", rsk_active_shown,
+        "прямой SQL", rsk_active_direct,
+    )
+    check(
+        "РСК: «Снятые» + «Активные» = всего нарушений (полное дополнение, без пересечения)",
+        "Снятые + Активные", (rsk_closed_shown or 0) + (rsk_active_shown or 0),
+        "всего в rsk_violation", rsk_total,
+    )
+
     # --- 11. Труба папок ИД — ТЗ №10, 23.09.2026, п.2 убрал трубу с
     # /dashboard (заменена «Потоком по вкладкам», см. проверку ниже),
     # осталась только на /id-folders — сравнивать больше не с чем на
