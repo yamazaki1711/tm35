@@ -34,11 +34,12 @@
 {% if attached %}
 <div class="table-wrap" style="margin-bottom:1.5rem;">
 <table class="data-table">
-  <thead><tr><th class="nowrap">№</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
+  <thead><tr><th class="nowrap">№</th><th class="nowrap">Состояние</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for a in attached %}
     <tr>
       <td class="nowrap"><a href="/rsk/violation/{{ a.sys_no }}">№{{ a.sys_no }}</a></td>
+      <td class="nowrap"><span class="badge {{ 'badge-ok' if a.removed else 'badge-neutral' }}">{{ 'Снято' if a.removed else 'Активно' }}</span></td>
       <td class="wrap rsk-content-cell" data-full="{{ a.content or '' }}"><span class="rsk-sentence-clip">{{ a.content or '—' }}</span></td>
       <td class="nowrap">
         <form method="post" action="/api/id-row-rsk-link/{{ a.link_id }}/detach" style="display:inline">
@@ -66,11 +67,12 @@
 {% if candidates %}
 <div class="table-wrap">
 <table class="data-table">
-  <thead><tr><th class="nowrap">№</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
+  <thead><tr><th class="nowrap">№</th><th class="nowrap">Состояние</th><th>Содержание</th><th class="nowrap"></th></tr></thead>
   <tbody>
     {% for c in candidates %}
     <tr>
       <td class="nowrap">№{{ c.sys_no }}</td>
+      <td class="nowrap"><span class="badge {{ 'badge-ok' if c.removed else 'badge-neutral' }}">{{ 'Снято' if c.removed else 'Активно' }}</span></td>
       <td class="wrap rsk-content-cell" data-full="{{ c.content or '' }}"><span class="rsk-sentence-clip">{{ c.content or '—' }}</span></td>
       <td class="nowrap">
         <form method="post" action="/api/id-row-rsk/{{ row_id }}/attach" style="display:inline">

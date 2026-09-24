@@ -335,11 +335,17 @@ def main_check():
     )
 
     # --- 11b. "Активных нарушений": /rsk/dashboard (compute_rsk_dashboard_stats)
-    # vs прямой SQL по is_active — независимая проверка того же числа.
+    # vs прямой SQL — координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.1):
+    # пул тайлов больше не голый is_active, а тот же критерий «не снято»,
+    # что и реестр (rsk_violation_is_removed()) — прямой SQL переписан
+    # заново тем же правилом, не повторным вызовом функции main.py.
     rsk_dash_stats = m.compute_rsk_dashboard_stats()
-    direct_active = m.query_one("select count(*) as n from rsk_violation where is_active")["n"]
+    direct_active = m.query_one(
+        "select count(*) as n from rsk_violation v left join rsk_processing p on p.violation_id = v.id "
+        "where not (not v.is_active or coalesce(p.resolved, false))"
+    )["n"]
     check(
-        "Активных нарушений РСК: /rsk/dashboard vs прямой SQL",
+        "Активных нарушений РСК: /rsk/dashboard vs прямой SQL (не снято — структурно и по «Устранено»)",
         "/rsk/dashboard", rsk_dash_stats["tiles"]["total_active"],
         "прямой SQL", direct_active,
     )
@@ -348,11 +354,13 @@ def main_check():
     # больше не определяется одним track_phys='fact' (значение убрано из
     # выбора в «Физика»), а треком «Проект» — плюс легаси-строки, у
     # которых track_phys='fact' ещё сохранился. Прямой SQL — та же логика,
-    # переписанная заново, чтобы проверка не подтверждала сама себя.
+    # переписанная заново, чтобы проверка не подтверждала сама себя. Пул —
+    # «не снято» (см. 11b), не голый is_active, координатор 24.09.2026.
     direct_needs_rd = m.query_one(f"""
         select count(*) as n
         from rsk_violation v left join rsk_processing p on p.violation_id = v.id
-        where v.is_active and (coalesce(p.track_design,'unknown') = 'not_done'
+        where not (not v.is_active or coalesce(p.resolved, false))
+            and (coalesce(p.track_design,'unknown') = 'not_done'
             or coalesce(p.track_phys,'unknown') = 'fact')
     """)["n"]
     check(
@@ -361,17 +369,19 @@ def main_check():
         "прямой SQL", direct_needs_rd,
     )
 
-    # --- 11d. ТЗ Якименко А.И., 16.09.2026, §3 — «Устранено» (слой 2,
-    # rsk_processing.resolved) не должно совпадать по смыслу со
-    # структурным «Снято» (rsk_violation.is_active=false) — независимая
-    # прямая проверка тайла и явная проверка, что оба состояния умеют
-    # расходиться (устранено=true у ещё активного нарушения — не ошибка).
+    # --- 11d. ТЗ Якименко А.И., 16.09.2026, §3 → координатор 24.09.2026
+    # (KNOWN_ISSUES.md §66, п.1): плитка «Устранено» больше не «resolved
+    # среди ещё активных» (при новом пуле «не снято» это тождественно 0
+    # — resolved теперь ВСЕГДА снято) — это прямой дубль критерия «снято»
+    # целиком (структурно ИЛИ «Устранено»), специально, чтобы
+    # total_active + resolved = весь реестр = «Активные» + «Снятые» на
+    # /rsk. Прямая проверка — тот же критерий, переписанный заново.
     direct_resolved = m.query_one(
-        "select count(*) as n from rsk_violation v join rsk_processing p on p.violation_id = v.id "
-        "where v.is_active and p.resolved"
+        "select count(*) as n from rsk_violation v left join rsk_processing p on p.violation_id = v.id "
+        "where not v.is_active or coalesce(p.resolved, false)"
     )["n"]
     check(
-        "«Устранено» (resolved): /rsk/dashboard vs прямой SQL",
+        "«Устранено» (resolved = весь «снято»): /rsk/dashboard vs прямой SQL",
         "/rsk/dashboard", rsk_dash_stats["tiles"]["resolved"],
         "прямой SQL", direct_resolved,
     )
@@ -414,6 +424,50 @@ def main_check():
         "РСК: «Снятые» + «Активные» = всего нарушений (полное дополнение, без пересечения)",
         "Снятые + Активные", (rsk_closed_shown or 0) + (rsk_active_shown or 0),
         "всего в rsk_violation", rsk_total,
+    )
+
+    # --- 11f. Координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.1, follow-up)
+    # — «Обзор РСК» (шесть тайлов, compute_rsk_dashboard_stats()) должен
+    # считать «снято» ТЕМ ЖЕ критерием, что и реестр /rsk, не отдельным
+    # пулом is_active. Проверяем через отрендеренный HTML реестра (не
+    # повторный вызов той же Python-функции) — «Активных замечаний» на
+    # обзоре обязан совпасть с «Найдено» на /rsk?state=active, «Устранено»
+    # — с /rsk?state=closed.
+    check(
+        "РСК, тайл «Активных замечаний» (обзор) vs /rsk?state=active («Найдено»)",
+        "/rsk/dashboard, tiles.total_active", rsk_dash_stats["tiles"]["total_active"],
+        "/rsk?state=active", rsk_active_shown,
+    )
+    check(
+        "РСК, тайл «Устранено» (обзор) vs /rsk?state=closed («Найдено»)",
+        "/rsk/dashboard, tiles.resolved", rsk_dash_stats["tiles"]["resolved"],
+        "/rsk?state=closed", rsk_closed_shown,
+    )
+
+    # --- 11g. Координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.1, follow-up)
+    # — «Разрез по ответственным» переведён на тот же пул «не снято», что
+    # и тайл «Активных замечаний» (11f). Проверка НЕ суммирует
+    # by_responsible[].n напрямую — 46 нарушений на 24.09.2026 имеют
+    # больше одного ответственного (198 строк rsk_processing_responsible
+    # на 152 нарушения), сырая сумма n по строкам таблицы «по
+    # ответственным» законно больше числа нарушений (каждое считается
+    # один раз на каждого своего ответственного) — это НЕ двойной счёт
+    # одного и того же нарушения дважды в одной и той же строке, а
+    # реальная нагрузка на разных людей одним и тем же нарушением.
+    # Тождество, которое обязано сойтись без исключений: число РАЗНЫХ
+    # активных нарушений хотя бы с одним ответственным + число активных
+    # нарушений без единого ответственного = «Активных замечаний».
+    rsk_with_responsible = m.query_one(f"""
+        select count(distinct v.id) as n
+        from rsk_violation v
+        join rsk_processing p on p.violation_id = v.id
+        join rsk_processing_responsible pr on pr.processing_id = p.id
+        where not (not v.is_active or coalesce(p.resolved, false))
+    """)["n"]
+    check(
+        "РСК «по ответственным»: нарушений хотя бы с одним ответственным + «без ответственного» = «Активных замечаний»",
+        "с ответственным + без", rsk_with_responsible + rsk_dash_stats["no_responsible"],
+        "тайл «Активных замечаний»", rsk_dash_stats["tiles"]["total_active"],
     )
 
     # --- 11. Труба папок ИД — ТЗ №10, 23.09.2026, п.2 убрал трубу с

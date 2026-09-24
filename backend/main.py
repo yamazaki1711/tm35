@@ -3947,11 +3947,21 @@ def compute_id_row_rsk_link_data(row_id, q=""):
     )
     if not row:
         return None
+    # Координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.2) — «Прикрепить»
+    # по-прежнему предлагает и уже «Снятые» нарушения: кандидат-фильтр
+    # ниже намеренно НЕ переведён на rsk_violation_is_removed() —
+    # решено координатором явно, привязка снятого нарушения к разделу
+    # ИД законна. Единственное изменение — статус-бейдж «Снято»/
+    # «Активно» в обеих таблицах (прикреплённые и кандидаты), тем же
+    # критерием, что и реестр, чтобы ПТО видел состояние, не гадал по
+    # номеру акта.
     attached = query(
         LATEST_RSK_ACT_ITEM_CTE + """
-        select lk.id as link_id, v.sys_no, li.content
+        select lk.id as link_id, v.sys_no, li.content,
+               v.is_active, coalesce(p.resolved, false) as resolved
         from id_row_rsk_link lk
         join rsk_violation v on v.id = lk.violation_id
+        left join rsk_processing p on p.violation_id = v.id
         left join latest_act_item li on li.violation_id = v.id
         where lk.row_id = %(row_id)s
         order by v.sys_no
@@ -3961,8 +3971,10 @@ def compute_id_row_rsk_link_data(row_id, q=""):
     q_val = q.strip()
     candidates = query(
         LATEST_RSK_ACT_ITEM_CTE + """
-        select v.id as violation_id, v.sys_no, li.content
+        select v.id as violation_id, v.sys_no, li.content,
+               v.is_active, coalesce(p.resolved, false) as resolved
         from rsk_violation v
+        left join rsk_processing p on p.violation_id = v.id
         left join latest_act_item li on li.violation_id = v.id
         where v.is_active
           and v.id not in (select violation_id from id_row_rsk_link where row_id = %(row_id)s)
@@ -3972,6 +3984,10 @@ def compute_id_row_rsk_link_data(row_id, q=""):
         """,
         {"row_id": row_id, "q": q_val, "qlike": f"%{q_val}%"},
     )
+    for r in attached:
+        r["removed"] = rsk_violation_is_removed(r)
+    for r in candidates:
+        r["removed"] = rsk_violation_is_removed(r)
     label = row["section_label"] or row["construction_label"] or f"#{row['id']}"
     return {"row_id": row["id"], "label": label, "tab_label": row["tab_label"],
             "attached": attached, "candidates": candidates, "q": q_val}
@@ -7217,33 +7233,48 @@ def compute_rsk_dashboard_stats():
     # ТЗ Якименко А.И., 16.09.2026 — шесть плиток «Обзора РСК», один и тот
     # же расчёт на /rsk/dashboard и на /dashboard, второй источник не
     # заводится. `needs_rd` — см. rsk_pseudo_status(), тот же принцип
-    # (трек «Проект», плюс легаси track_phys='fact'). `resolved` — новая
-    # плитка «Устранено», слой 2 (rsk_processing.resolved), НЕ
-    # is_active/closed_in_act_id — правило двух слоёв не меняется.
+    # (трек «Проект», плюс легаси track_phys='fact').
+    #
+    # Координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.1) — прошлый заход
+    # оставил пул этих плиток на голом `v.is_active`, что разошлось с
+    # реестром (152 вместо 136) и нарушало прямое указание «every
+    # consumer must use rsk_violation_is_removed()». Пул «активных» для
+    # всех пяти рабочих плиток — теперь тот же критерий, что и реестр:
+    # NOT (структурно закрыто ИЛИ «Устранено»). Плитка «Устранено» —
+    # больше не «resolved среди ещё активных» (это значение при новом
+    # пуле было бы тождественно 0 — resolved теперь ВСЕГДА исключено из
+    # пула), а прямой дубль критерия «снято» — специально, чтобы
+    # total_active + resolved = весь реестр = «Активные» + «Снятые» на
+    # /rsk, число в число.
     tiles = query_one(f"""
         select
-            count(*) filter (where v.is_active) as total_active,
-            count(*) filter (where v.is_active and coalesce(p.track_phys,'unknown') in ('done','not_required')
+            count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})) as total_active,
+            count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})
+                and coalesce(p.track_phys,'unknown') in ('done','not_required')
                 and coalesce(p.track_design,'unknown') in ('done','not_required')
                 and coalesce(p.track_id,'unknown') in ('done','not_required')) as ready_to_close,
-            count(*) filter (where v.is_active and cc.code = 'id_priniatie') as blocked_by_id,
-            count(*) filter (where v.is_active and (coalesce(p.track_design,'unknown') = 'not_done'
+            count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL}) and cc.code = 'id_priniatie') as blocked_by_id,
+            count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})
+                and (coalesce(p.track_design,'unknown') = 'not_done'
                 or coalesce(p.track_phys,'unknown') = 'fact')) as needs_rd,
-            count(*) filter (where v.is_active and coalesce(p.rejected, false)) as rejected,
-            count(*) filter (where v.is_active and coalesce(p.resolved, false)) as resolved
+            count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL}) and coalesce(p.rejected, false)) as rejected,
+            count(*) filter (where {RSK_VIOLATION_REMOVED_SQL}) as resolved
         {RSK_LIST_BASE_SQL}
     """) or {}
 
-    by_responsible = query("""
+    # «По ответственным» и «без ответственного» — тот же пул, что и
+    # плитка «Активных замечаний» (нагрузка по ещё не снятым нарушениям,
+    # координатор 24.09.2026, KNOWN_ISSUES.md §66, п.1).
+    by_responsible = query(f"""
         select r.id, r.name, count(*) as n
         from rsk_processing_responsible pr
         join rsk_responsible r on r.id = pr.responsible_id
         join rsk_processing p on p.id = pr.processing_id
-        join rsk_violation v on v.id = p.violation_id and v.is_active
+        join rsk_violation v on v.id = p.violation_id and not ({RSK_VIOLATION_REMOVED_SQL})
         group by r.id, r.name order by n desc
     """)
     no_responsible = query_one(f"""
-        select count(*) as n {RSK_LIST_BASE_SQL} where v.is_active and p.id is null
+        select count(*) as n {RSK_LIST_BASE_SQL} where not ({RSK_VIOLATION_REMOVED_SQL}) and p.id is null
     """) or {"n": 0}
 
     return {"tiles": tiles, "by_responsible": by_responsible, "no_responsible": no_responsible["n"]}
