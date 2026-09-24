@@ -4428,10 +4428,38 @@ LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE = """
 
 
 def compute_id_progress_tiles():
-    """Блок 1 задачи 4 — шесть плиток. Состав плиток не был в кратком
-    изложении промпта (полное ТЗ не дошло) — выбран самостоятельно как
-    осмысленная сводка по связкам раздел+вид работы; если задумывался
-    другой состав — заменить одним местом, см. NIGHT_RUN_20260909.md."""
+    """Плитки «Прогресс по видам работ» — единственный источник для
+    /id-progress и (ТЗ №11, 24.09.2026, блок А) для блока «Обзор ИД» на
+    /dashboard, партиал `_id_progress_tiles.html` использует эту же
+    функцию на обеих страницах, второй запрос не заводится.
+
+    ТЗ №11, блок А3 — состав и подписи плиток:
+    1. total_pairs → «АОСР (видов работ)» — логика счёта НЕ менялась
+       (координатор подтвердил 3882 связок раздел+вид работы с
+       выставленным статусом на 24.09.2026 — расхождение с текущим
+       живым числом это дрейф данных за сутки, не другая формула).
+    2. rows_touched/total_rows_all — плитка «Разделов хотя бы с одной
+       записью» УБРАНА целиком (разделы считаются на «Разделы ИД», не
+       здесь) — поля оставлены в возвращаемом словаре только как
+       технический остаток для обратной совместимости, шаблон их
+       больше не читает.
+    3-5. signed/pencil/in_rsk_cycle — подписи «Подписано»/«Подписано в
+       карандаше»/«На проверке в РСК» (было «В цикле РСК» — переименовано
+       ТЗ №11 для единообразия терминологии ИД), логика счёта не менялась.
+    6. «Не приступали» (было «Стопперы», считало по s.code in ('Нет
+       проектного решения','Замечания к площадке') — не совпадало с
+       ожиданием координатора: 126 вместо 1050). Новая формула — ЧИСТАЯ
+       арифметика над уже посчитанными тайлами 1/3/4/5, без отдельного
+       SQL-фильтра: total_pairs − signed − pencil − in_rsk_cycle.
+       Тождество «3+4+5+6 = 1» верно ПО ПОСТРОЕНИЮ (не проверяется
+       отдельно, обеспечивается самой формулой) — остаётся всё, что не
+       подписано, не в карандаше и не в цикле РСК: «не приступали»,
+       «есть в эл.виде», «нет проектного решения», «замечания к
+       площадке» — разбор по фактическим кодам статуса см. run log
+       24.09.2026, §А5 (не выводится на экран, только в отчёт).
+       Понятие «стоппер» этой плиткой больше не используется — если
+       где-то ещё в проекте (СМР стоп-факторы и т.п.) есть свой смысл
+       этого слова, эта правка его не касается."""
     row = query_one(
         LATEST_ID_FORM_ENTRY_BY_WORKTYPE_CTE
         + """
@@ -4440,8 +4468,7 @@ def compute_id_progress_tiles():
             count(distinct l.row_id) as rows_touched,
             count(*) filter (where s.code = 'Подписано') as signed,
             count(*) filter (where s.code = 'Подписано в карандаше') as pencil,
-            count(*) filter (where s.code = any(%(rsk)s)) as in_rsk_cycle,
-            count(*) filter (where s.code in ('Нет проектного решения', 'Замечания к площадке')) as stoppers
+            count(*) filter (where s.code = any(%(rsk)s)) as in_rsk_cycle
         from latest_by_worktype l
         join id_form_status s on s.id = l.status_id
         """,
@@ -4451,6 +4478,7 @@ def compute_id_progress_tiles():
         "select count(*) as n from id_form_row r join id_form_tab t on t.id=r.tab_id "
         "where t.code not in ('opv','n')"
     )["n"]
+    not_started = row["total_pairs"] - row["signed"] - row["pencil"] - row["in_rsk_cycle"]
     return {
         "total_pairs": row["total_pairs"],
         "rows_touched": row["rows_touched"],
@@ -4458,7 +4486,7 @@ def compute_id_progress_tiles():
         "signed": row["signed"],
         "pencil": row["pencil"],
         "in_rsk_cycle": row["in_rsk_cycle"],
-        "stoppers": row["stoppers"],
+        "not_started": not_started,
     }
 
 
@@ -5776,11 +5804,17 @@ def id_folder_detail_page(request: Request, folder_id: int):
     available_by_tab = {}
     for r in available:
         available_by_tab.setdefault(r["tab_label"], []).append(r)
+    # ТЗ №11, 24.09.2026, блок Б3 — «Подписание» и «КС-2» слиты в одну
+    # дату; для карточек, заведённых ДО слияния, эти две даты в БД могут
+    # расходиться (см. run log, разбор §Б3) — координатор: показывать
+    # КС-2, если она есть, иначе дату подписания. БД не трогаем, только
+    # выбор, что показать в форме/подписи этой карточки.
+    sign_ks2_shown_date = folder["ks2_date"] or folder["signed_date"]
     return render(request, "id_folder_detail.html", "id-folders",
                   folder=folder, rows_in_folder=rows_in_folder,
                   available_by_tab=available_by_tab, rsk_signers=RSK_SIGNERS,
                   stage=id_folder_stage(folder), stage_label=ID_FOLDER_STAGE_LABELS[id_folder_stage(folder)],
-                  folder_cost=id_folder_cost(folder))
+                  folder_cost=id_folder_cost(folder), sign_ks2_shown_date=sign_ks2_shown_date)
 
 
 @app.post("/api/id-folder/{folder_id}/rows")
@@ -5877,88 +5911,20 @@ def api_id_folder_date(request: Request, folder_id: int, folder_date: str = Form
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
-@app.post("/api/id-folder/{folder_id}/sdo")
-def api_id_folder_sdo(request: Request, folder_id: int,
-                       sdo_transfer_date: str = Form(...), sdo_signer_name: str = Form(...)):
-    if not has_permission(request.state.user, "id-folders:submit"):
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
-    if not folder:
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
-    back_url = f"/id-folders/{folder_id}"
-    date_val = _parse_date(sdo_transfer_date)
-    if not date_val:
-        return RedirectResponse(
-            url=back_url + "?err=" + urllib.parse.quote("Дата передачи в СДО указана некорректно."), status_code=303
-        )
-    if sdo_signer_name not in RSK_SIGNERS:
-        return RedirectResponse(
-            url=back_url + "?err=" + urllib.parse.quote("Недопустимый подписант реестра передачи."), status_code=303
-        )
-    run_in_transaction(lambda cur: cur.execute(
-        "update id_folder set sdo_transfer_date=%s, sdo_signer_name=%s where id=%s",
-        (date_val, sdo_signer_name, folder_id),
-    ))
-    # Редирект в реестр («Смотреть»), не назад на карточку папки (решение
-    # координатора 04.09.2026) — так видно и подтверждение, и результат
-    # в общем списке одним действием.
-    ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» передана в СДО {_csv_dmy(date_val)}.")
-    return RedirectResponse(url=f"/id-folders/registry?ok={ok_msg}", status_code=303)
-
-
-# ── Ночной прогон 09-10.09.2026, задача 3: переходы по стадиям папки
-# после "Передана в СДО" — Проверка → Подписана → КС-2. Даты
-# принимаются и задним числом, тот же принцип, что и у /sdo выше —
-# для папок, собираемых по уже прошедшим стадии разделам с начала
-# стройки. Строгий порядок стадий НЕ проверяется (можно проставить
-# дату подписания раньше, чем дату начала проверки, если так было в
-# жизни) — форма честно отражает, что человек ввёл, а не навязывает
-# последовательность, которой сама папка могла не следовать. ──
-
-@app.post("/api/id-folder/{folder_id}/check-start")
-def api_id_folder_check_start(request: Request, folder_id: int, check_start_date: str = Form(...)):
-    if not has_permission(request.state.user, "id-folders:submit"):
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
-    if not folder:
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
-    back_url = f"/id-folders/{folder_id}"
-    date_val = _parse_date(check_start_date)
-    if not date_val:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата начала проверки указана некорректно."), status_code=303)
-    run_in_transaction(lambda cur: cur.execute(
-        "update id_folder set check_start_date=%s where id=%s", (date_val, folder_id),
-    ))
-    ok_msg = urllib.parse.quote(f"Проверка папки «{folder['name']}» начата {_csv_dmy(date_val)}.")
-    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
-
-
-@app.post("/api/id-folder/{folder_id}/sign")
-def api_id_folder_sign(request: Request, folder_id: int,
-                        signed_date: str = Form(...), signed_by: str = Form(...)):
-    if not has_permission(request.state.user, "id-folders:submit"):
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
-    if not folder:
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
-    back_url = f"/id-folders/{folder_id}"
-    date_val = _parse_date(signed_date)
-    if not date_val:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата подписания указана некорректно."), status_code=303)
-    # Таблица решений ночного прогона: подписант папки — тот же список,
-    # что и подписант реестра передачи (RSK_SIGNERS).
-    if signed_by not in RSK_SIGNERS:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Недопустимый подписант."), status_code=303)
-    run_in_transaction(lambda cur: cur.execute(
-        "update id_folder set signed_date=%s, signed_by=%s where id=%s", (date_val, signed_by, folder_id),
-    ))
-    ok_msg = urllib.parse.quote(f"Папка «{folder['name']}» подписана {_csv_dmy(date_val)}.")
-    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
-
-
-@app.post("/api/id-folder/{folder_id}/ks2")
-def api_id_folder_ks2(request: Request, folder_id: int,
-                       ks2_date: str = Form(...), ks2_no: str = Form(...)):
+# ТЗ №11, 24.09.2026, блок Б3 — «Передача в СДО» и «Проверка» убраны из
+# карточки папки (только форма, столбцы sdo_transfer_date/sdo_signer_name/
+# check_start_date остаются в БД нетронутыми — см. run log, §Б0/Б1/Б2 про
+# каждого потребителя). «Подписание» и «КС-2» слиты в одну процедуру —
+# ТЗ №10 уже приняло решение «подписание раздела и оформление его КС-2 —
+# одно действие»; здесь то же самое для папки в целом. Один эндпоинт
+# пишет ОБЕ колонки (signed_date и ks2_date) одной и той же датой — не
+# может остаться двух дат, которые расходятся, для новых/изменённых
+# записей. Старые /sdo, /check-start, /sign, /ks2, /smeta убраны —
+# единственные вызовы шли из этой же карточки, дальше не используются
+# нигде (проверено grep по шаблонам).
+@app.post("/api/id-folder/{folder_id}/sign-ks2")
+def api_id_folder_sign_ks2(request: Request, folder_id: int,
+                            ks2_date: str = Form(...), ks2_no: str = Form(...), signed_by: str = Form(...)):
     if not has_permission(request.state.user, "id-folders:submit"):
         return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
     folder = query_one("select id, name from id_folder where id=%s", (folder_id,))
@@ -5970,42 +5936,15 @@ def api_id_folder_ks2(request: Request, folder_id: int,
         return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Дата КС-2 указана некорректно."), status_code=303)
     if not ks2_no.strip():
         return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Номер КС-2 обязателен."), status_code=303)
-    # Таблица решений ночного прогона: КС-2 в контуре ИД — только дата и
-    # номер на папке, связей с другими сущностями (акты КС-2 подрядчика
-    # и т.п.) не заводим.
+    if signed_by not in RSK_SIGNERS:
+        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Недопустимый подписант."), status_code=303)
     run_in_transaction(lambda cur: cur.execute(
-        "update id_folder set ks2_date=%s, ks2_no=%s where id=%s", (date_val, ks2_no.strip(), folder_id),
+        "update id_folder set signed_date=%s, signed_by=%s, ks2_date=%s, ks2_no=%s where id=%s",
+        (date_val, signed_by, date_val, ks2_no.strip(), folder_id),
     ))
-    ok_msg = urllib.parse.quote(f"КС-2 №{ks2_no.strip()} по папке «{folder['name']}» оформлен {_csv_dmy(date_val)}.")
-    return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
-
-
-@app.post("/api/id-folder/{folder_id}/smeta")
-def api_id_folder_smeta(request: Request, folder_id: int, amount_smeta_rub: str = Form(...)):
-    if not has_permission(request.state.user, "id-folders:submit"):
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Нет доступа к сборке папок."), status_code=303)
-    folder = query_one("select id, name, signed_date from id_folder where id=%s", (folder_id,))
-    if not folder:
-        return RedirectResponse(url="/id-folders?err=" + urllib.parse.quote("Папка не найдена."), status_code=303)
-    back_url = f"/id-folders/{folder_id}"
-    # "Доступен с момента подписания" (задача 3) — не только скрыт в
-    # форме, проверяется и на сервере, иначе прямой POST в обход формы
-    # мог бы занести сметную стоимость до подписания.
-    if not folder["signed_date"]:
-        return RedirectResponse(
-            url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания вводится только после подписания папки."),
-            status_code=303,
-        )
-    try:
-        amt = float(amount_smeta_rub.replace(",", "."))
-    except ValueError:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания указана некорректно."), status_code=303)
-    if amt <= 0:
-        return RedirectResponse(url=back_url + "?err=" + urllib.parse.quote("Стоимость после подписания должна быть больше нуля."), status_code=303)
-    run_in_transaction(lambda cur: cur.execute(
-        "update id_folder set amount_smeta_rub=%s where id=%s", (amt, folder_id),
-    ))
-    ok_msg = urllib.parse.quote(f"Стоимость после подписания папки «{folder['name']}» сохранена: {_ru_money(amt)} ₽ с НДС.")
+    ok_msg = urllib.parse.quote(
+        f"Папка «{folder['name']}» подписана, КС-2 №{ks2_no.strip()} от {_csv_dmy(date_val)}."
+    )
     return RedirectResponse(url=f"{back_url}?ok={ok_msg}", status_code=303)
 
 
@@ -6485,13 +6424,12 @@ def home_v2(request: Request):
     evm = get_evm_data()
     rsk_dash = compute_rsk_dashboard_stats()
     folder_stats = compute_id_folder_stats()
-    # ТЗ Якименко А.И. №10, 23.09.2026, п.2 — труба «Выполнение» убрана из
-    # «Обзора ИД», на её месте «Поток по вкладкам» с /id-progress. ТА ЖЕ
-    # функция (compute_id_progress_stream()), не отдельный запрос — числа
-    # обязаны совпадать буквально, не просто «похоже». Партиал
-    # _id_progress_stream.html (та же разметка, что на /id-progress)
-    # ожидает переменную `stream` — то же имя в обоих шаблонах.
-    stream = compute_id_progress_stream()
+    # ТЗ №11, 24.09.2026, блок А — «Поток по вкладкам» (ТЗ №10) убран с
+    # /dashboard, на его месте плитки «Прогресс по видам работ» с
+    # /id-progress. ТА ЖЕ функция (compute_id_progress_tiles()), не
+    # отдельный запрос. Партиал _id_progress_tiles.html ожидает
+    # переменную `tiles` — то же имя, что и на /id-progress.
+    tiles = compute_id_progress_tiles()
 
     # ТЗ Якименко А.И., 15.09.2026: тайл «Активных ИЗМ (ДПР)» вернулся в
     # навигационную строку блока «Обзор ИД» — то же выражение, что уже
@@ -6511,7 +6449,7 @@ def home_v2(request: Request):
         crit=crit, evm=evm,
         rsk_dash=rsk_dash,
         folder_stats=folder_stats,
-        stream=stream,
+        tiles=tiles,
         change_stats=change_stats_row,
     )
 

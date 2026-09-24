@@ -2,33 +2,7 @@
 {% block content %}
 <h1>График ИД — прогресс по видам работ</h1>
 
-<div class="kpi-row kpi-small">
-  <div class="kpi">
-    <div class="kpi-num">{{ tiles.total_pairs }}</div>
-    <div class="kpi-label">Связок раздел+вид работы с записью</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num">{{ tiles.rows_touched }}</div>
-    <div class="kpi-label">Разделов хотя бы с одной записью</div>
-    <div class="kpi-sub">из {{ tiles.total_rows_all }} разделов всего</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num ok">{{ tiles.signed }}</div>
-    <div class="kpi-label">Подписано</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num warn">{{ tiles.pencil }}</div>
-    <div class="kpi-label">Подписано в карандаше</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num warn">{{ tiles.in_rsk_cycle }}</div>
-    <div class="kpi-label">В цикле РСК</div>
-  </div>
-  <div class="kpi">
-    <div class="kpi-num {{ 'danger' if tiles.stoppers > 0 else '' }}">{{ tiles.stoppers }}</div>
-    <div class="kpi-label">Стопперы</div>
-  </div>
-</div>
+{% include "_id_progress_tiles.html" %}
 
 {% include "_id_progress_stream.html" %}
 

@@ -1,0 +1,33 @@
+{# Партиал «Прогресс по видам работ» — ТЗ №11, 24.09.2026, блок А:
+   вынесен из id_progress.html, чтобы /dashboard («Обзор ИД») и
+   /id-progress показывали ОДНУ и ту же разметку над ОДНОЙ и той же
+   функцией (compute_id_progress_tiles()), не два независимо
+   написанных куска HTML над одним запросом. Ожидает переменную
+   `tiles` в контексте включающего шаблона. Состав плиток и подписи —
+   по ТЗ №11: «Разделов хотя бы с одной записью» убрана целиком
+   (разделы считаются на «Разделы ИД»), «Стопперы» заменена на
+   «Не приступали» (та же арифметика, что compute_id_progress_tiles()
+   уже строит: тайл1 − тайл3 − тайл4 − тайл5), «В цикле РСК»
+   переименована в «На проверке в РСК». #}
+<div class="kpi-row kpi-small">
+  <div class="kpi">
+    <div class="kpi-num">{{ tiles.total_pairs }}</div>
+    <div class="kpi-label">АОСР (видов работ)</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num ok">{{ tiles.signed }}</div>
+    <div class="kpi-label">Подписано</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.pencil }}</div>
+    <div class="kpi-label">Подписано в карандаше</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num warn">{{ tiles.in_rsk_cycle }}</div>
+    <div class="kpi-label">На проверке в РСК</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-num {{ 'danger' if tiles.not_started > 0 else '' }}">{{ tiles.not_started }}</div>
+    <div class="kpi-label">Не приступали</div>
+  </div>
+</div>

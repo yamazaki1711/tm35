@@ -523,26 +523,48 @@ def main_check():
         tolerance=0.01,
     )
 
-    # ИД: «Поток по вкладкам» — ТЗ №10, п.2 — тот же партиал
-    # (_id_progress_stream.html) над той же функцией
-    # (compute_id_progress_stream()) на /dashboard и на /id-progress,
-    # числа обязаны совпадать буквально построчно, не просто «похоже».
-    stream_bar_re = re.compile(
-        r'<div class="bar-label">([^<]+)</div>.*?<div class="bar-value nowrap">([^<]+)</div>', re.S
-    )
-    dash_stream_rows = stream_bar_re.findall(dashboard_html)
-    progress_stream_rows = stream_bar_re.findall(id_progress_html)
-    check(
-        "«Поток по вкладкам»: число строк на /dashboard vs /id-progress",
-        "/dashboard", len(dash_stream_rows),
-        "/id-progress", len(progress_stream_rows),
-    )
-    for (dash_label, dash_val), (prog_label, prog_val) in zip(dash_stream_rows, progress_stream_rows):
-        check(
-            f"«Поток по вкладкам», вкладка «{dash_label}»: /dashboard vs /id-progress",
-            "/dashboard", f"{dash_label}: {dash_val}",
-            "/id-progress", f"{prog_label}: {prog_val}",
+    # ИД: «Прогресс по видам работ» — ТЗ №11, 24.09.2026, блок А — «Поток
+    # по вкладкам» (ТЗ №10) убран с /dashboard, на его месте тот же
+    # партиал (_id_progress_tiles.html) над той же функцией
+    # (compute_id_progress_tiles()), что и на /id-progress — сверяем все
+    # пять плиток тайл-в-тайл на отрендеренном HTML.
+    id_progress_tile_labels = [
+        "АОСР (видов работ)", "Подписано", "Подписано в карандаше",
+        "На проверке в РСК", "Не приступали",
+    ]
+    id_progress_tile_values = {}
+    for label in id_progress_tile_labels:
+        pattern = re.compile(
+            r'<div class="kpi-num[^"]*">([^<]+)</div>\s*<div class="kpi-label">' + re.escape(label) + r"</div>"
         )
+        dash_m = pattern.search(dashboard_html)
+        prog_m = pattern.search(id_progress_html)
+        dash_v = int(dash_m.group(1)) if dash_m else None
+        prog_v = int(prog_m.group(1)) if prog_m else None
+        id_progress_tile_values[label] = dash_v
+        check(
+            f"«Прогресс по видам работ», плитка «{label}»: /dashboard vs /id-progress",
+            "/dashboard", dash_v,
+            "/id-progress", prog_v,
+        )
+
+    # ИД: «Не приступали» = «АОСР» − «Подписано» − «Подписано в
+    # карандаше» − «На проверке в РСК» — тождество по построению
+    # (compute_id_progress_tiles() считает шестую плитку именно так), но
+    # проверяется и на отрендеренном HTML — ловит будущую правку, которая
+    # тихо сломает формулу в шаблоне, не только в Python.
+    not_started_computed = (
+        id_progress_tile_values["АОСР (видов работ)"]
+        - id_progress_tile_values["Подписано"]
+        - id_progress_tile_values["Подписано в карандаше"]
+        - id_progress_tile_values["На проверке в РСК"]
+        if None not in id_progress_tile_values.values() else None
+    )
+    check(
+        "ИД: «Не приступали» = «АОСР» − «Подписано» − «Подписано в карандаше» − «На проверке в РСК» (на /dashboard)",
+        "пересчитано из тайлов", not_started_computed,
+        "тайл «Не приступали»", id_progress_tile_values["Не приступали"],
+    )
 
     # РСК: ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, ОДИНАКОВЫЕ
     # подпись и число на /dashboard и /rsk/dashboard (было — разные
@@ -661,18 +683,18 @@ def main_check():
     )
 
     # Координатор, 21.09.2026, задание про легенду «Потока по вкладкам»:
-    # три числа (подписано/в цикле РСК/остальное) на /id-progress и
-    # плитка «Связок раздел+вид работы с записью» наверху той же
-    # страницы считаются РАЗНЫМИ запросами (compute_id_progress_stream()
-    # против compute_id_progress_tiles()) — до сих пор ничего не
-    # проверяло, что они говорят об одном и том же. На 21.09.2026
-    # совпадают (2872=2872) — проверка ловит расхождение, если оно
-    # появится позже, не переоткрывает уже закрытый вопрос сейчас.
+    # три числа (подписано/на проверке в РСК/остальное, подписи ТЗ №11) на
+    # /id-progress и плитка «АОСР (видов работ)» (была «Связок раздел+вид
+    # работы с записью» до ТЗ №11) наверху той же страницы считаются
+    # РАЗНЫМИ запросами (compute_id_progress_stream() против
+    # compute_id_progress_tiles()) — до сих пор ничего не проверяло, что
+    # они говорят об одном и том же. Проверка ловит расхождение, если оно
+    # появится, не переоткрывает уже закрытый вопрос сейчас.
     stream_rows = m.compute_id_progress_stream()
     stream_sum = sum(r["green_n"] + r["yellow_n"] + r["red_n"] for r in stream_rows)
     tiles = m.compute_id_progress_tiles()
     check(
-        "Поток по вкладкам: сумма зелёный+жёлтый+красный по всем вкладкам = плитка «Связок раздел+вид работы с записью»",
+        "Поток по вкладкам: сумма зелёный+жёлтый+красный по всем вкладкам = плитка «АОСР (видов работ)»",
         "сумма по потоку", stream_sum,
         "плитка total_pairs", tiles["total_pairs"],
     )
