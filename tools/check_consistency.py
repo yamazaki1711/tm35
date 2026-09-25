@@ -356,10 +356,17 @@ def main_check():
     # которых track_phys='fact' ещё сохранился. Прямой SQL — та же логика,
     # переписанная заново, чтобы проверка не подтверждала сама себя. Пул —
     # «не снято» (см. 11b), не голый is_active, координатор 24.09.2026.
+    # Координатор, 25.09.2026 — добавлено исключение `rejected=true`
+    # (найдено при добавлении плитки-ссылки /rsk?status=needs_rd:
+    # rsk_pseudo_status() проверяет «Отклонено» РАНЬШЕ «Корректировка
+    # ПД/РД» по приоритету — нарушение №304 было и там, и там одновременно
+    # по сырому SQL, тайл и бейдж расходились на 1). Прямая проверка ниже
+    # переписана тем же исключением, не подтверждает саму себя повторно.
     direct_needs_rd = m.query_one(f"""
         select count(*) as n
         from rsk_violation v left join rsk_processing p on p.violation_id = v.id
         where not (not v.is_active or coalesce(p.resolved, false))
+            and not coalesce(p.rejected, false)
             and (coalesce(p.track_design,'unknown') = 'not_done'
             or coalesce(p.track_phys,'unknown') = 'fact')
     """)["n"]
@@ -479,6 +486,90 @@ def main_check():
         "РСК: ни у одного нарушения нет двух и более ответственных отделов (по легаси-таблице, для контроля регрессии)",
         "нарушений с >1 отделом (легаси m2m)", rsk_multi_dept,
         "ожидается", 0,
+    )
+
+    # --- 11i. Координатор, 25.09.2026 — «Обзор РСК», новый набор плиток
+    # (Всего замечаний/Устранено/Строй-площадка/ПТО/Корректировка ПД-РД/
+    # Отклонено РСК). Каждая плитка — ссылка на реестр с фильтром; число
+    # на плитке обязано совпасть с «Найдено» на /rsk по ТЕМ ЖЕ парам
+    # query-параметров, что фактически стоят в href на странице (не
+    # придуманным заново — HTTP до реестра, не повторный вызов
+    # compute_rsk_dashboard_stats()).
+    check(
+        "РСК, тайл «Всего замечаний» vs /rsk («Найдено», без фильтра)",
+        "/rsk/dashboard, tiles.total_all", rsk_dash_stats["tiles"]["total_all"],
+        "прямой SQL count(*)", rsk_total,
+    )
+
+    rsk_dept_pto_id = rsk_dash_stats["tiles"]["dept_pto_id"]
+    rsk_dept_sp_id = rsk_dash_stats["tiles"]["dept_stroyploshadka_id"]
+    rsk_pto_html = urllib.request.urlopen(
+        f"http://localhost:8000/rsk?state=active&responsible={rsk_dept_pto_id}", timeout=15
+    ).read().decode("utf-8")
+    rsk_sp_html = urllib.request.urlopen(
+        f"http://localhost:8000/rsk?state=active&responsible={rsk_dept_sp_id}", timeout=15
+    ).read().decode("utf-8")
+    rsk_needs_rd_html = urllib.request.urlopen(
+        "http://localhost:8000/rsk?state=active&status=needs_rd", timeout=15
+    ).read().decode("utf-8")
+    rsk_rejected_html = urllib.request.urlopen(
+        "http://localhost:8000/rsk?state=active&status=rejected", timeout=15
+    ).read().decode("utf-8")
+    rsk_pto_m = found_re.search(rsk_pto_html)
+    rsk_sp_m = found_re.search(rsk_sp_html)
+    rsk_needs_rd_m = found_re.search(rsk_needs_rd_html)
+    rsk_rejected_m = found_re.search(rsk_rejected_html)
+
+    check(
+        "РСК, тайл «ПТО» vs /rsk?state=active&responsible=<ПТО> («Найдено»)",
+        "/rsk/dashboard, tiles.dept_pto", rsk_dash_stats["tiles"]["dept_pto"],
+        "/rsk (тот же href, что на плитке)", int(rsk_pto_m.group(1)) if rsk_pto_m else None,
+    )
+    check(
+        "РСК, тайл «Строй-площадка» vs /rsk?state=active&responsible=<строй-площадка> («Найдено»)",
+        "/rsk/dashboard, tiles.dept_stroyploshadka", rsk_dash_stats["tiles"]["dept_stroyploshadka"],
+        "/rsk (тот же href, что на плитке)", int(rsk_sp_m.group(1)) if rsk_sp_m else None,
+    )
+    check(
+        "РСК, тайл «Корректировка ПД/РД» vs /rsk?state=active&status=needs_rd («Найдено»)",
+        "/rsk/dashboard, tiles.needs_rd", rsk_dash_stats["tiles"]["needs_rd"],
+        "/rsk (тот же href, что на плитке)", int(rsk_needs_rd_m.group(1)) if rsk_needs_rd_m else None,
+    )
+    check(
+        "РСК, тайл «Отклонено РСК» vs /rsk?state=active&status=rejected («Найдено»)",
+        "/rsk/dashboard, tiles.rejected", rsk_dash_stats["tiles"]["rejected"],
+        "/rsk (тот же href, что на плитке)", int(rsk_rejected_m.group(1)) if rsk_rejected_m else None,
+    )
+
+    # Разбиение (report-only по духу задания, но проверяется как
+    # тождество): Устранено + активные по отделам (ПТО/ДПР/строй-
+    # площадка) + без отдела = Всего. «ИКС»/«Лаборатория» в сумму не
+    # входят отдельными слагаемыми — координатор, 25.09.2026 (аддендум,
+    # миграция 044): обе неактивны, 0 нарушений на них указывает, любое
+    # такое нарушение уже попало бы в «без отдела» (responsible_id=null).
+    rsk_dpr_id = m.query_one("select id from rsk_responsible where name='ДПР'")["id"]
+    rsk_dept_dpr_active = m.query_one(f"""
+        select count(*) as n {m.RSK_LIST_BASE_SQL}
+        where not ({m.RSK_VIOLATION_REMOVED_SQL}) and p.responsible_id = %s
+    """, (rsk_dpr_id,))["n"]
+    rsk_partition_sum = (
+        rsk_dash_stats["tiles"]["resolved"]
+        + rsk_dash_stats["tiles"]["dept_pto"]
+        + rsk_dept_dpr_active
+        + rsk_dash_stats["tiles"]["dept_stroyploshadka"]
+        + rsk_dash_stats["no_responsible"]
+    )
+    check(
+        "РСК: разбиение «Устранено + ПТО + ДПР + строй-площадка + без отдела» = «Всего замечаний»",
+        "сумма разбиения", rsk_partition_sum,
+        "тайл «Всего замечаний»", rsk_dash_stats["tiles"]["total_all"],
+    )
+    print(
+        f"    (разбиение РСК: Устранено={rsk_dash_stats['tiles']['resolved']}, "
+        f"ПТО={rsk_dash_stats['tiles']['dept_pto']}, ДПР={rsk_dept_dpr_active}, "
+        f"строй-площадка={rsk_dash_stats['tiles']['dept_stroyploshadka']}, "
+        f"без отдела={rsk_dash_stats['no_responsible']}, "
+        f"всего={rsk_dash_stats['tiles']['total_all']})"
     )
 
     # --- 11. Труба папок ИД — ТЗ №10, 23.09.2026, п.2 убрал трубу с

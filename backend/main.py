@@ -7156,7 +7156,7 @@ RSK_STATUS_BADGE = {
 
 @app.get("/rsk")
 def rsk_registry_page(request: Request, responsible: str = "", track_phys: str = "",
-                       track_design: str = "", track_id_: str = "", state: str = ""):
+                       track_design: str = "", track_id_: str = "", state: str = "", status: str = ""):
     # ТЗ Якименко А.И., 16.09.2026 — дропдауны «Акт» и «Повторность» убраны
     # (§4); соответствующие фильтры по act_no/is_repeat сняты вместе с
     # ними — управлять ими больше неоткуда. Данные (номер акта в столбце
@@ -7185,6 +7185,17 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
     for r in rows:
         r["status_key"] = rsk_pseudo_status(r)
 
+    # Координатор, 25.09.2026 — плитки «Корректировка ПД/РД»/«Отклонено
+    # РСК» на «Обзоре РСК» считают составное условие (ИЛИ двух треков —
+    # см. rsk_pseudo_status()), которое существующие одиночные фильтры
+    # «Физика»/«Проект» (точное равенство, между собой — И, не ИЛИ) не
+    # умеют выразить одним переходом по ссылке. `status` фильтрует ПОСЛЕ
+    # выборки, тем же `status_key`, что уже вычислен для бейджа в
+    # таблице, — не второе, отдельно написанное условие, рискующее
+    # разойтись с тем, что показывает бейдж.
+    if status.strip():
+        rows = [r for r in rows if r["status_key"] == status]
+
     # «ИКС» скрыта (active=false, координатор 16.09.2026) из выбора — из
     # фильтра тоже, он такой же выбор, как форма отработки. Уже
     # записанные на неё строки (11 на 17.09.2026, см. run log) продолжают
@@ -7197,7 +7208,7 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
                   rows=rows, total=len(rows), responsibles=responsibles,
                   ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
                   f_responsible=responsible, f_track_phys=track_phys, f_track_design=track_design,
-                  f_track_id=track_id_, f_state=state)
+                  f_track_id=track_id_, f_state=state, f_status=status)
 
 
 @app.get("/export/rsk.csv")
@@ -7238,19 +7249,33 @@ def compute_rsk_dashboard_stats():
     # заводится. `needs_rd` — см. rsk_pseudo_status(), тот же принцип
     # (трек «Проект», плюс легаси track_phys='fact').
     #
-    # Координатор, 24.09.2026 (KNOWN_ISSUES.md §66, п.1) — прошлый заход
-    # оставил пул этих плиток на голом `v.is_active`, что разошлось с
-    # реестром (152 вместо 136) и нарушало прямое указание «every
-    # consumer must use rsk_violation_is_removed()». Пул «активных» для
-    # всех пяти рабочих плиток — теперь тот же критерий, что и реестр:
-    # NOT (структурно закрыто ИЛИ «Устранено»). Плитка «Устранено» —
-    # больше не «resolved среди ещё активных» (это значение при новом
-    # пуле было бы тождественно 0 — resolved теперь ВСЕГДА исключено из
-    # пула), а прямой дубль критерия «снято» — специально, чтобы
-    # total_active + resolved = весь реестр = «Активные» + «Снятые» на
-    # /rsk, число в число.
+    # Координатор, 25.09.2026 — набор плиток «Обзора РСК» заменён:
+    # «Активных замечаний»/«Готовы к снятию»/«Предъявить ИД» убраны с
+    # ЭКРАНА (поля `total_active`/`ready_to_close`/`blocked_by_id` в
+    # словаре ниже — оставлены как есть, по прямому указанию «keep their
+    # underlying data and fields; only the tiles go»; других потребителей
+    # `ready_to_close`/`blocked_by_id`, кроме самих плиток, в приложении
+    # не нашлось — grep по `backend/`). Новые плитки: «Всего замечаний»
+    # (`total_all` — ВЕСЬ реестр, снятые и активные вместе, никакого
+    # фильтра), «Устранено» (`resolved` — уже был, не менялся, это и
+    # есть rsk_violation_is_removed() в чистом виде), «Строй-площадка»/
+    # «ПТО» (`dept_stroyploshadka`/`dept_pto` — активные нарушения с
+    # этим единственным отделом, из уже посчитанного `by_responsible`
+    # ниже, вторая SQL для тех же чисел не заводится). «Отклонено РСК»
+    # (`rejected`) — определение не менялось, уже было ограничено
+    # активными (`not ({RSK_VIOLATION_REMOVED_SQL})`) с координаторской
+    # правки 24.09.2026, см. KNOWN_ISSUES.md §66. «Корректировка ПД/РД»
+    # (`needs_rd`) была ограничена активными той же правкой, но при
+    # добавлении плиточной ссылки на /rsk?status=needs_rd (сегодня)
+    # нашлось расхождение: сырое SQL-условие не исключало rejected=true
+    # (нарушение №304 — track_design=not_done И rejected=true, тайл его
+    # видел, а бейдж rsk_pseudo_status() — нет, там «Отклонено» проверяется
+    # ПЕРВЫМ по приоритету). Тайл (34) и ссылка по бейджу (33) разошлись
+    # бы на единицу — добавлено `not rejected`, чтобы тайл считал ровно
+    # то же множество, что и бейдж/фильтр `status=needs_rd`.
     tiles = query_one(f"""
         select
+            count(*) as total_all,
             count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})) as total_active,
             count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})
                 and coalesce(p.track_phys,'unknown') in ('done','not_required')
@@ -7258,6 +7283,7 @@ def compute_rsk_dashboard_stats():
                 and coalesce(p.track_id,'unknown') in ('done','not_required')) as ready_to_close,
             count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL}) and cc.code = 'id_priniatie') as blocked_by_id,
             count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL})
+                and not coalesce(p.rejected, false)
                 and (coalesce(p.track_design,'unknown') = 'not_done'
                 or coalesce(p.track_phys,'unknown') = 'fact')) as needs_rd,
             count(*) filter (where not ({RSK_VIOLATION_REMOVED_SQL}) and coalesce(p.rejected, false)) as rejected,
@@ -7266,13 +7292,15 @@ def compute_rsk_dashboard_stats():
     """) or {}
 
     # «По ответственным» и «без ответственного» — тот же пул, что и
-    # плитка «Активных замечаний» (нагрузка по ещё не снятым нарушениям,
+    # «Активных замечаний» (нагрузка по ещё не снятым нарушениям,
     # координатор 24.09.2026, KNOWN_ISSUES.md §66, п.1). Координатор,
     # 25.09.2026: один ответственный на нарушение (миграция 043,
     # `rsk_processing.responsible_id`), не m2m — суммы по отделам теперь
     # складываются в total_active БЕЗ двойного счёта одного и того же
     # нарушения по построению (раньше при нескольких ответственных одно
-    # нарушение считалось в нескольких строках сразу).
+    # нарушение считалось в нескольких строках сразу). «ИКС»/«Лаборатория»
+    # (координатор, 25.09.2026, миграция 044) сюда попасть не могут — 0
+    # нарушений на них указывает, `rsk_responsible.active=false` для обеих.
     by_responsible = query(f"""
         select r.id, r.name, count(*) as n
         from rsk_responsible r
@@ -7283,6 +7311,17 @@ def compute_rsk_dashboard_stats():
     no_responsible = query_one(f"""
         select count(*) as n {RSK_LIST_BASE_SQL} where not ({RSK_VIOLATION_REMOVED_SQL}) and p.responsible_id is null
     """) or {"n": 0}
+
+    # id отделов — прямым запросом к справочнику, не только из
+    # by_responsible: там отдела не будет вовсе, если на него сейчас 0
+    # активных нарушений, а плитка и ссылка на неё (пусть с «Найдено: 0»)
+    # должны существовать независимо от текущего числа.
+    dept_ids = {r["name"]: r["id"] for r in query("select id, name from rsk_responsible where active")}
+    dept_counts = {r["name"]: r["n"] for r in by_responsible}
+    tiles["dept_pto"] = dept_counts.get("ПТО", 0)
+    tiles["dept_pto_id"] = dept_ids.get("ПТО")
+    tiles["dept_stroyploshadka"] = dept_counts.get("строй-площадка", 0)
+    tiles["dept_stroyploshadka_id"] = dept_ids.get("строй-площадка")
 
     return {"tiles": tiles, "by_responsible": by_responsible, "no_responsible": no_responsible["n"]}
 

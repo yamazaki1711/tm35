@@ -140,35 +140,36 @@
       <h2><a href="/rsk/dashboard">Обзор РСК</a></h2>
     </div>
   </div>
-  {# ТЗ Якименко А.И., 16.09.2026, §1 — шесть плиток, тот же порядок и
-     те же числа, что на /rsk/dashboard (rsk_dashboard.html) — обе
-     страницы читают compute_rsk_dashboard_stats(), второй источник не
-     заводится. #}
+  {# Координатор, 25.09.2026 — набор плиток заменён (было: Активных
+     замечаний/Готовы к снятию/Предъявить ИД/Корректировка ПД-РД/
+     Отклонено РСК/Устранено). Тот же порядок и те же числа, что на
+     /rsk/dashboard (rsk_dashboard.html) — обе страницы читают
+     compute_rsk_dashboard_stats(), второй источник не заводится. #}
   <div class="kpi-row">
-    <div class="kpi">
-      <div class="kpi-num">{{ rsk_dash.tiles.total_active or 0 }}</div>
-      <div class="kpi-label">Активных замечаний</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num ok">{{ rsk_dash.tiles.ready_to_close or 0 }}</div>
-      <div class="kpi-label">Готовы к снятию</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num warn">{{ rsk_dash.tiles.blocked_by_id or 0 }}</div>
-      <div class="kpi-label">Предъявить ИД</div>
-    </div>
-    <div class="kpi">
+    <a class="kpi" href="/rsk">
+      <div class="kpi-num">{{ rsk_dash.tiles.total_all or 0 }}</div>
+      <div class="kpi-label">Всего замечаний</div>
+    </a>
+    <a class="kpi" href="/rsk?state=closed">
+      <div class="kpi-num ok">{{ rsk_dash.tiles.resolved or 0 }}</div>
+      <div class="kpi-label">Устранено</div>
+    </a>
+    <a class="kpi" href="/rsk?state=active{{ '&responsible=' ~ rsk_dash.tiles.dept_stroyploshadka_id if rsk_dash.tiles.dept_stroyploshadka_id }}">
+      <div class="kpi-num">{{ rsk_dash.tiles.dept_stroyploshadka or 0 }}</div>
+      <div class="kpi-label">Строй-площадка</div>
+    </a>
+    <a class="kpi" href="/rsk?state=active{{ '&responsible=' ~ rsk_dash.tiles.dept_pto_id if rsk_dash.tiles.dept_pto_id }}">
+      <div class="kpi-num">{{ rsk_dash.tiles.dept_pto or 0 }}</div>
+      <div class="kpi-label">ПТО</div>
+    </a>
+    <a class="kpi" href="/rsk?state=active&status=needs_rd">
       <div class="kpi-num warn">{{ rsk_dash.tiles.needs_rd or 0 }}</div>
       <div class="kpi-label">Корректировка ПД/РД</div>
-    </div>
-    <div class="kpi">
+    </a>
+    <a class="kpi" href="/rsk?state=active&status=rejected">
       <div class="kpi-num danger">{{ rsk_dash.tiles.rejected or 0 }}</div>
       <div class="kpi-label">Отклонено РСК</div>
-    </div>
-    <div class="kpi">
-      <div class="kpi-num">{{ rsk_dash.tiles.resolved or 0 }}</div>
-      <div class="kpi-label">Устранено</div>
-    </div>
+    </a>
   </div>
 </div>
 
