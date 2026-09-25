@@ -175,6 +175,35 @@ def find_header_band_range(bands):
     return header_band_ids
 
 
+# Координатор, 25.09.2026 — защита от подмены формата акта: колонки
+# определяются исключительно фиксированными координатами (BOUNDS), без
+# проверки, что документ вообще имеет такую структуру. Живой акт печатает
+# нумерацию колонок «1 2 3 4» одной строкой прямо под заголовком таблицы
+# (см. docs/RSK_ACT_PDF_IMPORT_2026-09-06.md) — это и есть сигнатура: если
+# все четыре цифры на месте и КАЖДАЯ попадает в СВОЙ ожидаемый диапазон
+# (col_of возвращает 0/1/2/3 соответственно), формат совпадает с тем,
+# под который писан разбор. Если сигнатуры нет вообще или цифры попадают
+# не в те колонки — формат другой, разбор координатами даст мусор молча,
+# не должен запускаться.
+HEADER_DIGIT_TO_COL = {"1": 0, "2": 1, "3": 2, "4": 3}
+
+
+def verify_column_header(pdf):
+    for page in pdf.pages[:3]:
+        raw = page.extract_words()
+        by_top = defaultdict(list)
+        for w in raw:
+            if w["text"] in HEADER_DIGIT_TO_COL:
+                by_top[round(w["top"])].append(w)
+        for ws in by_top.values():
+            by_text = {w["text"]: w for w in ws}
+            if set(by_text) != set(HEADER_DIGIT_TO_COL):
+                continue
+            if all(col_of(by_text[t]["x0"]) == c for t, c in HEADER_DIGIT_TO_COL.items()):
+                return True
+    return False
+
+
 ANCHOR_RE = re.compile(r"^№\s*(\d+)\s+(Повторно\b.*)$")
 
 
@@ -200,7 +229,17 @@ DUE_BLOCK_RE = re.compile(
 
 
 def parse_act(pdf_path):
-    """Возвращает {"act": {...}, "records": [...], "issues": [...], "checks": {...}}."""
+    """Возвращает {"act": {...}, "records": [...], "issues": [...], "checks": {...}}.
+
+    Координатор, 25.09.2026 — `checks["total_chars_extracted"]` и
+    `checks["header_ok"]` добавлены как ЗАЩИТА, не как часть основного
+    разбора: main.py проверяет их до того, как показать предпросмотр,
+    и отклоняет файл без текстового слоя (скан) или с чужим форматом
+    таблицы, вместо того чтобы молча выдать 0 позиций или мусор."""
+    with pdfplumber.open(pdf_path) as pdf:
+        total_chars_extracted = sum(len(p.extract_text() or "") for p in pdf.pages)
+        header_ok = verify_column_header(pdf)
+
     bands, total_declared, raw_band_count, act_no, act_date = load_bands(pdf_path)
     header_band_ids = find_header_band_range(bands)
     n_header_zones = sum(1 for i in sorted(header_band_ids) if i - 1 not in header_band_ids)
@@ -274,6 +313,8 @@ def parse_act(pdf_path):
         "no_first_act": sum(1 for i in issues if i["kind"] == "no_first_act"),
         "no_item_no": sum(1 for i in issues if i["kind"] == "no_item_no"),
         "control_sections_found": n_header_zones,
+        "total_chars_extracted": total_chars_extracted,
+        "header_ok": header_ok,
     }
 
     return {

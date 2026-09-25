@@ -7,6 +7,7 @@ import math
 import os
 import re
 import secrets
+import time
 import urllib.parse
 from collections import defaultdict
 
@@ -73,9 +74,43 @@ app.mount("/uploads/prescriptions", StaticFiles(directory=UPLOADS_DIR), name="pr
 
 # Загруженные акты РСК — между "предпросмотром" и "подтверждением" формы
 # «Загрузка акта проверки» (см. секцию РСК ниже): файл сохраняется под
-# токеном при предпросмотре, подтверждение читает его повторно и удаляет.
+# токеном при предпросмотре, подтверждение читает его повторно.
+#
+# Координатор, 25.09.2026 — подтверждённый акт больше не удаляется: PDF
+# акта — единственное первичное доказательство того, что реально было
+# загружено (`rsk_act.pdf_path`), должен оставаться навсегда. Переносится
+# в RSK_UPLOADS_CONFIRMED_DIR под именем по номеру акта. Неподтверждённые
+# (брошенные/отменённые) файлы остаются в RSK_UPLOADS_DIR под токеном —
+# явного сигнала «отмена» нет (это просто ссылка), поэтому чистка по
+# возрасту (см. _rsk_cleanup_abandoned_uploads()), не по событию.
 RSK_UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads", "rsk_acts")
 os.makedirs(RSK_UPLOADS_DIR, exist_ok=True)
+RSK_UPLOADS_CONFIRMED_DIR = os.path.join(RSK_UPLOADS_DIR, "confirmed")
+os.makedirs(RSK_UPLOADS_CONFIRMED_DIR, exist_ok=True)
+RSK_ABANDONED_UPLOAD_TTL_SECONDS = 24 * 3600
+
+
+def _rsk_cleanup_abandoned_uploads():
+    """Удаляет из RSK_UPLOADS_DIR (не из .../confirmed/) файлы старше
+    суток — брошенные предпросмотры, которые никто не подтвердил и не
+    отменит явно (у "Отменить" на экране нет отдельного обработчика,
+    это просто ссылка на /rsk/import). Вызывается при каждом открытии
+    формы загрузки — дешёвая операция (список файлов одной небольшой
+    директории), отдельного крона в проекте нет."""
+    cutoff = time.time() - RSK_ABANDONED_UPLOAD_TTL_SECONDS
+    try:
+        names = os.listdir(RSK_UPLOADS_DIR)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(RSK_UPLOADS_DIR, name)
+        if not name.endswith(".pdf") or not os.path.isfile(path):
+            continue
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
 
 templates = Jinja2Templates(directory="templates")
 
@@ -7698,8 +7733,38 @@ def _rsk_build_import_result(new_records, overrides=None):
     }
 
 
+RSK_TEXT_LAYER_MIN_CHARS = 200  # ниже — считаем, что текстового слоя фактически нет (скан)
+RSK_MASS_CLOSURE_THRESHOLD = 0.5  # доля активных нарушений, закрытие которых требует явного подтверждения
+
+
+def _rsk_active_total():
+    return query_one(f"select count(*) as n {RSK_LIST_BASE_SQL} where not ({RSK_VIOLATION_REMOVED_SQL})")["n"] or 0
+
+
+def _rsk_hard_guard_errors(parsed):
+    """Координатор, 25.09.2026 — «a PDF without a text layer parses to 0
+    violations... silently. Confirming such a preview would mark every
+    active violation as structurally closed.» Список причин отклонить
+    файл ДО показа полного предпросмотра — порядок от самой общей причины
+    (нечего разбирать вовсе) к самой частной (конкретных нарушений 0),
+    чтобы для скана показывалось одно понятное сообщение, а не четыре
+    производных от одной и той же причины."""
+    checks = parsed["checks"]
+    if checks["total_chars_extracted"] < RSK_TEXT_LAYER_MIN_CHARS:
+        return ["Файл не содержит текстового слоя (скан). Загрузите PDF, "
+                "выгруженный из программы, а не отсканированный."]
+    if not checks["header_ok"]:
+        return ["Формат акта отличается от ожидаемого — нужна настройка парсера."]
+    if not parsed["act"]["act_no"] or not parsed["act"]["act_date"]:
+        return ["Не удалось распознать номер/дату акта."]
+    if not parsed["records"]:
+        return ["В акте не найдено ни одного замечания."]
+    return []
+
+
 @app.get("/rsk/import")
 def rsk_import_page(request: Request):
+    _rsk_cleanup_abandoned_uploads()
     return render(request, "rsk_import.html", "rsk-import", preview=None)
 
 
@@ -7724,6 +7789,11 @@ def rsk_import_preview(request: Request, act_pdf: UploadFile = File(...)):
         return render(request, "rsk_import.html", "rsk-import", preview=None,
                       errors=[f"Не удалось разобрать PDF: {e}"])
 
+    hard_errors = _rsk_hard_guard_errors(parsed)
+    if hard_errors:
+        os.remove(pdf_path)
+        return render(request, "rsk_import.html", "rsk-import", preview=None, errors=hard_errors)
+
     diff = _rsk_build_import_result(parsed["records"])
     # Координатор, 25.09.2026, п. b — повторная загрузка уже загруженного
     # акта (тот же act_no) отклоняется, ничего не пишется. Проверка уже
@@ -7732,8 +7802,18 @@ def rsk_import_preview(request: Request, act_pdf: UploadFile = File(...)):
     # против записи стоит в /confirm, эта проверка ниже — только для
     # экрана.
     duplicate = bool(query_one("select 1 from rsk_act where act_no=%s", (parsed["act"]["act_no"],)))
+
+    # Координатор, 25.09.2026, п. 2 — «Обзор» защиты: если акт закрывает
+    # больше половины сейчас активных нарушений, подтверждение требует
+    # явной галочки на экране (показывается здесь же, до подтверждения,
+    # чтобы число не было сюрпризом на следующем шаге).
+    active_total = _rsk_active_total()
+    closing = len(diff["removed"])
+    mass_closure = active_total > 0 and closing > active_total * RSK_MASS_CLOSURE_THRESHOLD
+
     return render(request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
-                  original_name=act_pdf.filename, duplicate=duplicate)
+                  original_name=act_pdf.filename, duplicate=duplicate,
+                  mass_closure=mass_closure, active_total=active_total, closing_count=closing)
 
 
 @app.post("/rsk/import/confirm")
@@ -7750,6 +7830,17 @@ async def rsk_import_confirm(request: Request):
             status_code=303,
         )
     parsed = parse_act(pdf_path)
+
+    # Защита в глубину (координатор, 25.09.2026) — те же проверки, что
+    # уже прошли на предпросмотре, повторены здесь: между показом
+    # предпросмотра и нажатием «Подтвердить» файл на диске не меняется,
+    # но /confirm не обязан доверять тому, что форма прислала честный
+    # токен уже проверенного файла — пересчитывает сам, не полагаясь на
+    # состояние экрана.
+    hard_errors = _rsk_hard_guard_errors(parsed)
+    if hard_errors:
+        os.remove(pdf_path)
+        return render(request, "rsk_import.html", "rsk-import", preview=None, errors=hard_errors)
 
     # Координатор, 25.09.2026, п. b — «reject a duplicate import of the
     # same act number»: жёсткий отказ, не upsert (был `on conflict
@@ -7790,11 +7881,36 @@ async def rsk_import_confirm(request: Request):
 
     diff = _rsk_build_import_result(parsed["records"], overrides=overrides)
 
+    # Координатор, 25.09.2026, п. 2 — массовое закрытие требует явной
+    # галочки на экране предпросмотра, посчитанной ТЕМ ЖЕ порогом, что и
+    # там (RSK_MASS_CLOSURE_THRESHOLD) — не второе число, способное
+    # разойтись. Без неё — отказ, ничего не пишется, форма перерисована
+    # с уже отмеченной галочкой не будет (это отдельное решение
+    # пользователя на каждую загрузку, не запоминается).
+    active_total = _rsk_active_total()
+    closing = len(diff["removed"])
+    mass_closure = active_total > 0 and closing > active_total * RSK_MASS_CLOSURE_THRESHOLD
+    if mass_closure and form.get("confirm_mass_closure") != "1":
+        return render(
+            request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
+            original_name=original_name, duplicate=False,
+            mass_closure=True, active_total=active_total, closing_count=closing,
+            errors=[f"Акт снимает {closing} из {active_total} активных замечаний — отметьте подтверждение "
+                    f"ниже, чтобы записать (ничего не записано)."],
+        )
+
+    # Координатор, 25.09.2026, п. 4 — подтверждённый акт хранится
+    # навсегда как первоисточник (не удаляется, в отличие от временного
+    # файла предпросмотра). Постоянный путь считается ДО транзакции —
+    # если она провалится, физический перенос файла ниже не произойдёт.
+    confirmed_filename = re.sub(r"[^A-Za-z0-9_-]", "_", parsed["act"]["act_no"]) + ".pdf"
+    confirmed_path = os.path.join(RSK_UPLOADS_CONFIRMED_DIR, confirmed_filename)
+
     def _do(cur):
         act = parsed["act"]
         cur.execute(
             "insert into rsk_act (act_no, act_date, total_declared, pdf_path) values (%s,%s,%s,%s) returning id",
-            (act["act_no"], act["act_date"], act["total_declared"], pdf_path),
+            (act["act_no"], act["act_date"], act["total_declared"], confirmed_path),
         )
         act_id = cur.fetchone()["id"]
 
@@ -7868,7 +7984,11 @@ async def rsk_import_confirm(request: Request):
         return act_id
 
     act_id = run_in_transaction(_do)
-    os.remove(pdf_path)
+    # Координатор, 25.09.2026, п. 4 — PDF подтверждённого акта хранится
+    # навсегда как доказательство (не os.remove, как было). Перенос, не
+    # копия — токенный файл в RSK_UPLOADS_DIR не должен остаться дублем,
+    # который потом уберёт суточная чистка брошенных файлов.
+    os.replace(pdf_path, confirmed_path)
     ok_msg = urllib.parse.quote(
         f"Акт {parsed['act']['act_no']} загружен: {len(parsed['records'])} позиций, "
         f"{len(diff['new'])} новых, {len(diff['removed'])} снято."
