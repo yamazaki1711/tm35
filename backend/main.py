@@ -1,5 +1,6 @@
 import bisect
 import contextvars
+import difflib
 import hashlib
 import json
 import math
@@ -22,7 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from db import query, query_one, execute, run_in_transaction
 from rsk_parser import parse_act
 from grafik_matching import (
-    build_row_index, resolve_group_tokens, resolve_tokens, tokenize_group_name,
+    build_row_index, resolve_group_tokens, resolve_tokens, tokenize_group_name, norm_literal,
 )
 from analytics import (
     compute_overdue, compute_project_forecast, compute_resource_deficit, DONE_STATUSES,
@@ -7020,9 +7021,13 @@ def api_id_block_unset(request: Request, block_id: int):
 # Два слоя данных, не смешивать:
 #   слой 1 (акт, неизменяемый) — rsk_act/rsk_act_item/rsk_violation;
 #     пишет только импорт (/rsk/import), больше никто и никогда.
-#   слой 2 (отработка, изменяемый людьми) — rsk_processing + m2m
-#     (rsk_processing_responsible); пишет только форма /rsk/processing.
-#     Повторный импорт акта слой 2 не трогает.
+#   слой 2 (отработка, изменяемый людьми) — rsk_processing, пишет только
+#     форма /rsk/processing. Повторный импорт акта слой 2 не трогает.
+#     Ответственный — одно поле `responsible_id` (координатор,
+#     25.09.2026, миграция 043): у нарушения ровно один отдел, не
+#     несколько. Старая m2m `rsk_processing_responsible` (миграция 024)
+#     сохранена нетронутой как исторические данные, но больше не
+#     пишется и не читается ни одним потребителем ниже.
 #
 # Три независимых трека — Физика/Проект/ИД, каждый со своим набором
 # значений, не единая категория+статус (откат 07.09.2026: замена на
@@ -7048,6 +7053,7 @@ RSK_LIST_BASE_SQL = """
     left join rsk_act ca on ca.id = v.closed_in_act_id
     left join rsk_processing p on p.violation_id = v.id
     left join rsk_close_condition cc on cc.id = p.close_condition_id
+    left join rsk_responsible rr on rr.id = p.responsible_id
 """
 
 RSK_LIST_SELECT_SQL = f"""
@@ -7070,12 +7076,12 @@ RSK_LIST_SELECT_SQL = f"""
            coalesce(p.resolved, false) as resolved, p.resolved_date,
            p.id as processing_id, p.planned_close_date, p.comment as processing_comment,
            cc.label as close_condition_label,
-           coalesce(
-               (select string_agg(r.name, ', ' order by r.name)
-                from rsk_processing_responsible pr join rsk_responsible r on r.id = pr.responsible_id
-                where pr.processing_id = p.id),
-               '—'
-           ) as responsible_names
+           -- Координатор, 25.09.2026: у нарушения ровно один ответственный
+           -- отдел (миграция 043) — `rsk_processing.responsible_id`,
+           -- не m2m. `rsk_processing_responsible` больше не читается
+           -- здесь, только сохранена как есть на будущее решение
+           -- координатора (не удалена).
+           p.responsible_id, coalesce(rr.name, '—') as responsible_name
     {RSK_LIST_BASE_SQL}
 """
 
@@ -7159,10 +7165,7 @@ def rsk_registry_page(request: Request, responsible: str = "", track_phys: str =
     where = ["1=1"]
     params = []
     if responsible.strip():
-        where.append(
-            "p.id is not null and exists (select 1 from rsk_processing_responsible pr3 "
-            "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
-        )
+        where.append("p.responsible_id = %s")
         params.append(int(responsible))
     if track_phys.strip():
         where.append("coalesce(p.track_phys, 'unknown') = %s")
@@ -7206,7 +7209,7 @@ def export_rsk_csv():
     # в rsk_registry.html, проверено grep по репозиторию).
     rows = query(RSK_LIST_SELECT_SQL + " order by v.sys_no")
     out = [
-        (r["sys_no"], RU_RSK_STATUS.get(rsk_pseudo_status(r), ""), r["content"], r["responsible_names"],
+        (r["sys_no"], RU_RSK_STATUS.get(rsk_pseudo_status(r), ""), r["content"], r["responsible_name"],
          RU_RSK_TRACK.get(r["track_phys"], ""), RU_RSK_TRACK.get(r["track_design"], ""),
          RU_RSK_TRACK.get(r["track_id"], ""),
          r["act_no"], _csv_dmy(r["act_date"]), _csv_dmy(r["due_date"]),
@@ -7219,7 +7222,7 @@ def export_rsk_csv():
     ]
     return _csv_response(
         "rsk_registry.csv",
-        ["№", "Статус", "Содержание", "Ответственные", "Физика", "Проект", "ИД",
+        ["№", "Статус", "Содержание", "Ответственный", "Физика", "Проект", "ИД",
          "Акт", "Проверка", "Срок", "Устранено", "Повторно"],
         out,
     )
@@ -7264,17 +7267,21 @@ def compute_rsk_dashboard_stats():
 
     # «По ответственным» и «без ответственного» — тот же пул, что и
     # плитка «Активных замечаний» (нагрузка по ещё не снятым нарушениям,
-    # координатор 24.09.2026, KNOWN_ISSUES.md §66, п.1).
+    # координатор 24.09.2026, KNOWN_ISSUES.md §66, п.1). Координатор,
+    # 25.09.2026: один ответственный на нарушение (миграция 043,
+    # `rsk_processing.responsible_id`), не m2m — суммы по отделам теперь
+    # складываются в total_active БЕЗ двойного счёта одного и того же
+    # нарушения по построению (раньше при нескольких ответственных одно
+    # нарушение считалось в нескольких строках сразу).
     by_responsible = query(f"""
         select r.id, r.name, count(*) as n
-        from rsk_processing_responsible pr
-        join rsk_responsible r on r.id = pr.responsible_id
-        join rsk_processing p on p.id = pr.processing_id
+        from rsk_responsible r
+        join rsk_processing p on p.responsible_id = r.id
         join rsk_violation v on v.id = p.violation_id and not ({RSK_VIOLATION_REMOVED_SQL})
         group by r.id, r.name order by n desc
     """)
     no_responsible = query_one(f"""
-        select count(*) as n {RSK_LIST_BASE_SQL} where not ({RSK_VIOLATION_REMOVED_SQL}) and p.id is null
+        select count(*) as n {RSK_LIST_BASE_SQL} where not ({RSK_VIOLATION_REMOVED_SQL}) and p.responsible_id is null
     """) or {"n": 0}
 
     return {"tiles": tiles, "by_responsible": by_responsible, "no_responsible": no_responsible["n"]}
@@ -7300,19 +7307,11 @@ def rsk_violation_detail(request: Request, sys_no: int):
     )
     latest = items[0] if items else None
     processing = query_one("select * from rsk_processing where violation_id=%s", (v["id"],))
-    responsible_ids = set()
-    if processing:
-        responsible_ids = {
-            r["responsible_id"] for r in
-            query("select responsible_id from rsk_processing_responsible where processing_id=%s",
-                  (processing["id"],))
-        }
     close_conditions = query("select id, label from rsk_close_condition order by id")
     responsibles = query("select id, name from rsk_responsible order by id")
 
     return render(request, "rsk_detail.html", "rsk-registry",
                   v=v, items=items, latest=latest, processing=processing,
-                  responsible_ids=responsible_ids,
                   close_conditions=close_conditions, responsibles=responsibles,
                   ru_track=RU_RSK_TRACK,
                   status_key=rsk_pseudo_status({**(latest or {}), "is_active": v["is_active"],
@@ -7337,7 +7336,6 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
                          f_track_phys: str = "", f_track_design: str = "", f_track_id: str = ""):
     v = None
     processing = None
-    responsible_ids = set()
     if sys_no.strip():
         try:
             v = query_one("select * from rsk_violation where sys_no=%s", (int(sys_no),))
@@ -7352,20 +7350,11 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
             v["remedy"] = latest_item["remedy"] if latest_item else None
             v["due_date"] = latest_item["due_date"] if latest_item else None
             processing = query_one("select * from rsk_processing where violation_id=%s", (v["id"],))
-            if processing:
-                responsible_ids = {
-                    r["responsible_id"] for r in
-                    query("select responsible_id from rsk_processing_responsible where processing_id=%s",
-                          (processing["id"],))
-                }
 
     where = ["1=1"]
     params = []
     if f_responsible.strip():
-        where.append(
-            "p.id is not null and exists (select 1 from rsk_processing_responsible pr3 "
-            "where pr3.processing_id = p.id and pr3.responsible_id = %s)"
-        )
+        where.append("p.responsible_id = %s")
         params.append(int(f_responsible))
     if f_track_phys.strip():
         where.append("coalesce(p.track_phys, 'unknown') = %s")
@@ -7383,17 +7372,18 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
         r["status_key"] = rsk_pseudo_status(r)
 
     # Полный список с флагом `active` — не только активные. Фильтр выше
-    # таблицы читает только `r.active` (шаблон), а чекбоксы формы отработки
-    # — `r.active or r.id in responsible_ids`: неактивная «ИКС», уже
-    # отмеченная у ЭТОГО нарушения, должна остаться видимой и отмеченной,
-    # иначе следующее же сохранение формы молча стёрло бы её из
-    # rsk_processing_responsible (список чекбоксов — источник того, что
-    # сервер запишет, см. api_rsk_processing_upsert).
+    # таблицы читает только `r.active` (шаблон), а радиокнопки формы
+    # отработки — `r.active or r.id == processing.responsible_id`:
+    # неактивная «ИКС», уже выбранная у ЭТОГО нарушения, должна остаться
+    # видимой и отмеченной, иначе следующее же сохранение формы молча
+    # стёрло бы её (радиогруппа — источник того, что сервер запишет, см.
+    # api_rsk_processing_upsert). Координатор, 25.09.2026: один
+    # ответственный отдел на нарушение, не несколько (миграция 043).
     responsibles = query("select id, name, active from rsk_responsible order by id")
     close_conditions = query("select id, label from rsk_close_condition order by id")
 
     return render(request, "rsk_processing.html", "rsk-processing",
-                  v=v, processing=processing, responsible_ids=responsible_ids,
+                  v=v, processing=processing,
                   rows=rows, responsibles=responsibles, close_conditions=close_conditions,
                   ru_track=RU_RSK_TRACK, ru_status=RU_RSK_STATUS, status_badge=RSK_STATUS_BADGE,
                   f_responsible=f_responsible, f_track_phys=f_track_phys,
@@ -7404,7 +7394,7 @@ def rsk_processing_page(request: Request, sys_no: str = "", f_responsible: str =
 def api_rsk_processing_upsert(
     request: Request, sys_no: int = Form(...),
     track_phys: str = Form("unknown"), track_design: str = Form("unknown"), track_id_: str = Form("unknown"),
-    responsible_ids: list[int] = Form(default=[]), close_condition_id: str = Form(""),
+    responsible_id: str = Form(""), close_condition_id: str = Form(""),
     planned_close_date: str = Form(""), rejected: str = Form(""), comment: str = Form(""),
     resolved: str = Form(""), resolved_date: str = Form(""),
 ):
@@ -7419,6 +7409,12 @@ def api_rsk_processing_upsert(
                                  status_code=303)
 
     cc_val = int(close_condition_id) if close_condition_id.strip() else None
+    # Координатор, 25.09.2026 (поправка к контуру РСК) — у нарушения
+    # ровно один ответственный отдел, не несколько (миграция 043,
+    # rsk_processing.responsible_id). Форма — радиогруппа (одно значение
+    # или ничего), не чекбоксы; rsk_processing_responsible (m2m) больше
+    # не пишется отсюда, оставлена нетронутой на решение координатора.
+    responsible_val = int(responsible_id) if responsible_id.strip() else None
     planned_val = _parse_date(planned_close_date) if planned_close_date.strip() else None
     rejected_val = rejected == "1"
     comment_val = comment.strip() or None
@@ -7436,36 +7432,30 @@ def api_rsk_processing_upsert(
         cur.execute(
             """
             insert into rsk_processing
-                (violation_id, track_phys, track_design, track_id, close_condition_id,
+                (violation_id, track_phys, track_design, track_id, responsible_id, close_condition_id,
                  planned_close_date, rejected, comment, resolved, resolved_date, updated_ts)
-            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+            values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
             on conflict (violation_id) do update set
                 track_phys=excluded.track_phys, track_design=excluded.track_design,
-                track_id=excluded.track_id, close_condition_id=excluded.close_condition_id,
+                track_id=excluded.track_id, responsible_id=excluded.responsible_id,
+                close_condition_id=excluded.close_condition_id,
                 planned_close_date=excluded.planned_close_date, rejected=excluded.rejected,
                 comment=excluded.comment, resolved=excluded.resolved, resolved_date=excluded.resolved_date,
                 updated_ts=now()
             returning id
             """,
-            (v["id"], track_phys, track_design, track_id_, cc_val, planned_val, rejected_val, comment_val,
-             resolved_val, resolved_date_val),
+            (v["id"], track_phys, track_design, track_id_, responsible_val, cc_val, planned_val, rejected_val,
+             comment_val, resolved_val, resolved_date_val),
         )
         processing_id = cur.fetchone()["id"]
-
-        cur.execute("delete from rsk_processing_responsible where processing_id=%s", (processing_id,))
-        for rid in responsible_ids:
-            cur.execute(
-                "insert into rsk_processing_responsible (processing_id, responsible_id) values (%s,%s) "
-                "on conflict do nothing",
-                (processing_id, rid),
-            )
 
         cur.execute(
             "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
             "values (%s, 'rsk_processing', %s, 'rsk_processing_update', %s, 'форма /rsk/processing')",
             (user_id, processing_id, json.dumps(
                 {"sys_no": sys_no, "track_phys": track_phys, "track_design": track_design,
-                 "track_id": track_id_, "resolved": resolved_val}, ensure_ascii=False)),
+                 "track_id": track_id_, "responsible_id": responsible_val, "resolved": resolved_val},
+                ensure_ascii=False)),
         )
         return processing_id
 
@@ -7479,38 +7469,194 @@ def api_rsk_processing_upsert(
 # шага: /rsk/import (форма + после отправки — предпросмотр с диффом,
 # ничего ещё не записано) → /rsk/import/confirm (запись). Файл между
 # шагами лежит в RSK_UPLOADS_DIR под токеном.
+#
+# Координатор, 25.09.2026 (регрессия — раньше формы для загрузки нового
+# акта не было, дифф считался равенством sys_no) — ПЕРЕСМОТРЕНО: № из
+# акта (то, что печатает РСК) может меняться от акта к акту, поэтому
+# больше не используется как ключ отождествления. Идентичность нарушения
+# между актами — текст + раздел (`control_section`) с порогом схожести,
+# см. `_rsk_match_new_act()`. `rsk_violation.sys_no` — теперь ВНУТРЕННИЙ,
+# однажды присвоенный номер приложения (не перепечатывается из акта
+# повторно для уже известных нарушений), новым нарушениям присваивается
+# заново (max+1), не берётся из акта. `rsk_processing` (слой 2) остаётся
+# на `violation_id` — уже было верно (миграция 024), эта правка ничего
+# там не меняет, только чинит то, ЧТО именно матчится в `violation_id`.
 # ---------------------------------------------------------------------
 
-def _rsk_diff_vs_previous(new_records):
-    new_by_sysno = {r["sys_no"]: r for r in new_records}
-    new_sysnos = set(new_by_sysno)
+RSK_MATCH_EXACT = 0.97       # почти точное совпадение текста — принимается сразу, без проверки отрыва
+RSK_MATCH_CONFIDENT = 0.80   # выше (при достаточном отрыве) — авто-перенос без вопроса к пользователю
+RSK_MATCH_CANDIDATE = 0.55   # ниже — не кандидат вообще, не показывается
+RSK_MATCH_MARGIN = 0.08      # отрыв от второго места, нужный для авто-переноса ниже RSK_MATCH_EXACT
 
-    prev_act = query_one("select id, act_no, act_date from rsk_act order by act_date desc, id desc limit 1")
-    if not prev_act:
-        return {"prev_act": None, "new": sorted(new_sysnos), "removed": [], "changed": [], "unchanged": []}
 
-    prev_items = query(
-        "select v.sys_no, i.content, i.remedy from rsk_act_item i "
-        "join rsk_violation v on v.id = i.violation_id where i.act_id=%s",
-        (prev_act["id"],),
-    )
-    prev_by_sysno = {r["sys_no"]: r for r in prev_items}
-    prev_sysnos = set(prev_by_sysno)
+def _rsk_open_candidates():
+    """Все структурно открытые (is_active) нарушения с текстом последней
+    известной позиции — пул, с которым сравнивается новый акт. Закрытые
+    ранее нарушения не участвуют: по модели координатора «появилось
+    впервые = новое», повторное появление текстуально похожего, но уже
+    закрытого нарушения — это новое нарушение, не реактивация старого
+    (открытый вопрос, см. REQUIRES COORDINATOR DECISION в run log)."""
+    rows = query("""
+        select v.id as violation_id, v.sys_no, i.content, i.control_section,
+               coalesce(p.resolved, false) as resolved
+        from rsk_violation v
+        join lateral (
+            select content, control_section from rsk_act_item
+            where violation_id = v.id order by act_id desc limit 1
+        ) i on true
+        left join rsk_processing p on p.violation_id = v.id
+        where v.is_active
+    """)
+    for r in rows:
+        r["_norm"] = norm_literal(r["content"] or "")
+    return rows
 
-    new_list = sorted(new_sysnos - prev_sysnos)
-    removed_list = sorted(prev_sysnos - new_sysnos)
-    changed_list = []
-    unchanged_list = []
-    for sn in sorted(new_sysnos & prev_sysnos):
-        old = prev_by_sysno[sn]
-        new = new_by_sysno[sn]
-        if (old["content"] or "") != (new["content"] or "") or (old["remedy"] or "") != (new["remedy"] or ""):
-            changed_list.append(sn)
+
+def _rsk_match_new_act(new_records, overrides=None):
+    """Отождествление позиций нового акта с уже существующими открытыми
+    нарушениями — текстом (`content`, нормализованным) плюс разделом
+    (`control_section`) как жёстким предфильтром, похожестью
+    (`difflib.SequenceMatcher`, не № — см. докстринг блока выше).
+
+    `overrides` — явные решения пользователя с предыдущего предпросмотра
+    для неоднозначных случаев: {индекс_записи: violation_id или None}
+    (None = «это новое нарушение», а не «нет решения» — отсутствие ключа
+    означает «решения ещё нет»).
+
+    Жадный алгоритм (не оптимальный по Хунгарианской схеме, но
+    предсказуемый и достаточный для ожидаемого масштаба изменений между
+    актами: единицы-десятки позиций, не сотни): все пары (запись,
+    кандидат) с похожестью выше порога сортируются по убыванию, разбираются
+    по одной, каждая запись и каждое нарушение занимаются НАВСЕГДА после
+    первого совпадения — дальше не участвуют ни в чьих других парах.
+    Уверенное авто-совпадение — это ЛИБО почти точное текстовое
+    совпадение (RSK_MATCH_EXACT, принимается сразу — при обработке по
+    убыванию похожести к моменту разбора настоящей пары с баллом ~1.0
+    более высоких баллов уже нет ни у кого, отрыв неважен), ЛИБО балл
+    выше RSK_MATCH_CONFIDENT с достаточным отрывом от следующего
+    кандидата ТОЙ ЖЕ записи (RSK_MATCH_MARGIN). Без отрыва при обычной
+    (не почти точной) уверенности результат неоднозначен и требует
+    подтверждения человеком, никогда не сливается молча. Найдено на
+    живой проверке 25.09.2026: без исключения для почти точных
+    совпадений повторная загрузка ТОГО ЖЕ акта считала уверенным
+    совпадением только 99 из 152 позиций — остальные 53 расходились по
+    margin с другими нарушениями того же участка, делящими одну и ту же
+    шаблонную формулировку (одна бригада, один и тот же типовой текст
+    нарушения на разных пикетах) при том, что сама верная пара имела
+    100% совпадение текста, чего для однозначности более чем достаточно
+    само по себе."""
+    overrides = overrides or {}
+    candidates = _rsk_open_candidates()
+    by_id = {c["violation_id"]: c for c in candidates}
+
+    pairs = []
+    for idx, rec in enumerate(new_records):
+        norm_new = norm_literal(rec.get("content") or "")
+        same_section = [c for c in candidates if c["control_section"] == rec.get("control_section")]
+        pool = same_section if same_section else candidates
+        for c in pool:
+            score = difflib.SequenceMatcher(None, norm_new, c["_norm"]).ratio()
+            if score >= RSK_MATCH_CANDIDATE:
+                pairs.append((score, idx, c["violation_id"]))
+    pairs.sort(key=lambda t: -t[0])
+
+    record_candidates = defaultdict(list)
+    for score, idx, vid in pairs:
+        record_candidates[idx].append((score, vid))
+
+    plan = {}
+    claimed_records = set()
+    claimed_violations = set()
+
+    # Шаг 1 — явные решения пользователя забирают запись/нарушение
+    # безусловно, раньше любой автоматики.
+    for idx, choice in overrides.items():
+        plan[idx] = {"kind": "new" if choice is None else "confirmed", "violation_id": choice}
+        claimed_records.add(idx)
+        if choice is not None:
+            claimed_violations.add(choice)
+
+    # Шаг 2 — уверенные автоматические совпадения по убыванию похожести.
+    for score, idx, vid in pairs:
+        if idx in claimed_records or vid in claimed_violations:
+            continue
+        if score >= RSK_MATCH_EXACT:
+            confident = True
+        elif score >= RSK_MATCH_CONFIDENT:
+            others = [s for s, v in record_candidates[idx] if v != vid and v not in claimed_violations]
+            confident = not others or (score - max(others)) >= RSK_MATCH_MARGIN
         else:
-            unchanged_list.append(sn)
+            confident = False
+        if confident:
+            plan[idx] = {"kind": "confident", "violation_id": vid}
+            claimed_records.add(idx)
+            claimed_violations.add(vid)
 
-    return {"prev_act": prev_act, "new": new_list, "removed": removed_list,
-            "changed": changed_list, "unchanged": unchanged_list}
+    # Шаг 3 — остаток: без кандидатов вовсе → новое; с кандидатами, но
+    # без уверенности/отрыва → неоднозначно, ждёт решения пользователя.
+    for idx in range(len(new_records)):
+        if idx in claimed_records:
+            continue
+        remaining = sorted(
+            ((s, v) for s, v in record_candidates.get(idx, []) if v not in claimed_violations),
+            key=lambda t: -t[0],
+        )
+        if not remaining:
+            plan[idx] = {"kind": "new", "violation_id": None}
+        else:
+            plan[idx] = {
+                "kind": "ambiguous",
+                "violation_id": None,
+                "candidates": [
+                    {"violation_id": vid, "sys_no": by_id[vid]["sys_no"], "score": round(s, 3),
+                     "content": by_id[vid]["content"]}
+                    for s, vid in remaining[:4]
+                ],
+            }
+
+    matched_ids = {p["violation_id"] for p in plan.values() if p.get("violation_id") is not None}
+    removed = [c for c in candidates if c["violation_id"] not in matched_ids]
+    return {"plan": plan, "by_id": by_id, "removed": removed}
+
+
+def _rsk_build_import_result(new_records, overrides=None):
+    """Богатый дифф для предпросмотра И для записи — оба потребителя
+    вызывают эту же функцию над теми же данными, чтобы не завести два
+    определения одного результата (тот же принцип, что и
+    rsk_violation_is_removed() для «снято»)."""
+    match = _rsk_match_new_act(new_records, overrides)
+    plan, by_id = match["plan"], match["by_id"]
+
+    new_list, carried, changed, ambiguous, conflicts = [], [], [], [], []
+    for idx, rec in enumerate(new_records):
+        p = plan[idx]
+        if p["kind"] == "ambiguous":
+            ambiguous.append({"index": idx, "record": rec, "candidates": p["candidates"]})
+            continue
+        if p["kind"] == "new":
+            new_list.append({"index": idx, "record": rec})
+            continue
+        vid = p["violation_id"]
+        old = by_id.get(vid)
+        entry = {"index": idx, "record": rec, "violation_id": vid,
+                 "sys_no": old["sys_no"] if old else None}
+        if old and (old["content"] or "") == (rec.get("content") or ""):
+            carried.append(entry)
+        else:
+            changed.append(entry)
+        # Координатор, 25.09.2026, п. d — «Устранено», но снова в акте:
+        # не трогать флаг, только показать. Импорт никогда не пишет
+        # rsk_processing (слой 2 не тронут этим кодом ни здесь, ни где-
+        # либо ещё) — это только сигнал для предпросмотра/отчёта.
+        if old and old["resolved"]:
+            conflicts.append(entry)
+
+    return {
+        "plan": plan, "by_id": by_id,
+        "new": new_list, "removed": match["removed"],
+        "carried": carried, "changed": changed,
+        "ambiguous": ambiguous, "conflicts": conflicts,
+    }
 
 
 @app.get("/rsk/import")
@@ -7539,47 +7685,84 @@ def rsk_import_preview(request: Request, act_pdf: UploadFile = File(...)):
         return render(request, "rsk_import.html", "rsk-import", preview=None,
                       errors=[f"Не удалось разобрать PDF: {e}"])
 
-    diff = _rsk_diff_vs_previous(parsed["records"])
+    diff = _rsk_build_import_result(parsed["records"])
+    # Координатор, 25.09.2026, п. b — повторная загрузка уже загруженного
+    # акта (тот же act_no) отклоняется, ничего не пишется. Проверка уже
+    # здесь (не только в /confirm), чтобы форма честно показала это
+    # ДО того, как пользователь нажмёт «Подтвердить» — но реальный барьер
+    # против записи стоит в /confirm, эта проверка ниже — только для
+    # экрана.
+    duplicate = bool(query_one("select 1 from rsk_act where act_no=%s", (parsed["act"]["act_no"],)))
     return render(request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
-                  original_name=act_pdf.filename)
+                  original_name=act_pdf.filename, duplicate=duplicate)
 
 
 @app.post("/rsk/import/confirm")
-def rsk_import_confirm(request: Request, token: str = Form(...)):
+async def rsk_import_confirm(request: Request):
+    form = await request.form()
+    token = (form.get("token") or "").strip()
+    original_name = form.get("original_name") or ""
     if not has_permission(request.state.user, "rsk:submit"):
         return RedirectResponse(url="/rsk/import?err=" + urllib.parse.quote("Нет доступа."), status_code=303)
     pdf_path = os.path.join(RSK_UPLOADS_DIR, f"{token}.pdf")
-    if not os.path.exists(pdf_path):
+    if not token or not os.path.exists(pdf_path):
         return RedirectResponse(
             url="/rsk/import?err=" + urllib.parse.quote("Файл предпросмотра не найден — загрузите заново."),
             status_code=303,
         )
     parsed = parse_act(pdf_path)
-    diff = _rsk_diff_vs_previous(parsed["records"])
+
+    # Координатор, 25.09.2026, п. b — «reject a duplicate import of the
+    # same act number»: жёсткий отказ, не upsert (был `on conflict
+    # (act_no) do update` — тихо перезаписывал бы дату/итог того же акта
+    # при повторной загрузке). Ничего не пишется, файл предпросмотра
+    # остаётся — пользователь может отменить и выбрать другой.
+    if query_one("select 1 from rsk_act where act_no=%s", (parsed["act"]["act_no"],)):
+        diff = _rsk_build_import_result(parsed["records"])
+        return render(request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
+                      original_name=original_name, duplicate=True,
+                      errors=[f"Акт {parsed['act']['act_no']} уже загружен — повторная загрузка отклонена, "
+                              f"ничего не записано."])
+
+    # Координатор, 25.09.2026, п. c — неоднозначные соответствия решает
+    # человек, не порог похожести молча. Сначала находим, что вообще
+    # неоднозначно (без учёта решений формы), затем читаем решения ИМЕННО
+    # для этих индексов (resolve_<i> = id нарушения или "new"), потом
+    # пересчитываем итоговый план С этими решениями — он и идёт в запись.
+    draft = _rsk_build_import_result(parsed["records"])
+    overrides = {}
+    unresolved = []
+    for item in draft["ambiguous"]:
+        idx = item["index"]
+        raw = (form.get(f"resolve_{idx}") or "").strip()
+        if not raw:
+            unresolved.append(idx)
+            continue
+        overrides[idx] = None if raw == "new" else int(raw)
+
+    if unresolved:
+        diff = _rsk_build_import_result(parsed["records"], overrides=overrides)
+        return render(
+            request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
+            original_name=original_name, duplicate=False,
+            errors=[f"Разрешите все неоднозначные соответствия ({len(unresolved)} шт.) перед подтверждением — "
+                    f"для каждого выберите существующее нарушение или «новое», ничего не записано."],
+        )
+
+    diff = _rsk_build_import_result(parsed["records"], overrides=overrides)
 
     def _do(cur):
         act = parsed["act"]
         cur.execute(
-            "insert into rsk_act (act_no, act_date, total_declared, pdf_path) values (%s,%s,%s,%s) "
-            "on conflict (act_no) do update set act_date=excluded.act_date, "
-            "total_declared=excluded.total_declared returning id",
+            "insert into rsk_act (act_no, act_date, total_declared, pdf_path) values (%s,%s,%s,%s) returning id",
             (act["act_no"], act["act_date"], act["total_declared"], pdf_path),
         )
         act_id = cur.fetchone()["id"]
 
-        for rec in parsed["records"]:
-            cur.execute(
-                """
-                insert into rsk_violation (sys_no, first_act_no, first_detected_date, is_active, closed_in_act_id)
-                values (%(sys_no)s, %(first_act_no)s, %(first_detected_date)s, true, null)
-                on conflict (sys_no) do update set
-                    first_detected_date = least(rsk_violation.first_detected_date, excluded.first_detected_date),
-                    is_active = true, closed_in_act_id = null
-                returning id
-                """,
-                rec,
-            )
-            violation_id = cur.fetchone()["id"]
+        cur.execute("select coalesce(max(sys_no), 0) as n from rsk_violation")
+        next_sys_no = cur.fetchone()["n"]
+
+        def _write_act_item(violation_id, rec):
             cur.execute(
                 """
                 insert into rsk_act_item
@@ -7594,19 +7777,43 @@ def rsk_import_confirm(request: Request, token: str = Form(...)):
                 {**rec, "act_id": act_id, "violation_id": violation_id},
             )
 
-        # Диф — снятие: структурно, по множеству sys_no, никогда не по
-        # разбору человеческого текста. Заход 3, 10.09.2026, задача 5:
-        # закрываем РОВНО те sys_no, что уже показаны пользователю в
-        # diff["removed"] на предпросмотре (main.py:6890) — раньше здесь
-        # был отдельный, второй запрос активных нарушений, который мог
-        # разойтись с "removed" предпросмотра, если между предпросмотром
-        # и подтверждением что-то в rsk_violation изменилось (та же
-        # болезнь, что искал аудит 08.09.2026, — то же число, посчитанное
-        # дважды). Один источник: закрывается то, что показано.
-        if diff["removed"]:
+        # Новые — координатор, 25.09.2026: № из акта НЕ становится
+        # sys_no (может измениться в следующем акте, ненадёжен как ключ,
+        # см. докстринг _rsk_match_new_act). sys_no — свой, однажды
+        # присвоенный, дальше не меняется и не перепечатывается из акта.
+        for entry in diff["new"]:
+            rec = entry["record"]
+            next_sys_no += 1
             cur.execute(
-                "update rsk_violation set is_active=false, closed_in_act_id=%s where sys_no = any(%s)",
-                (act_id, diff["removed"]),
+                "insert into rsk_violation (sys_no, first_act_no, first_detected_date, is_active, closed_in_act_id) "
+                "values (%s, %s, %s, true, null) returning id",
+                (next_sys_no, rec["first_act_no"], rec["first_detected_date"]),
+            )
+            violation_id = cur.fetchone()["id"]
+            _write_act_item(violation_id, rec)
+
+        # Перенесённые (без изменений или с изменившейся формулировкой) —
+        # тот же violation_id, что и был, rsk_processing (слой 2) его не
+        # видит и не трогается этим кодом ни при каких условиях.
+        for entry in diff["carried"] + diff["changed"]:
+            rec = entry["record"]
+            violation_id = entry["violation_id"]
+            cur.execute(
+                "update rsk_violation set "
+                "first_detected_date = least(first_detected_date, %s) where id=%s",
+                (rec["first_detected_date"], violation_id),
+            )
+            _write_act_item(violation_id, rec)
+
+        # Снятые — структурно, по множеству id (не по разбору текста),
+        # РОВНО те, что показаны пользователю в diff["removed"] на этом
+        # же вызове _rsk_build_import_result (один источник, тот же
+        # принцип, что и раньше — не пересчитывать отдельно второй раз).
+        removed_ids = [c["violation_id"] for c in diff["removed"]]
+        if removed_ids:
+            cur.execute(
+                "update rsk_violation set is_active=false, closed_in_act_id=%s where id = any(%s)",
+                (act_id, removed_ids),
             )
 
         cur.execute(
@@ -7614,7 +7821,9 @@ def rsk_import_confirm(request: Request, token: str = Form(...)):
             "values (%s, 'rsk_act', %s, 'rsk_act_import', %s, 'форма /rsk/import')",
             (current_user_id_or_web_form(), act_id, json.dumps(
                 {"act_no": act["act_no"], "positions": len(parsed["records"]),
-                 "new": len(diff["new"]), "removed": len(diff["removed"]), "changed": len(diff["changed"])},
+                 "new": len(diff["new"]), "removed": len(diff["removed"]),
+                 "changed": len(diff["changed"]), "carried": len(diff["carried"]),
+                 "conflicts_resolved_but_present": [e["sys_no"] for e in diff["conflicts"]]},
                 ensure_ascii=False)),
         )
         return act_id
@@ -7624,5 +7833,7 @@ def rsk_import_confirm(request: Request, token: str = Form(...)):
     ok_msg = urllib.parse.quote(
         f"Акт {parsed['act']['act_no']} загружен: {len(parsed['records'])} позиций, "
         f"{len(diff['new'])} новых, {len(diff['removed'])} снято."
+        + (f" Внимание: {len(diff['conflicts'])} нарушений отмечены «Устранено», но снова в акте — проверьте отработку."
+           if diff["conflicts"] else "")
     )
     return RedirectResponse(url=f"/rsk?ok={ok_msg}", status_code=303)

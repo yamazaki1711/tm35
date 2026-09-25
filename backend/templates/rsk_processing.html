@@ -7,18 +7,37 @@
     background: var(--c-surface); border: 1px solid var(--c-border-strong); color: var(--c-text);
     padding: .55rem .7rem; border-radius: var(--r-sm); font-size: .9rem; font-family: inherit;
   }
-  .rsk-checkbox-row { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1.4rem; }
-  .rsk-checkbox-row label { flex: 0 0 auto; flex-direction: row; align-items: center; gap: .4rem; font-weight: 500; white-space: nowrap; }
+  .rsk-radio-row { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1.4rem; }
+  {# Найдено координатором 25.09.2026: первый переключатель («ПТО») сидел
+     на 8px выше остальных (тогда — чекбоксы, координатор в тот же день
+     заменил группу на радиокнопки — один ответственный отдел, не
+     несколько, — причина смещения та же и переживает замену контрола).
+     Причина — не разная разметка (все label байт-в-байт одинаковы), а
+     глобальное правило .form-box label { display:block; margin-top:1rem }
+     (style.css) с исключением :first-child { margin-top:0 }: оно
+     продолжает действовать здесь, потому что это правило ничего не
+     переопределяло — ни display, ни margin, только flex-direction/
+     align-items/gap, бессмысленные без display:flex на самом label.
+     Первый <label> в этом div — единственный :first-child, получал
+     margin-top:0, остальные — margin-top:16px от того же глобального
+     правила, отсюда и разъезд по вертикали (проверено
+     getBoundingClientRect: 1006.9px vs 1014.9px). Исправлено явным
+     display:inline-flex и margin:0 на каждом — та же причина, что и у
+     .rsk-standalone-check/.rsk-comment-block label ниже, там совпадение
+     не было видно только потому, что группа из одного элемента визуально
+     не с чем сравнивать. #}
+  .rsk-radio-row label { display: inline-flex; align-items: center; gap: .4rem; flex: 0 0 auto; margin: 0; font-weight: 500; white-space: nowrap; }
   tr.rsk-row-selected td { background: var(--c-primary-bg); }
 
   /* Группа «Ответственный» — раньше был <label> с несколькими вложенными
-     <label>/чекбоксами внутри: клик по пустому месту в его блоке (правее
-     последнего чекбокса, вся ширина формы, до .rsk-checkbox-row) отмечал
-     ПЕРВЫЙ чекбокс («ПТО») — implicit label-binding идёт по первому
-     labelable-потомку, а не по видимому смыслу подписи (найдено
-     координатором 21.09.2026). fieldset/legend — правильная HTML-
-     конструкция именно для «подпись группы контролов», legend физически
-     не может ничего «привязать» к себе. */
+     <label>/чекбоксами внутри (на 25.09.2026 заменены радиокнопками, см.
+     ниже — сам дефект и его причина не изменились): клик по пустому
+     месту в его блоке (правее последнего элемента, вся ширина формы, до
+     .rsk-radio-row) отмечал ПЕРВЫЙ пункт («ПТО») — implicit label-binding
+     идёт по первому labelable-потомку, а не по видимому смыслу подписи
+     (найдено координатором 21.09.2026). fieldset/legend — правильная
+     HTML-конструкция именно для «подпись группы контролов», legend
+     физически не может ничего «привязать» к себе. */
   .rsk-fieldset { border: 0; padding: 0; margin: 1rem 0 0; }
   .rsk-fieldset legend { padding: 0; font-size: .85rem; font-weight: 600; color: var(--c-text-2); margin-bottom: .4rem; }
   .rsk-comment-block { margin-top: 1rem; }
@@ -146,21 +165,32 @@
   </label>
 
   {# Группа контролов — fieldset/legend, не <label>, оборачивающий
-     несколько чекбоксов: implicit label-binding связывает подпись с
+     несколько радиокнопок: implicit label-binding связывает подпись с
      ПЕРВЫМ labelable-потомком, не с видимым смыслом текста — клик по
      пустому месту внутри блока (правее «Лаборатория», вплоть до края
-     формы) отмечал «ПТО» (найдено координатором 21.09.2026). legend не
-     может ничего «привязать» к себе — структурно не воспроизводимо. #}
+     формы) отмечал «ПТО» (найдено координатором 21.09.2026, тогда ещё
+     на чекбоксах). legend не может ничего «привязать» к себе —
+     структурно не воспроизводимо.
+
+     Координатор, 25.09.2026 — у нарушения РОВНО один ответственный
+     отдел, множественный выбор отменён: чекбоксы (name="responsible_ids",
+     массив) заменены радиокнопками с общим name="responsible_id" —
+     браузер сам гарантирует взаимоисключение, второй уровень защиты не
+     нужен. Добавлен явный пункт «не назначен», чтобы отметку можно было
+     снять целиком, а не только сменить на другой отдел (у чекбоксов это
+     получалось само собой — снять галочку; у радиогруппы без такого
+     пункта отменить выбор штатными средствами нельзя). #}
   <fieldset class="rsk-fieldset">
     <legend>Ответственный</legend>
-    <div class="rsk-checkbox-row">
+    <div class="rsk-radio-row">
+      <label><input type="radio" name="responsible_id" value="" style="width:auto" {{ 'checked' if not (processing and processing.responsible_id) }}> не назначен</label>
       {# ИКС скрыта из выбора (координатор 16.09.2026, ИКС.active=false) —
-         условие ниже держит её чекбокс в разметке ровно тогда, когда
-         именно ЭТО нарушение уже отмечено на неё, иначе сохранение формы
-         молча снимало бы отметку (чекбокс, которого нет в разметке, не
-         попадает в отправленный список). #}
-      {% for r in responsibles if r.active or r.id in responsible_ids %}
-      <label><input type="checkbox" name="responsible_ids" value="{{ r.id }}" style="width:auto" {{ 'checked' if r.id in responsible_ids }}> {{ r.name }}</label>
+         условие ниже держит её пункт в разметке ровно тогда, когда
+         именно ЭТО нарушение уже назначено на неё, иначе сохранение формы
+         молча стёрло бы отметку (пункта, которого нет в разметке, нельзя
+         выбрать и отправить). #}
+      {% for r in responsibles if r.active or (processing and processing.responsible_id == r.id) %}
+      <label><input type="radio" name="responsible_id" value="{{ r.id }}" style="width:auto" {{ 'checked' if processing and processing.responsible_id == r.id }}> {{ r.name }}</label>
       {% endfor %}
     </div>
   </fieldset>
@@ -228,7 +258,7 @@
       <td class="nowrap">{{ ru_track.get(r.track_phys, r.track_phys) }}</td>
       <td class="nowrap">{{ ru_track.get(r.track_design, r.track_design) }}</td>
       <td class="nowrap">{{ ru_track.get(r.track_id, r.track_id) }}</td>
-      <td>{{ r.responsible_names }}</td>
+      <td>{{ r.responsible_name }}</td>
     </tr>
     {% endfor %}
   </tbody>

@@ -103,7 +103,7 @@
       <td class="nowrap">{{ r.act_date|fmt_dmy if r.act_date else '—' }}</td>
       <td class="nowrap">{{ r.due_date|fmt_dmy if r.due_date else '—' }}</td>
       <td class="nowrap">{{ r.resolved_date|fmt_dmy if r.resolved and r.resolved_date else ('да' if r.resolved else '—') }}</td>
-      <td>{{ r.responsible_names }}</td>
+      <td>{{ r.responsible_name }}</td>
     </tr>
     {% endfor %}
   </tbody>

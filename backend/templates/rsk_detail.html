@@ -30,8 +30,8 @@
   <p><b>Физика:</b> {{ ru_track.get(processing.track_phys, processing.track_phys) }}
      · <b>Проект:</b> {{ ru_track.get(processing.track_design, processing.track_design) }}
      · <b>ИД:</b> {{ ru_track.get(processing.track_id, processing.track_id) }}</p>
-  <p><b>Ответственные:</b>
-    {% for r in responsibles if r.id in responsible_ids %}{{ r.name }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}
+  <p><b>Ответственный:</b>
+    {{ processing.responsible_id and (responsibles | selectattr('id','equalto',processing.responsible_id) | map(attribute='name') | first) or '—' }}
   </p>
   <p><b>Условие снятия:</b> {{ processing.close_condition_id and (close_conditions | selectattr('id','equalto',processing.close_condition_id) | map(attribute='label') | first) or '—' }}</p>
   <p><b>Плановая дата снятия:</b> {{ processing.planned_close_date|fmt_dmy if processing.planned_close_date else '—' }}</p>

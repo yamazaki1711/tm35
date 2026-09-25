@@ -40,6 +40,10 @@
 <h3>Предпросмотр — акт {{ preview.act.act_no or '?' }} от {{ preview.act.act_date|fmt_dmy if preview.act.act_date else '?' }}</h3>
 <p class="subtitle">Файл: {{ original_name }}. Ничего ещё не записано в базу.</p>
 
+{% if duplicate %}
+<div class="flash flash-err">Акт {{ preview.act.act_no }} уже загружен в базу — повторная загрузка отклонена, запись невозможна.</div>
+{% endif %}
+
 <div class="kpi-row kpi-small">
   <div class="kpi">
     <div class="kpi-num">{{ preview.records | length }}</div>
@@ -54,33 +58,93 @@
   </div>
 </div>
 
-{% if diff.prev_act %}
-<p class="subtitle">Сравнение с предыдущим загруженным актом — {{ diff.prev_act.act_no }} от {{ diff.prev_act.act_date|fmt_dmy }}.</p>
+<p class="subtitle">Сравнение с текущим реестром открытых нарушений — отождествление по тексту и разделу, не по номеру из акта (номер может измениться между актами).</p>
 <div class="kpi-row kpi-small">
   <div class="kpi"><div class="kpi-num ok">{{ diff.new | length }}</div><div class="kpi-label">Новые нарушения</div></div>
   <div class="kpi"><div class="kpi-num ok">{{ diff.removed | length }}</div><div class="kpi-label">Снятые (исчезли из акта)</div></div>
+  <div class="kpi"><div class="kpi-num">{{ diff.carried | length }}</div><div class="kpi-label">Перенесено без изменений</div></div>
   <div class="kpi"><div class="kpi-num warn">{{ diff.changed | length }}</div><div class="kpi-label">Изменили формулировку</div></div>
-  <div class="kpi"><div class="kpi-num">{{ diff.unchanged | length }}</div><div class="kpi-label">Без изменений</div></div>
+  <div class="kpi"><div class="kpi-num {{ 'warn' if diff.ambiguous }}">{{ diff.ambiguous | length }}</div><div class="kpi-label">Неоднозначные</div></div>
 </div>
-<div class="table-wrap" style="margin-top:1rem">
-<table>
-  <thead><tr><th>Новые</th><th>Снятые</th><th>Изменили формулировку</th></tr></thead>
-  <tbody>
-    <tr>
-      <td>{{ diff.new | join(', ') if diff.new else '—' }}</td>
-      <td>{{ diff.removed | join(', ') if diff.removed else '—' }}</td>
-      <td>{{ diff.changed | join(', ') if diff.changed else '—' }}</td>
-    </tr>
-  </tbody>
-</table>
+
+{% if diff.conflicts %}
+<div class="flash flash-err">
+  Отмечены «Устранено» в отработке, но снова присутствуют в этом акте — отметка НЕ снимается автоматически, проверьте отработку:
+  {% for c in diff.conflicts %}<a href="/rsk/processing?sys_no={{ c.sys_no }}">№{{ c.sys_no }}</a>{{ ', ' if not loop.last }}{% endfor %}
 </div>
-{% else %}
-<p class="subtitle">Предыдущего акта в базе нет — все {{ preview.records | length }} позиций будут заведены как новые.</p>
 {% endif %}
 
-<form method="post" action="/rsk/import/confirm" style="margin-top:1.5rem">
+<form method="post" action="/rsk/import/confirm" style="margin-top:1rem">
   <input type="hidden" name="token" value="{{ token }}">
+  <input type="hidden" name="original_name" value="{{ original_name }}">
+
+  {% if diff.ambiguous %}
+  <h3>Неоднозначные соответствия — требуют решения</h3>
+  <div class="table-wrap" style="margin-bottom:1rem">
+  <table class="data-table">
+    <thead><tr><th>Позиция в новом акте</th><th>Решение</th></tr></thead>
+    <tbody>
+      {% for item in diff.ambiguous %}
+      <tr>
+        <td class="wrap" style="max-width:420px">{{ item.record.content or '—' }}</td>
+        <td class="nowrap">
+          <select name="resolve_{{ item.index }}" required>
+            <option value="" disabled selected>— выберите —</option>
+            {% for c in item.candidates %}
+            <option value="{{ c.violation_id }}">№{{ c.sys_no }} ({{ (c.score * 100) | round | int }}%) — {{ (c.content or '')[:60] }}</option>
+            {% endfor %}
+            <option value="new">Новое нарушение (ни один из вариантов)</option>
+          </select>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if diff.new %}
+  <h3>Новые нарушения ({{ diff.new | length }})</h3>
+  <div class="table-wrap" style="margin-bottom:1rem">
+  <table class="data-table">
+    <tbody>
+      {% for entry in diff.new %}
+      <tr><td class="wrap">{{ (entry.record.content or '—')[:160] }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if diff.removed %}
+  <h3>Снятые — отсутствуют в этом акте ({{ diff.removed | length }})</h3>
+  <div class="table-wrap" style="margin-bottom:1rem">
+  <table class="data-table">
+    <tbody>
+      {% for c in diff.removed %}
+      <tr><td class="nowrap"><a href="/rsk/violation/{{ c.sys_no }}">№{{ c.sys_no }}</a></td><td class="wrap">{{ (c.content or '—')[:160] }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if diff.changed %}
+  <h3>Изменили формулировку ({{ diff.changed | length }})</h3>
+  <div class="table-wrap" style="margin-bottom:1rem">
+  <table class="data-table">
+    <tbody>
+      {% for entry in diff.changed %}
+      <tr><td class="nowrap"><a href="/rsk/violation/{{ entry.sys_no }}">№{{ entry.sys_no }}</a></td><td class="wrap">{{ (entry.record.content or '—')[:160] }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if not duplicate %}
   <button type="submit" data-hotkey-save>Подтвердить и записать в базу</button>
+  {% endif %}
   <a href="/rsk/import" class="btn-secondary" style="margin-left:.75rem">Отменить, загрузить другой файл</a>
 </form>
 {% endif %}
