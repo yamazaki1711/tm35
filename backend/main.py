@@ -7394,7 +7394,135 @@ def rsk_violation_detail(request: Request, sys_no: int):
                                                  "track_phys": processing["track_phys"] if processing else "unknown",
                                                  "track_design": processing["track_design"] if processing else "unknown",
                                                  "track_id": processing["track_id"] if processing else "unknown"}),
-                  ru_status=RU_RSK_STATUS)
+                  ru_status=RU_RSK_STATUS,
+                  can_correct=has_permission(request.state.user, "rsk:submit"))
+
+
+# Координатор, 28.09.2026 (нарушение №354, см. docs/RUN_20260928_rsk_-
+# violation_354_fix.md) — ручной инструмент исправления структурного
+# закрытия, для тех же прав, что загрузка акта («rsk:submit»). Работает
+# ТОЛЬКО со слоем 1 (is_active/closed_in_act_id) — «Устранено» (слой 2)
+# по-прежнему правится только в форме /rsk/processing, этот инструмент
+# её не трогает ни при каких условиях.
+
+def _rsk_merge_violation(cur, surviving_id, duplicate_id):
+    """Дубликат поглощается выжившим: его позиции актов и связи с ИД
+    переезжают на surviving_id (при конфликте уникальности — не
+    перезаписывают то, что уже есть у выжившего, теряется только сам
+    факт дубля-записи, не данные), обработка (слой 2) дубля просто
+    отбрасывается — surviving_id сохраняет СВОЮ, это его точка зрения
+    выживает, не дубля. Возвращает snapshot для audit_log."""
+    cur.execute("select * from rsk_violation where id=%s", (duplicate_id,))
+    dup_snapshot = dict(cur.fetchone())
+    cur.execute(
+        "update rsk_act_item set violation_id=%s where violation_id=%s "
+        "and act_id not in (select act_id from rsk_act_item where violation_id=%s)",
+        (surviving_id, duplicate_id, surviving_id),
+    )
+    moved_items = cur.rowcount
+    cur.execute("delete from rsk_act_item where violation_id=%s", (duplicate_id,))
+    cur.execute(
+        "update id_row_rsk_link set violation_id=%s where violation_id=%s "
+        "and row_id not in (select row_id from id_row_rsk_link where violation_id=%s)",
+        (surviving_id, duplicate_id, surviving_id),
+    )
+    moved_links = cur.rowcount
+    cur.execute("delete from id_row_rsk_link where violation_id=%s", (duplicate_id,))
+    cur.execute("delete from rsk_processing_responsible where processing_id in "
+                "(select id from rsk_processing where violation_id=%s)", (duplicate_id,))
+    cur.execute("delete from rsk_processing where violation_id=%s", (duplicate_id,))
+    cur.execute("delete from rsk_violation where id=%s", (duplicate_id,))
+    return dup_snapshot, moved_items, moved_links
+
+
+@app.post("/api/rsk-violation/{sys_no}/reopen")
+def api_rsk_violation_reopen(request: Request, sys_no: int, merge_sys_no: str = Form("")):
+    if not has_permission(request.state.user, "rsk:submit"):
+        return RedirectResponse(url=f"/rsk/violation/{sys_no}?err=" + urllib.parse.quote("Нет доступа."),
+                                 status_code=303)
+    v = query_one("select * from rsk_violation where sys_no=%s", (sys_no,))
+    if not v:
+        return RedirectResponse(url="/rsk", status_code=303)
+    if v["is_active"]:
+        return RedirectResponse(url=f"/rsk/violation/{sys_no}?err="
+                                 + urllib.parse.quote("Нарушение уже активно."), status_code=303)
+
+    merge_target = None
+    if merge_sys_no.strip():
+        merge_target = query_one("select * from rsk_violation where sys_no=%s", (int(merge_sys_no),))
+        if not merge_target:
+            return RedirectResponse(url=f"/rsk/violation/{sys_no}?err="
+                                     + urllib.parse.quote(f"Нарушение №{merge_sys_no} не найдено."), status_code=303)
+        if merge_target["id"] == v["id"]:
+            return RedirectResponse(url=f"/rsk/violation/{sys_no}?err="
+                                     + urllib.parse.quote("Нельзя объединить нарушение само с собой."), status_code=303)
+
+    def _do(cur):
+        before = {"is_active": v["is_active"], "closed_in_act_id": v["closed_in_act_id"]}
+        cur.execute("update rsk_violation set is_active=true, closed_in_act_id=null where id=%s", (v["id"],))
+        reason_parts = [f"Ручное исправление: нарушение №{sys_no} помечено «не снято», "
+                        f"было закрыто (closed_in_act_id={before['closed_in_act_id']})."]
+        merge_info = None
+        if merge_target:
+            dup_snapshot, moved_items, moved_links = _rsk_merge_violation(cur, v["id"], merge_target["id"])
+            merge_info = {"merged_sys_no": merge_target["sys_no"], "merged_violation_id": merge_target["id"],
+                          "moved_act_items": moved_items, "moved_id_links": moved_links,
+                          "duplicate_snapshot": _clean_none_for_display(dup_snapshot)}
+            reason_parts.append(f"Объединено с №{merge_target['sys_no']} (id={merge_target['id']}, удалено как "
+                                 f"дубликат) — перенесено позиций акта: {moved_items}, связей с ИД: {moved_links}.")
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+            "values (%s, 'rsk_violation', %s, 'rsk_manual_reopen', %s, %s)",
+            (current_user_id_or_web_form(), v["id"], json.dumps(
+                {"sys_no": sys_no, "before": before, "after": {"is_active": True, "closed_in_act_id": None},
+                 "merge": merge_info}, ensure_ascii=False, default=str),
+             " ".join(reason_parts)),
+        )
+
+    run_in_transaction(_do)
+    ok = f"Нарушение №{sys_no} помечено активным."
+    if merge_target:
+        ok += f" Объединено с №{merge_target['sys_no']}, дубликат удалён."
+    return RedirectResponse(url=f"/rsk/violation/{sys_no}?ok=" + urllib.parse.quote(ok), status_code=303)
+
+
+@app.post("/api/rsk-violation/{sys_no}/reclose")
+def api_rsk_violation_reclose(request: Request, sys_no: int):
+    """Обратное действие — «Разъединить»: если реактивация из
+    предыдущего инструмента была ошибкой (нарушение на самом деле было
+    закрыто верно), возвращает структурное закрытие. НЕ восстанавливает
+    удалённый при объединении дубликат (это необратимо — см.
+    _rsk_merge_violation) — только откатывает саму реактивацию."""
+    if not has_permission(request.state.user, "rsk:submit"):
+        return RedirectResponse(url=f"/rsk/violation/{sys_no}?err=" + urllib.parse.quote("Нет доступа."),
+                                 status_code=303)
+    v = query_one("select * from rsk_violation where sys_no=%s", (sys_no,))
+    if not v:
+        return RedirectResponse(url="/rsk", status_code=303)
+    if not v["is_active"]:
+        return RedirectResponse(url=f"/rsk/violation/{sys_no}?err="
+                                 + urllib.parse.quote("Нарушение уже не активно."), status_code=303)
+
+    latest_act = query_one("select id, act_no from rsk_act order by act_date desc, id desc limit 1")
+
+    def _do(cur):
+        cur.execute("update rsk_violation set is_active=false, closed_in_act_id=%s where id=%s",
+                    (latest_act["id"] if latest_act else None, v["id"]))
+        cur.execute(
+            "insert into audit_log (user_id, entity_type, entity_id, action, new_value, reason) "
+            "values (%s, 'rsk_violation', %s, 'rsk_manual_reclose', %s, %s)",
+            (current_user_id_or_web_form(), v["id"], json.dumps(
+                {"sys_no": sys_no, "before": {"is_active": True, "closed_in_act_id": None},
+                 "after": {"is_active": False, "closed_in_act_id": latest_act["id"] if latest_act else None}},
+                ensure_ascii=False),
+             f"Ручное исправление: нарушение №{sys_no} возвращено в «снято» (отмена ошибочной реактивации)."),
+        )
+
+    run_in_transaction(_do)
+    return RedirectResponse(
+        url=f"/rsk/violation/{sys_no}?ok=" + urllib.parse.quote(f"Нарушение №{sys_no} снова отмечено снятым."),
+        status_code=303,
+    )
 
 
 # ---------------------------------------------------------------------
@@ -7562,6 +7690,45 @@ RSK_MATCH_CONFIDENT = 0.80   # выше (при достаточном отры�
 RSK_MATCH_CANDIDATE = 0.55   # ниже — не кандидат вообще, не показывается
 RSK_MATCH_MARGIN = 0.08      # отрыв от второго места, нужный для авто-переноса ниже RSK_MATCH_EXACT
 
+# Координатор, 28.09.2026 (нарушение №354 закрылось структурно, хотя
+# реально не снято — счёт был 0.407 по обоим метрикам ниже, но раздел
+# другой и близких конкурентов не было, поэтому «прошло» в removed без
+# вопроса). Порог для ВТОРОЙ, более широкой проверки — не «это точно
+# совпадение», а «это НЕ настолько непохоже, чтобы закрывать молча»,
+# поэтому счёт умышленно НИЖЕ RSK_MATCH_CANDIDATE и без ограничения по
+# разделу: если ЛЮБАЯ позиция нового акта (в любом разделе) наберёт
+# столько — закрытие идёт в ручное подтверждение, не автоматом.
+RSK_CLOSURE_REVIEW_THRESHOLD = 0.40
+
+
+def token_set_ratio(a, b):
+    """Похожесть по НАБОРУ слов, не по порядку символов — устойчиво к
+    перестановке/пропуску отдельных слов, которым SequenceMatcher (по
+    символам подряд) не устойчив. Тот же алгоритм, что fuzzywuzzy
+    token_set_ratio (пересечение слов + разности, попарный
+    SequenceMatcher по отсортированным строкам, максимум из трёх)."""
+    t1, t2 = set(a.split()), set(b.split())
+    inter = t1 & t2
+    base = " ".join(sorted(inter))
+    comb1 = " ".join(sorted(inter | (t1 - t2)))
+    comb2 = " ".join(sorted(inter | (t2 - t1)))
+    return max(
+        difflib.SequenceMatcher(None, base, comb1).ratio(),
+        difflib.SequenceMatcher(None, base, comb2).ratio(),
+        difflib.SequenceMatcher(None, comb1, comb2).ratio(),
+    )
+
+
+def _rsk_text_similarity(norm_a, norm_b):
+    """Максимум из двух метрик — по символам (SequenceMatcher, ловит
+    почти дословные повторы и мелкую правку) и по словам (token_set_ratio,
+    ловит переставленные/урезанные формулировки). «Какая выше» — то же
+    правило, что координатор задал для порога закрытия."""
+    return max(
+        difflib.SequenceMatcher(None, norm_a, norm_b).ratio(),
+        token_set_ratio(norm_a, norm_b),
+    )
+
 
 def _rsk_open_candidates():
     """Все структурно открытые (is_active) нарушения с текстом последней
@@ -7693,11 +7860,72 @@ def _rsk_match_new_act(new_records, overrides=None):
     return {"plan": plan, "by_id": by_id, "removed": removed}
 
 
-def _rsk_build_import_result(new_records, overrides=None):
+def _rsk_closure_review_candidates(old, new_records, plan):
+    """Координатор, 28.09.2026 (нарушение №354) — перед тем, как молча
+    закрыть нарушение (в новом акте не нашлось ЕГО пары), проверяем ещё
+    раз, широко: по ВСЕМ позициям нового акта, без ограничения разделом,
+    обеими метриками похожести, и отдельно — печатный «№» из акта. Если
+    что-то похоже нашлось — не закрываем молча, отдаём человеку. Ищем и
+    среди СКЛЕЕННЫХ пар соседних позиций (текст нарушения мог оказаться
+    разбит актом на две позиции подряд) — это только для показа
+    («похоже на объединение …»), выбрать склейку как привязку нельзя
+    (в модели нет «одно нарушение = два новых пункта», это ручная
+    правка в БД, не мастер)."""
+    norm_old = old["_norm"]
+    candidates = []
+    for idx, rec in enumerate(new_records):
+        norm_new = norm_literal(rec.get("content") or "")
+        score = _rsk_text_similarity(norm_old, norm_new)
+        same_number = rec.get("sys_no") is not None and rec.get("sys_no") == old["sys_no"]
+        if score >= RSK_CLOSURE_REVIEW_THRESHOLD or same_number:
+            claimed_vid = plan.get(idx, {}).get("violation_id")
+            candidates.append({
+                "index": idx, "score": round(score, 3), "same_number": same_number,
+                "content": rec.get("content"), "item_no": rec.get("item_no"),
+                "claimed_by_violation_id": claimed_vid if plan.get(idx, {}).get("kind") == "confirmed"
+                or plan.get(idx, {}).get("kind") == "confident" else None,
+                "selectable": plan.get(idx, {}).get("kind") not in ("confirmed", "confident"),
+                "merged_hint": None,
+            })
+    # Склейка соседних позиций документа (разрыв текста между двумя
+    # напечатанными пунктами) — только информационно, см. докстринг.
+    for i in range(len(new_records) - 1):
+        a, b = new_records[i], new_records[i + 1]
+        joined = norm_literal((a.get("content") or "") + " " + (b.get("content") or ""))
+        score = _rsk_text_similarity(norm_old, joined)
+        if score >= RSK_CLOSURE_REVIEW_THRESHOLD and score > max((c["score"] for c in candidates), default=0):
+            candidates.append({
+                "index": None, "score": round(score, 3), "same_number": False,
+                "content": f"[{a.get('item_no')}] {a.get('content') or ''} + [{b.get('item_no')}] {b.get('content') or ''}",
+                "item_no": f"{a.get('item_no')}+{b.get('item_no')}",
+                "claimed_by_violation_id": None, "selectable": False,
+                "merged_hint": (i, i + 1),
+            })
+    candidates.sort(key=lambda c: -c["score"])
+    return candidates[:4]
+
+
+def _rsk_build_import_result(new_records, overrides=None, closure_decisions=None):
     """Богатый дифф для предпросмотра И для записи — оба потребителя
     вызывают эту же функцию над теми же данными, чтобы не завести два
     определения одного результата (тот же принцип, что и
-    rsk_violation_is_removed() для «снято»)."""
+    rsk_violation_is_removed() для «снято»).
+
+    `closure_decisions` — явные решения пользователя по нарушениям,
+    которые иначе закрылись бы молча, но у них нашёлся правдоподобный
+    (хоть и не уверенный) конкурент в новом акте (см.
+    `_rsk_closure_review_candidates`): {violation_id: "closed" | "active"
+    | индекс_записи}. Индекс записи — «это то же самое нарушение» (тот
+    же путь, что и явный выбор в неоднозначных соответствиях: попадает в
+    `overrides` для `_rsk_match_new_act`, поэтому вызывается ДО неё, не
+    после). Ничего не решено — нарушение остаётся в `closure_review`,
+    ждёт человека, не закрывается и не остаётся активным молча."""
+    closure_decisions = closure_decisions or {}
+    overrides = dict(overrides or {})
+    for vid, decision in closure_decisions.items():
+        if isinstance(decision, int):
+            overrides[decision] = vid
+
     match = _rsk_match_new_act(new_records, overrides)
     plan, by_id = match["plan"], match["by_id"]
 
@@ -7725,9 +7953,34 @@ def _rsk_build_import_result(new_records, overrides=None):
         if old and old["resolved"]:
             conflicts.append(entry)
 
+    # Координатор, 28.09.2026 — прежде чем что-то из match["removed"]
+    # реально закрыть, ещё раз проверяем широко (см. докстринг
+    # _rsk_closure_review_candidates). Без решения пользователя — в
+    # closure_review, не в removed. Явное «closed» — подтверждено,
+    # закрываем. Явное «active» — не закрываем, оставляем активным без
+    # привязки. Явный индекс — уже обработан выше через overrides, эта
+    # violation вообще не попадёт в match["removed"] (стала carried/
+    # changed через обычный матчинг).
+    removed, closure_review, reactivated = [], [], []
+    for old in match["removed"]:
+        vid = old["violation_id"]
+        decision = closure_decisions.get(vid)
+        if decision == "closed":
+            removed.append(old)
+            continue
+        if decision == "active":
+            reactivated.append(old)
+            continue
+        review_candidates = _rsk_closure_review_candidates(old, new_records, plan)
+        if review_candidates:
+            closure_review.append({"violation": old, "candidates": review_candidates})
+        else:
+            removed.append(old)
+
     return {
         "plan": plan, "by_id": by_id,
-        "new": new_list, "removed": match["removed"],
+        "new": new_list, "removed": removed, "closure_review": closure_review,
+        "reactivated": reactivated,
         "carried": carried, "changed": changed,
         "ambiguous": ambiguous, "conflicts": conflicts,
     }
@@ -7870,16 +8123,37 @@ async def rsk_import_confirm(request: Request):
             continue
         overrides[idx] = None if raw == "new" else int(raw)
 
-    if unresolved:
-        diff = _rsk_build_import_result(parsed["records"], overrides=overrides)
+    # Координатор, 28.09.2026 (нарушение №354) — то же самое для закрытий
+    # без уверенного кандидата: closure_<violation_id> = "closed" (да,
+    # снято) / "active" (нет, оставить активным без привязки) / индекс
+    # записи (то же самое нарушение — станет override для матчинга).
+    closure_decisions = {}
+    unresolved_closures = []
+    for item in draft["closure_review"]:
+        vid = item["violation"]["violation_id"]
+        raw = (form.get(f"closure_{vid}") or "").strip()
+        if not raw:
+            unresolved_closures.append(vid)
+            continue
+        closure_decisions[vid] = raw if raw in ("closed", "active") else int(raw)
+
+    if unresolved or unresolved_closures:
+        diff = _rsk_build_import_result(parsed["records"], overrides=overrides, closure_decisions=closure_decisions)
+        errors = []
+        if unresolved:
+            errors.append(f"Разрешите все неоднозначные соответствия ({len(unresolved)} шт.) перед подтверждением — "
+                           f"для каждого выберите существующее нарушение или «новое».")
+        if unresolved_closures:
+            errors.append(f"Разрешите все случаи возможного совпадения при закрытии ({len(unresolved_closures)} шт.) "
+                           f"перед подтверждением — для каждого выберите «снято», «активно» или конкретное "
+                           f"совпадение.")
+        errors.append("Ничего не записано.")
         return render(
             request, "rsk_import.html", "rsk-import", preview=parsed, diff=diff, token=token,
-            original_name=original_name, duplicate=False,
-            errors=[f"Разрешите все неоднозначные соответствия ({len(unresolved)} шт.) перед подтверждением — "
-                    f"для каждого выберите существующее нарушение или «новое», ничего не записано."],
+            original_name=original_name, duplicate=False, errors=errors,
         )
 
-    diff = _rsk_build_import_result(parsed["records"], overrides=overrides)
+    diff = _rsk_build_import_result(parsed["records"], overrides=overrides, closure_decisions=closure_decisions)
 
     # Координатор, 25.09.2026, п. 2 — массовое закрытие требует явной
     # галочки на экране предпросмотра, посчитанной ТЕМ ЖЕ порогом, что и
@@ -7978,7 +8252,15 @@ async def rsk_import_confirm(request: Request):
                 {"act_no": act["act_no"], "positions": len(parsed["records"]),
                  "new": len(diff["new"]), "removed": len(diff["removed"]),
                  "changed": len(diff["changed"]), "carried": len(diff["carried"]),
-                 "conflicts_resolved_but_present": [e["sys_no"] for e in diff["conflicts"]]},
+                 "conflicts_resolved_but_present": [e["sys_no"] for e in diff["conflicts"]],
+                 # Координатор, 28.09.2026 — нарушения с найденным правдоподобным
+                 # кандидатом (см. _rsk_closure_review_candidates), подтверждённые
+                 # человеком как «снято» ИЛИ оставленные активными явным решением.
+                 "closure_review_confirmed_closed": [
+                     c["violation"]["sys_no"] for c in draft["closure_review"]
+                     if closure_decisions.get(c["violation"]["violation_id"]) == "closed"
+                 ],
+                 "closure_review_kept_active": [e["sys_no"] for e in diff["reactivated"]]},
                 ensure_ascii=False)),
         )
         return act_id
@@ -7994,5 +8276,7 @@ async def rsk_import_confirm(request: Request):
         f"{len(diff['new'])} новых, {len(diff['removed'])} снято."
         + (f" Внимание: {len(diff['conflicts'])} нарушений отмечены «Устранено», но снова в акте — проверьте отработку."
            if diff["conflicts"] else "")
+        + (f" {len(diff['reactivated'])} нарушений оставлены активными вручную (похожи на позиции акта, "
+           f"но не признаны тем же нарушением)." if diff["reactivated"] else "")
     )
     return RedirectResponse(url=f"/rsk?ok={ok_msg}", status_code=303)

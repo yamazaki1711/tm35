@@ -65,6 +65,7 @@
   <div class="kpi"><div class="kpi-num">{{ diff.carried | length }}</div><div class="kpi-label">Перенесено без изменений</div></div>
   <div class="kpi"><div class="kpi-num warn">{{ diff.changed | length }}</div><div class="kpi-label">Изменили формулировку</div></div>
   <div class="kpi"><div class="kpi-num {{ 'warn' if diff.ambiguous }}">{{ diff.ambiguous | length }}</div><div class="kpi-label">Неоднозначные</div></div>
+  <div class="kpi"><div class="kpi-num {{ 'warn' if diff.closure_review }}">{{ diff.closure_review | length }}</div><div class="kpi-label">Проверить перед снятием</div></div>
 </div>
 
 {% if diff.conflicts %}
@@ -94,6 +95,40 @@
             <option value="{{ c.violation_id }}">№{{ c.sys_no }} ({{ (c.score * 100) | round | int }}%) — {{ (c.content or '')[:60] }}</option>
             {% endfor %}
             <option value="new">Новое нарушение (ни один из вариантов)</option>
+          </select>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+
+  {% if diff.closure_review %}
+  <h3>Проверить перед снятием — нашлось похожее в акте</h3>
+  <div class="table-wrap" style="margin-bottom:1rem">
+  <table class="data-table">
+    <thead><tr><th>Снимается (было)</th><th>Похоже на (в новом акте)</th><th>Решение</th></tr></thead>
+    <tbody>
+      {% for item in diff.closure_review %}
+      <tr>
+        <td class="nowrap"><a href="/rsk/violation/{{ item.violation.sys_no }}">№{{ item.violation.sys_no }}</a></td>
+        <td class="wrap" style="max-width:360px">{{ item.violation.content or '—' }}</td>
+        <td class="wrap" style="max-width:360px">
+          {% for c in item.candidates %}
+          <div style="margin-bottom:.4rem">
+            п.{{ c.item_no }} ({{ (c.score * 100) | round | int }}%{{ ', тот же №' if c.same_number }}{% if c.claimed_by_violation_id and c.claimed_by_violation_id in diff.by_id %}, уже сопоставлен с №{{ diff.by_id[c.claimed_by_violation_id].sys_no }}{% endif %}): {{ (c.content or '')[:120] }}
+          </div>
+          {% endfor %}
+        </td>
+        <td class="nowrap">
+          <select name="closure_{{ item.violation.violation_id }}" required>
+            <option value="" disabled selected>— выберите —</option>
+            <option value="closed">Снято — это другое нарушение</option>
+            {% for c in item.candidates if c.selectable %}
+            <option value="{{ c.index }}">То же нарушение, что п.{{ c.item_no }}</option>
+            {% endfor %}
+            <option value="active">Не снято — оставить активным (без привязки к пункту)</option>
           </select>
         </td>
       </tr>

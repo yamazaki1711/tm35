@@ -137,6 +137,51 @@ def test_shifted_layout():
           rp.verify_column_header(FakePdfOk()) is True)
 
 
+def test_violation_354_regression():
+    """Координатор, 28.09.2026 — реальная пара текстов, на которой
+    структурное закрытие ушло молча (акт 4183-162, нарушение №354):
+    старое нарушение о СИЗ/касках не совпало ни с чем в новом акте по
+    старому порогу (RSK_MATCH_CANDIDATE=0.55) и закрылось без вопроса,
+    хотя реально не снято (координатор подтвердил). Лучший конкурент
+    («4.3», про дорожные знаки при въезде — совсем другая тема) набирал
+    0.407 — ниже 0.55, но ВЫШЕ RSK_CLOSURE_REVIEW_THRESHOLD (0.40),
+    введённого этой же правкой. Регрессионный тест фиксирует ровно эту
+    пару, чтобы порог/логика не разъехались молча в будущем."""
+    print("\n=== Регрессия №354 (реальные тексты акта 4183-159 → 4183-162) ===")
+    sys.path.insert(0, "/app")
+    import main as m
+
+    old_text = ("У персонала, занятого на производстве работ, отсутствуют средства "
+                "индивидуальной защиты (каски). Нарушены требования: п. 30, 31 «Приказ "
+                "№ 883н \"Об утверждении правил по охране труда при строительстве\" от "
+                "11.12.2020»; п. 5.13 СНиП 12-03-2001 «Безопасность труда в строительстве. "
+                "Часть 1. Общие требования»; ч. 6 ст. 52 ГрК РФ.")
+    new_text_43 = ("При въезде на строительную площадку не установлены дорожные знаки. "
+                   "Нарушены требования проектной документации л. 16 шифр "
+                   "2020.069.3000-ТМ-ПОС-ПЗ; ч. 6 ст. 52 ГрК РФ.")
+
+    norm_old = m.norm_literal(old_text)
+    norm_new = m.norm_literal(new_text_43)
+    score = m._rsk_text_similarity(norm_old, norm_new)
+    print(f"  score(354, «4.3») = {score:.3f}")
+    check("счёт похожести зафиксирован в известном диапазоне 0.35-0.45 (документирует находку)",
+          0.35 <= score <= 0.45, f"score={score:.3f}")
+    check("счёт НИЖЕ старого RSK_MATCH_CANDIDATE (0.55) — по старой логике не было бы даже кандидатом",
+          score < m.RSK_MATCH_CANDIDATE, f"score={score:.3f} vs {m.RSK_MATCH_CANDIDATE}")
+    check("счёт ВЫШЕ нового RSK_CLOSURE_REVIEW_THRESHOLD (0.40) — новая защита обязана сработать",
+          score >= m.RSK_CLOSURE_REVIEW_THRESHOLD, f"score={score:.3f} vs {m.RSK_CLOSURE_REVIEW_THRESHOLD}")
+
+    # Прямая проверка защитной функции на этой самой паре (не через БД —
+    # синтетический "старый" кандидат и синтетическая "новая" запись).
+    fake_old = {"violation_id": -1, "sys_no": 354, "content": old_text,
+                "_norm": norm_old, "control_section": 4, "resolved": False}
+    fake_new_records = [{"item_no": "4.3", "control_section": 4, "content": new_text_43, "sys_no": None}]
+    candidates = m._rsk_closure_review_candidates(fake_old, fake_new_records, plan={})
+    check("_rsk_closure_review_candidates находит эту пару (не пустой список)",
+          len(candidates) == 1 and candidates[0]["item_no"] == "4.3",
+          f"candidates={candidates}")
+
+
 if __name__ == "__main__":
     import os
 
@@ -150,6 +195,7 @@ if __name__ == "__main__":
               f"(PDF акта не хранится в репозитории между сессиями)")
 
     test_shifted_layout()
+    test_violation_354_regression()
 
     print()
     if FAILURES:
