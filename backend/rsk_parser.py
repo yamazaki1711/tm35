@@ -188,6 +188,25 @@ def find_header_band_range(bands):
 HEADER_DIGIT_TO_COL = {"1": 0, "2": 1, "3": 2, "4": 3}
 
 
+def find_image_only_pages(pdf):
+    """Координатор, 30.09.2026 — находка №354 (act 4183-162): последняя
+    страница акта состояла из ОДНОГО вложенного изображения (0 chars,
+    0 rects, 0 lines, 1 image через page.objects) — визуально текст на
+    ней виден чётко, но pdfplumber не извлекает из неё ни единого слова,
+    и целая позиция акта (с итоговой строкой «Общее количество
+    нарушений») выпала из разбора без единого сообщения.
+    `total_chars_extracted` (весь документ) эту находку не ловит — 46
+    страниц из 47 читались нормально. Ловим отдельно: страница с
+    контентом (не титульный лист), у которой НЕТ извлечённых слов, но
+    есть хотя бы одно вложенное изображение — сама картинка отличает
+    «текста реально нет» от «страница действительно пуста» (у пустой
+    страницы не бывает и изображения)."""
+    return [
+        pi for pi, p in enumerate(pdf.pages)
+        if pi > 0 and not p.extract_words() and len(p.images) > 0
+    ]
+
+
 def verify_column_header(pdf):
     for page in pdf.pages[:3]:
         raw = page.extract_words()
@@ -239,6 +258,7 @@ def parse_act(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         total_chars_extracted = sum(len(p.extract_text() or "") for p in pdf.pages)
         header_ok = verify_column_header(pdf)
+        image_only_pages = find_image_only_pages(pdf)
 
     bands, total_declared, raw_band_count, act_no, act_date = load_bands(pdf_path)
     header_band_ids = find_header_band_range(bands)
@@ -315,6 +335,7 @@ def parse_act(pdf_path):
         "control_sections_found": n_header_zones,
         "total_chars_extracted": total_chars_extracted,
         "header_ok": header_ok,
+        "image_only_pages": image_only_pages,
     }
 
     return {

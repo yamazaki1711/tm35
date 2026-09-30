@@ -119,6 +119,8 @@
           <div style="margin-bottom:.4rem">
             п.{{ c.item_no }} ({{ (c.score * 100) | round | int }}%{{ ', тот же №' if c.same_number }}{% if c.claimed_by_violation_id and c.claimed_by_violation_id in diff.by_id %}, уже сопоставлен с №{{ diff.by_id[c.claimed_by_violation_id].sys_no }}{% endif %}): {{ (c.content or '')[:120] }}
           </div>
+          {% else %}
+          <span style="color:var(--muted)">похожего пункта нет — на проверке, потому что устранение не подтверждено</span>
           {% endfor %}
         </td>
         <td class="nowrap">

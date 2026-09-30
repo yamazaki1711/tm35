@@ -7700,6 +7700,52 @@ RSK_MATCH_MARGIN = 0.08      # отрыв от второго места, нуж
 # столько — закрытие идёт в ручное подтверждение, не автоматом.
 RSK_CLOSURE_REVIEW_THRESHOLD = 0.40
 
+# Координатор, 30.09.2026 — реплей акта 4183-162 старым порогом
+# («score ≥ 0.40 → всегда на ручную проверку») отправил 17 из 17
+# закрытий в «Проверить перед снятием» — притом что 16 из них реально
+# устранены (rsk_processing.resolved = true), просто их формулировки
+# делят типовые нормативные фразы («Нарушены требования проектной
+# документации…», «ч. 6 ст. 52 ГрК РФ», перечни работ по разбивке осей
+# и т.п.) с ЛЮБЫМ другим нарушением того же типа — из-за этого счёт
+# похожести на СОВЕРШЕННО другое нарушение оказывался обманчиво высоким.
+# Список ниже — не придуман, а посчитан: n-граммы слов (после
+# norm_literal), встретившиеся в ≥20% позиций ОБОИХ хранимых актов
+# (4183-159 — 152 позиции, 4183-162 — 135 позиций, 287 всего), длинные
+# перекрывающиеся варианты одной и той же фразы поглощены более
+# полными (скрипт — derive_boilerplate.py, не хранится в репозитории,
+# результат воспроизводим по тем же двум актам в БД). Используется
+# ТОЛЬКО для решения «закрывать молча или на проверку» — не в основном
+# сопоставлении `_rsk_match_new_act()`, которое эту находку не касалась.
+RSK_BOILERPLATE_PHRASES = (
+    "без освидетельствования предыдущих работ. не представлена исполнительная документация "
+    "на следующие работы: - разбивка осей объекта капитального строительства на местности; "
+    "- снятие плодородного слоя;",
+    "изм.6; п. 9.1.7, п. 9.1.28 - 9.1.33 сп 48.13330.2019 «организация строительства»; "
+    "ч. 6 ст. 52 грк рф.",
+    "проектной документации: л. 14 шифр 2020.069.3000-тм-пос-пз, изм.6; п. 9.1.7, п. 9.1.28",
+    "разбивка осей объекта капитального строительства на местности; - снятие плодородного слоя; -",
+    "шифр 2020.069.3000- тм-пос-пз, изм.6; п.",
+    "нарушены требования: проектной документации: л. 14 шифр",
+    "нарушены требования проектной документации: л.",
+    "разработка котлована; - устройство бетонной",
+    "- разработка котлована; -",
+    "- устройство бетонной подготовки;",
+    "производятся работы по",
+)
+
+
+def _rsk_strip_boilerplate(norm_text):
+    """Убирает типовые нормативные фразы (см. RSK_BOILERPLATE_PHRASES)
+    перед сравнением похожести — иначе два РАЗНЫХ нарушения, делящих
+    общую шаблонную формулировку, кажутся похожими не по содержанию
+    дефекта, а по общему для всех цитированию норм. Не трогает
+    норм-текст, использующийся где-либо ещё (только копию для сравнения
+    в _rsk_closure_review_candidates)."""
+    out = norm_text
+    for phrase in RSK_BOILERPLATE_PHRASES:
+        out = out.replace(phrase, " ")
+    return re.sub(r"\s+", " ", out).strip()
+
 
 def token_set_ratio(a, b):
     """Похожесть по НАБОРУ слов, не по порядку символов — устойчиво к
@@ -7872,10 +7918,21 @@ def _rsk_closure_review_candidates(old, new_records, plan):
     (в модели нет «одно нарушение = два новых пункта», это ручная
     правка в БД, не мастер)."""
     norm_old = old["_norm"]
+    # Координатор, 30.09.2026 — сравнение на очищенном от типовых фраз
+    # тексте (см. RSK_BOILERPLATE_PHRASES); если после чистки почти
+    # ничего не осталось (< 5 слов) — очистка съела и содержательную
+    # часть, сравнение по пустому/крошечному остатку даёт обманчивую
+    # единицу «пусто похоже на пусто», откатываемся на неочищенный текст.
+    stripped_old = _rsk_strip_boilerplate(norm_old)
+    if len(stripped_old.split()) < 5:
+        stripped_old = norm_old
     candidates = []
     for idx, rec in enumerate(new_records):
         norm_new = norm_literal(rec.get("content") or "")
-        score = _rsk_text_similarity(norm_old, norm_new)
+        stripped_new = _rsk_strip_boilerplate(norm_new)
+        if len(stripped_new.split()) < 5:
+            stripped_new = norm_new
+        score = _rsk_text_similarity(stripped_old, stripped_new)
         same_number = rec.get("sys_no") is not None and rec.get("sys_no") == old["sys_no"]
         if score >= RSK_CLOSURE_REVIEW_THRESHOLD or same_number:
             claimed_vid = plan.get(idx, {}).get("violation_id")
@@ -7892,7 +7949,10 @@ def _rsk_closure_review_candidates(old, new_records, plan):
     for i in range(len(new_records) - 1):
         a, b = new_records[i], new_records[i + 1]
         joined = norm_literal((a.get("content") or "") + " " + (b.get("content") or ""))
-        score = _rsk_text_similarity(norm_old, joined)
+        stripped_joined = _rsk_strip_boilerplate(joined)
+        if len(stripped_joined.split()) < 5:
+            stripped_joined = joined
+        score = _rsk_text_similarity(stripped_old, stripped_joined)
         if score >= RSK_CLOSURE_REVIEW_THRESHOLD and score > max((c["score"] for c in candidates), default=0):
             candidates.append({
                 "index": None, "score": round(score, 3), "same_number": False,
@@ -7961,6 +8021,20 @@ def _rsk_build_import_result(new_records, overrides=None, closure_decisions=None
     # привязки. Явный индекс — уже обработан выше через overrides, эта
     # violation вообще не попадёт в match["removed"] (стала carried/
     # changed через обычный матчинг).
+    #
+    # Координатор, 30.09.2026 — реплей показал: старое правило («нет
+    # похожего кандидата → закрыть молча») отправляло в review 17 из 17
+    # закрытий этого акта (см. RSK_BOILERPLATE_PHRASES выше) — «проверить
+    # всё» равносильно «не проверять ничего», приглашает слепые клики.
+    # Новое правило координатора — закрывать МОЛЧА можно только когда
+    # ОБА условия верны: (а) слой 2 уже подтвердил устранение
+    # (`rsk_processing.resolved = true`) — то есть человек, а не парсер,
+    # решил, что нарушения нет; И (б) даже после чистки от типовых фраз
+    # ни один пункт нового акта не похож достаточно, чтобы заподозрить
+    # то же нарушение под другой формулировкой. Не выполнено любое из
+    # двух — не молчим, отдаём на «Проверить перед снятием» (в т.ч. когда
+    # resolved=false и кандидатов вообще нет: отсутствие подтверждения
+    # устранения само по себе повод спросить, не автоматика).
     removed, closure_review, reactivated = [], [], []
     for old in match["removed"]:
         vid = old["violation_id"]
@@ -7974,8 +8048,10 @@ def _rsk_build_import_result(new_records, overrides=None, closure_decisions=None
         review_candidates = _rsk_closure_review_candidates(old, new_records, plan)
         if review_candidates:
             closure_review.append({"violation": old, "candidates": review_candidates})
-        else:
+        elif old["resolved"]:
             removed.append(old)
+        else:
+            closure_review.append({"violation": old, "candidates": []})
 
     return {
         "plan": plan, "by_id": by_id,
@@ -8012,6 +8088,21 @@ def _rsk_hard_guard_errors(parsed):
         return ["Не удалось распознать номер/дату акта."]
     if not parsed["records"]:
         return ["В акте не найдено ни одного замечания."]
+    # Координатор, 30.09.2026 — находка №354 (act 4183-162): документ в
+    # целом читался нормально (46 страниц из 47 с текстом), но ОДНА
+    # страница оказалась вложенным изображением без текстового слоя —
+    # общий счётчик total_chars_extracted выше это не ловит, нужна
+    # отдельная постраничная проверка.
+    if checks.get("image_only_pages"):
+        pages_h = ", ".join(str(p + 1) for p in checks["image_only_pages"])
+        return [f"Страница(ы) {pages_h} акта — вложенное изображение без текстового "
+                "слоя (не читается разбором, хотя остальной документ в порядке). "
+                "Нужен файл, в котором эта страница выгружена как текст, а не как скан."]
+    total_declared = checks.get("total_declared_in_act")
+    if total_declared is not None and total_declared != len(parsed["records"]):
+        return [f"Акт заявляет {total_declared} нарушени(й), а разбор нашёл "
+                f"{len(parsed['records'])} — расхождение означает, что часть акта "
+                "не распознана (проверьте текстовый слой каждой страницы)."]
     return []
 
 
