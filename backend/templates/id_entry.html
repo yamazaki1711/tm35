@@ -48,11 +48,11 @@
         {% endfor %}
       </select>
     </label>
-    <label class="id-field">Раздел
-      <select id="f-row" required disabled><option value="">— сначала ответственный —</option></select>
+    <label class="id-field">Раздел (можно несколько — Ctrl+клик)
+      <select id="f-row" required multiple size="8" disabled></select>
     </label>
-    <label>Вид работ / этап
-      <select id="f-work-type" disabled><option value="">— сначала раздел —</option></select>
+    <label>Вид работ / этап (можно несколько; ничего не выбрано — «без вида работ»)
+      <select id="f-work-type" multiple size="6" disabled></select>
     </label>
     <label>Статус
       <select id="f-status" disabled><option value="">— сначала раздел —</option></select>
@@ -94,32 +94,9 @@
       <textarea id="f-comment"></textarea>
     </label>
   </div>
+  <div class="field-hint" id="f-notice" style="min-height:1em"></div>
   <div class="id-form-errors" id="f-errors"></div>
   <button type="button" id="f-submit" data-hotkey-save style="margin-top:1rem">Сохранить запись</button>
-</form>
-
-<h3>Блокировка ИЗМ</h3>
-<p class="subtitle">Признак, не статус — при блокировке текущий статус раздела сохраняется, после снятия
-работа продолжается с того же места. Отдельно от стоп-фактора выше: стоп-фактор ставит блокировку
-автоматически при сохранении записи (см. подсказку под полем), эта форма — для случая, когда
-привязка к конкретному ИЗМ нужна отдельно, без изменения статуса раздела.</p>
-<form class="form-box" id="id-block-form" method="post" style="max-width:520px;">
-  <div class="id-form-grid">
-    <label>Раздел (тот же выбор, что в форме выше)
-      <select id="b-row" disabled><option value="">— сначала ответственный выше —</option></select>
-    </label>
-    <label>Вид работ (опционально)
-      <select id="b-work-type" disabled><option value="">— весь раздел —</option></select>
-    </label>
-    <label>Номер/название ИЗМ
-      <input type="text" id="b-change-ref" placeholder="например, ИЗМ-19-КЖ">
-    </label>
-    <label>Комментарий
-      <input type="text" id="b-comment">
-    </label>
-  </div>
-  <div class="id-form-errors" id="b-errors"></div>
-  <button type="button" id="b-submit" data-hotkey-save style="margin-top:1rem" class="btn-secondary">Поставить блокировку</button>
 </form>
 
 <h3>Текущее состояние <a href="#" id="registry-refresh" style="font-size:.8rem;font-weight:500">обновить</a></h3>
@@ -208,9 +185,10 @@
 
   // Список разделов может доходить до ~150+ строк на нескольких вкладках
   // сразу (например, у Болтика В.Н. — 5 своих вкладок + 3 без-ответственного) —
-  // плоский select неюзабелен, группируем по вкладке.
-  function fillRowSelectGrouped(sel, tabs, placeholder) {
-    sel.innerHTML = '<option value="">' + placeholder + '</option>';
+  // плоский select неюзабелен, группируем по вкладке. Селект множественный
+  // (координатор, 17.10.2026) — плейсхолдер-опция в нём не нужна.
+  function fillRowSelectGrouped(sel, tabs) {
+    sel.innerHTML = '';
     var any = false;
     tabs.forEach(function (tab) {
       if (!tab.rows.length) return;
@@ -228,6 +206,18 @@
     sel.disabled = !any;
   }
 
+  function selectedRowIds() {
+    return Array.prototype.slice.call(document.getElementById('f-row').selectedOptions)
+      .map(function (o) { return o.value; }).filter(Boolean);
+  }
+
+  function selectedWtIds() {
+    var wt = document.getElementById('f-work-type');
+    if (wt.disabled) return [];
+    return Array.prototype.slice.call(wt.selectedOptions)
+      .map(function (o) { return o.value; }).filter(Boolean);
+  }
+
   function loadResponsible(name) {
     return fetch('/api/id-form/by-responsible?name=' + encodeURIComponent(name))
       .then(function (r) { return r.json(); })
@@ -237,12 +227,11 @@
         data.tabs.forEach(function (tab) {
           tab.rows.forEach(function (r) { rowTabIndex[r.id] = tab; });
         });
-        fillRowSelectGrouped(document.getElementById('f-row'), data.tabs, '— выбрать —');
-        fillRowSelectGrouped(document.getElementById('b-row'), data.tabs, '— выбрать —');
+        fillRowSelectGrouped(document.getElementById('f-row'), data.tabs);
         // Раздел ещё не выбран — вид работ/статус/кнопка подписи снова закрыты.
         fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
         fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
-        fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
+        document.getElementById('f-notice').textContent = '';
       });
   }
 
@@ -252,7 +241,29 @@
   });
 
   document.getElementById('f-row').addEventListener('change', function () {
-    var tab = rowTabIndex[this.value];
+    var noticeEl = document.getElementById('f-notice');
+    var errEl = document.getElementById('f-errors');
+    // Мультивыбор (17.10.2026): разделы берутся только с ОДНОЙ вкладки —
+    // статус и виды работ привязаны к вкладке, общий статус для разных
+    // справочников не определён. Чужие вкладки снимаются с выбора сами,
+    // остаётся вкладка первого выбранного раздела.
+    var ids = selectedRowIds();
+    if (ids.length > 1) {
+      var firstTab = rowTabIndex[ids[0]];
+      var outside = ids.filter(function (id) { return rowTabIndex[id] !== firstTab; });
+      if (outside.length) {
+        Array.prototype.forEach.call(this.options, function (o) {
+          if (o.selected && rowTabIndex[o.value] !== firstTab) o.selected = false;
+        });
+        noticeEl.textContent = 'Выбраны разделы с разных вкладок — оставлены только разделы вкладки «' + firstTab.tab_label + '» (' + selectedRowIds().length + ' шт.).';
+      } else {
+        noticeEl.textContent = '';
+      }
+    } else {
+      noticeEl.textContent = '';
+      errEl.textContent = '';
+    }
+    var tab = rowTabIndex[selectedRowIds()[0]];
     if (!tab) {
       fillSelect(document.getElementById('f-work-type'), [], 'id', function () { return ''; }, '— сначала раздел —');
       fillSelect(document.getElementById('f-status'), [], 'id', function () { return ''; }, '— сначала раздел —');
@@ -268,25 +279,20 @@
 
   document.getElementById('f-work-type').addEventListener('change', maybeLookupEntry);
 
-  document.getElementById('b-row').addEventListener('change', function () {
-    var tab = rowTabIndex[this.value];
-    if (!tab) {
-      fillSelect(document.getElementById('b-work-type'), [], 'id', function () { return ''; }, '— весь раздел —');
-      return;
-    }
-    fillSelect(document.getElementById('b-work-type'), tab.work_types, 'id', function (w) { return w.name; }, '— весь раздел —');
-  });
-
   // Автоподстановка ранее введённых данных (координатор, докс "Вопросы к
   // базе по ТМ-35", п.1, 06.09.2026): при выборе уже заполнявшегося
   // раздела+вида работ форма раньше всегда оставалась пустой. Пустая
   // строка/undefined на конце payload'а — работа "без вида работ" (тот же
-  // смысл, что %s::bigint is null на бэкенде).
+  // смысл, что %s::bigint is null на бэкенде). С мультивыбором (17.10.2026)
+  // подстановка работает только при РОВНО одном выбранном разделе — к чему
+  // применять чужие прежние значения при двух и более, не определено.
   function maybeLookupEntry() {
-    var rowId = document.getElementById('f-row').value;
-    if (!rowId) return;
+    var ids = selectedRowIds();
+    if (ids.length !== 1) return;
+    var rowId = ids[0];
     var wtSel = document.getElementById('f-work-type');
-    var wtId = wtSel.disabled ? '' : wtSel.value;
+    var wtIds = selectedWtIds();
+    var wtId = (wtSel.disabled || wtIds.length !== 1) ? '' : wtIds[0];
     fetch('/api/id-form/entry?row_id=' + encodeURIComponent(rowId) + '&work_type_id=' + encodeURIComponent(wtId))
       .then(function (r) { return r.json(); })
       .then(function (data) { fillFormFromEntry(data.entry); });
@@ -318,13 +324,16 @@
   document.getElementById('f-submit').addEventListener('click', function () {
     var errEl = document.getElementById('f-errors');
     errEl.textContent = '';
-    var rowId = document.getElementById('f-row').value;
-    var tab = rowTabIndex[rowId];
+    var rowIds = selectedRowIds();
+    if (!rowIds.length) { errEl.textContent = 'Выберите хотя бы один раздел.'; return; }
+    var tab = rowTabIndex[rowIds[0]];
     if (!tab) { errEl.textContent = 'Выберите раздел.'; return; }
+    var wtIds = selectedWtIds();
+    var combos = rowIds.length * Math.max(1, wtIds.length);
     var payload = {
       tab_id: tab.tab_id,
-      row_id: rowId,
-      work_type_id: document.getElementById('f-work-type').value,
+      row_ids: rowIds.join(','),
+      work_type_ids: wtIds.join(','),
       responsible_name: document.getElementById('f-responsible').value,
       status_id: document.getElementById('f-status').value,
       status_date: document.getElementById('f-status-date').value,
@@ -333,32 +342,25 @@
       rsk_signer_name: document.getElementById('f-rsk-signer').value,
       comment: document.getElementById('f-comment').value,
     };
-    postForm('/api/id-entry', payload).then(function (res) {
-      if (res.body.ok) {
-        toast('Запись сохранена');
-        document.getElementById('f-comment').value = '';
-        document.getElementById('f-stop-factor').value = '';
-        loadRegistry();
-      } else {
-        errEl.textContent = formatErrors(res);
-      }
-    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
-  });
-
-  document.getElementById('b-submit').addEventListener('click', function () {
-    var errEl = document.getElementById('b-errors');
-    errEl.textContent = '';
-    var rowId = document.getElementById('b-row').value;
-    if (!rowId) { errEl.textContent = 'Выберите раздел.'; return; }
-    postForm('/api/id-block', {
-      row_id: rowId,
-      work_type_id: document.getElementById('b-work-type').value,
-      change_ref: document.getElementById('b-change-ref').value,
-      comment: document.getElementById('b-comment').value,
-    }).then(function (res) {
-      if (res.body.ok) { toast('Блокировка поставлена'); loadRegistry(); }
-      else { errEl.textContent = formatErrors(res); }
-    }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+    var doSend = function () {
+      postForm('/api/id-entry', payload).then(function (res) {
+        if (res.body.ok) {
+          toast('Сохранено записей: ' + (res.body.created || 1));
+          document.getElementById('f-comment').value = '';
+          document.getElementById('f-stop-factor').value = '';
+          loadRegistry();
+        } else {
+          errEl.textContent = formatErrors(res);
+        }
+      }).catch(function (e) { errEl.textContent = 'Ошибка сети: ' + e; });
+    };
+    // Защита от массового клика: 150+ разделов на вкладке умножить на
+    // несколько видов работ — десятки-сотни записей одним нажатием.
+    if (combos > 50) {
+      if (window.confirm('Будет создано ' + combos + ' записей. Продолжить?')) doSend();
+    } else {
+      doSend();
+    }
   });
 
   function unblock(blockId) {
@@ -379,12 +381,16 @@
   function openRegistryRow(r) {
     document.getElementById('f-responsible').value = r.responsible_name;
     loadResponsible(r.responsible_name).then(function () {
+      // Селект множественный — клик по строке реестра сбрасывает выбор
+      // до этой единственной строки.
       var rowSel = document.getElementById('f-row');
-      rowSel.value = String(r.row_id);
+      Array.prototype.forEach.call(rowSel.options, function (o) { o.selected = false; });
+      var opt = Array.prototype.find.call(rowSel.options, function (o) { return o.value === String(r.row_id); });
+      if (opt) opt.selected = true;
       rowSel.dispatchEvent(new Event('change', { bubbles: true }));
       if (r.work_type_id) {
         var wtSel = document.getElementById('f-work-type');
-        wtSel.value = String(r.work_type_id);
+        Array.prototype.forEach.call(wtSel.options, function (o) { o.selected = (o.value === String(r.work_type_id)); });
       }
       maybeLookupEntry();
       document.getElementById('id-entry-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
