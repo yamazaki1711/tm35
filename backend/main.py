@@ -6778,65 +6778,12 @@ def api_id_form_entry_lookup(row_id: int, work_type_id: str = ""):
 @app.post("/api/id-entry")
 def api_id_entry_create(
     request: Request,
-    tab_id: int = Form(...), row_id: str = Form(""), work_type_id: str = Form(""),
-    row_ids: str = Form(""), work_type_ids: str = Form(""),
+    tab_id: int = Form(...), row_id: int = Form(...), work_type_id: str = Form(""),
     responsible_name: str = Form(...), status_id: str = Form(""),
     status_date: str = Form(""), planned_rsk_date: str = Form(""),
     stop_factor: str = Form(""), rsk_signer_name: str = Form(""), comment: str = Form(""),
 ):
     errors = []
-
-    # Мультивыбор (координатор, 17.10.2026): форма /id-entry принимает
-    # несколько разделов и несколько видов работ — row_ids/work_type_ids,
-    # списки id через запятую; на каждую комбинацию (раздел, вид работ)
-    # создаётся своя запись id_form_entry, всё в ОДНОЙ транзакции (либо
-    # всё, либо ничего). Одиночные row_id/work_type_id сохранены для
-    # совместимости — форма до этого слала только их.
-
-    def _parse_id_list(raw: str):
-        """Список int через запятую; None — в строке мусор; [] — пусто."""
-        vals, seen = [], set()
-        for chunk in (raw or "").split(","):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            try:
-                v = int(chunk)
-            except ValueError:
-                return None
-            if v not in seen:
-                seen.add(v)
-                vals.append(v)
-        return vals
-
-    row_id_list = _parse_id_list(row_ids)
-    if row_id_list is None:
-        row_id_list = []
-        errors.append("Список разделов указан некорректно.")
-    if not row_id_list and row_id.strip():
-        try:
-            row_id_list = [int(row_id)]
-        except ValueError:
-            errors.append("Раздел указан некорректно.")
-
-    wt_id_list = _parse_id_list(work_type_ids)
-    if wt_id_list is None:
-        wt_id_list = []
-        errors.append("Список видов работ указан некорректно.")
-    if not wt_id_list and work_type_id.strip():
-        try:
-            wt_id_list = [int(work_type_id)]
-        except ValueError:
-            errors.append("Вид работ указан некорректно.")
-    # Пустой список видов работ легитимен — это «без вида работ» (NULL),
-    # та же семантика, что у пустой строки в одиночной форме.
-
-    MAX_COMBOS = 200
-    if len(row_id_list) * max(1, len(wt_id_list)) > MAX_COMBOS:
-        errors.append(
-            f"Слишком много записей за раз (максимум {MAX_COMBOS}) — "
-            "разбейте выбор на части."
-        )
 
     # Учётные записи, 29.08.2026: заполняет форму только ответственный за
     # вкладку. AuthMiddleware уже гарантировал вход — здесь проверяем,
@@ -6851,13 +6798,18 @@ def api_id_entry_create(
             status_code=403,
         )
 
-    for rid in row_id_list:
-        if not query_one("select id from id_form_row where id=%s and tab_id=%s", (rid, tab_id)):
-            errors.append(f"Раздел/конструкция id={rid} не найдены на выбранной вкладке.")
+    if not query_one("select id from id_form_row where id=%s and tab_id=%s", (row_id, tab_id)):
+        errors.append("Раздел/конструкция не найдены на выбранной вкладке.")
 
-    for wt_id_val in wt_id_list:
-        if not query_one("select id from id_form_work_type where id=%s and tab_id=%s", (wt_id_val, tab_id)):
-            errors.append(f"Вид работ id={wt_id_val} не найден на выбранной вкладке.")
+    wt_id_val = None
+    if work_type_id.strip():
+        try:
+            wt_id_val = int(work_type_id)
+        except ValueError:
+            errors.append("Вид работ указан некорректно.")
+        else:
+            if not query_one("select id from id_form_work_type where id=%s and tab_id=%s", (wt_id_val, tab_id)):
+                errors.append("Вид работ не найден на выбранной вкладке.")
 
     # Подготовка пилота, 30.08.2026 (решение координатора): статус
     # обязателен ТОЛЬКО там, где у вкладки вообще есть справочник
@@ -6917,16 +6869,6 @@ def api_id_entry_create(
     comment_val = comment.strip() or None
 
     def _do(cur):
-        created = []
-        # Мультивыбор: пустой список видов работ = одна комбинация на
-        # раздел с work_type_id=NULL («без вида работ»), как в одиночной
-        # форме пустая строка давала NULL.
-        for wt_id_val in (wt_id_list or [None]):
-            for rid in row_id_list:
-                created.append(_create_one(cur, rid, wt_id_val))
-        return created
-
-    def _create_one(cur, row_id: int, wt_id_val):
         blocker_id_val = None
         if stop_val:
             # Существующий механизм blocker переиспользован, не новый.
@@ -7031,8 +6973,8 @@ def api_id_entry_create(
         )
         return entry_id
 
-    created_ids = run_in_transaction(_do)
-    return {"ok": True, "id": created_ids[0], "created": len(created_ids), "ids": created_ids}
+    entry_id = run_in_transaction(_do)
+    return {"ok": True, "id": entry_id}
 
 
 @app.post("/api/id-block")
