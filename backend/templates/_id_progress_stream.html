@@ -1,17 +1,21 @@
 {# Партиал «Поток по вкладкам» — вынесен из id_progress.html (ТЗ Якименко
-   А.И. №10, 23.09.2026, п.2), чтобы /dashboard («Обзор ИД») и
-   /id-progress показывали ОДНУ и ту же разметку над ОДНОЙ и той же
-   функцией (compute_id_progress_stream()), а не два независимо
-   написанных куска HTML над одним запросом — расхождение исключено по
-   построению, не сверкой после факта. Ожидает переменную `stream`
-   (список словарей tab_label/green_n/yellow_n/red_n) в контексте
-   включающего шаблона. Заголовок, легенда и сноска — те же самые, что
-   были на /id-progress до этого ТЗ, текст не менялся. #}
+   А.И. №10, 23.09.2026, п.2), изначально — чтобы /dashboard («Обзор
+   ИД») и /id-progress показывали ОДНУ и ту же разметку над ОДНОЙ и той
+   же функцией (compute_id_progress_stream()). УСТАРЕЛО 24.09.2026 (ТЗ
+   №11, блок А): «Поток по вкладкам» убран с /dashboard, там теперь
+   плитки _id_progress_tiles.html — этот партиал с того момента
+   подключён только из /id-progress (см. id_progress.html). Выносить
+   обратно в единственного потребителя не стали — ничего не сломано,
+   исправлен только сам комментарий (19.10.2026), чтобы не утверждать
+   неверное. Ожидает переменную `stream` (список словарей
+   tab_label/green_n/yellow_n/red_n/total_n) в контексте включающего
+   шаблона. #}
 <h3>Поток по вкладкам</h3>
-<div class="bar-chart">
+<div class="bar-chart bar-chart--totals">
   {% for r in stream %}
   <div class="bar-row">
     <div class="bar-label">{{ r.tab_label }}</div>
+    <div class="bar-total nowrap" title="Итого по трём корзинам: {{ r.total_n }}">{{ r.total_n }}</div>
     <div class="bar-track" style="display:flex; height:1.1rem;">
       {% if r.green_n > 0 %}<div style="flex:{{ r.green_n }} 0 0; background:var(--c-success);" title="Подписано: {{ r.green_n }}"></div>{% endif %}
       {% if r.yellow_n > 0 %}<div style="flex:{{ r.yellow_n }} 0 0; background:var(--c-warning);" title="В процессе подписания: {{ r.yellow_n }}"></div>{% endif %}

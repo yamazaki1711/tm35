@@ -994,6 +994,14 @@ code {
 .bar-fill.bar-bad { background: var(--c-danger); }
 .bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--c-text); font-weight: 600; min-width: 4.5rem; }
 
+/* /id-progress, "Поток по вкладкам", 19.10.2026 — колонка ИТОГО между
+   названием вкладки и полосой. .bar-row/.bar-chart выше общие с /losses
+   (там 3 колонки: label/track/value) — тронуть их нельзя, поэтому сетка
+   на 4 колонки задаётся через более специфичный селектор только для
+   этого блока (класс-модификатор есть лишь на _id_progress_stream.html). */
+.bar-chart--totals .bar-row { grid-template-columns: minmax(120px, 200px) auto 1fr auto; }
+.bar-total { text-align: right; font-variant-numeric: tabular-nums; color: var(--c-text-2); min-width: 2.2rem; white-space: nowrap; }
+
 /* Легенда цветов/чисел — раньше жила только в <style> на id_progress.html,
    перенесена сюда (ТЗ Якименко А.И. №10, 23.09.2026, п.2), т.к. партиал
    _id_progress_stream.html теперь используется ещё и на /dashboard —

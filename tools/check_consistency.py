@@ -236,6 +236,25 @@ def main_check():
         "sum(stream green_n)", sum(r["green_n"] for r in stream),
     )
 
+    # --- 8a2. 19.10.2026 — колонка ИТОГО в "Поток по вкладкам": total_n
+    # обязан быть именно арифметической суммой трёх уже выведенных на
+    # экран чисел (не отдельным запросом) по каждой строке, а сумма всех
+    # TOTAL — совпасть с тем же tiles.total_pairs, с которым уже
+    # сверяется sum(green+yellow+red) в проверке 8 выше — иначе колонка
+    # на экране разойдётся либо с собственной строкой, либо со сводной
+    # плиткой.
+    for r in stream:
+        check(
+            f"Вкладка «{r['tab_label']}»: total_n vs green_n+yellow_n+red_n своей же строки",
+            "total_n", r["total_n"],
+            "green_n+yellow_n+red_n", r["green_n"] + r["yellow_n"] + r["red_n"],
+        )
+    check(
+        "«Прогресс по видам работ»: tiles.total_pairs vs сумма total_n по вкладкам (поток)",
+        "tiles.total_pairs", tiles["total_pairs"],
+        "sum(stream total_n)", sum(r["total_n"] for r in stream),
+    )
+
     # --- 8b. Тот же класс дефекта, что нашёл координатор 10.09.2026: "Поток
     # по вкладкам" и выпадающий список фильтра матрицы — два разных взгляда
     # на один справочник id_form_tab, обязаны перечислять один и тот же
