@@ -68,6 +68,14 @@
 
 <h1>Отработка предписаний РСК</h1>
 
+{# Жалоба В.М. Мельникова 20.10.2026 («не могу сохранить вносимые
+   изменения»): POST-обработчик /api/rsk-processing возвращал сюда с
+   &err=/&ok=, но страница эти параметры не показывала — и успех, и
+   отказ выглядели как «ничего не произошло». Баннеры — тот же
+   паттерн, что в rsk_detail.html (flash flash-ok / flash-err). #}
+{% if request.query_params.get('ok') %}<div class="flash flash-ok">{{ request.query_params.get('ok') }}</div>{% endif %}
+{% if request.query_params.get('err') %}<div class="flash flash-err">{{ request.query_params.get('err') }}</div>{% endif %}
+
 <form class="form-box" id="rsk-lookup-form" method="get" style="max-width:400px">
   <div class="rsk-form-grid">
     <label>№ нарушения
@@ -77,7 +85,7 @@
   <button type="submit" style="margin-top:1rem">Открыть</button>
 </form>
 
-{% if v %}
+{% if v and current_user %}
 <form class="form-box" id="rsk-processing-form" method="post" action="/api/rsk-processing" style="max-width:900px;margin-top:1.5rem">
   <h3 style="margin-top:0">Нарушение №{{ v.sys_no }}</h3>
   <p class="subtitle"><b>Содержание:</b> {{ v.content }}</p>
@@ -205,6 +213,18 @@
 
   <button type="submit" data-hotkey-save style="margin-top:1rem">Сохранить</button>
 </form>
+{% elif v %}
+{# Вторая половина той же жалобы: форма была полностью редактируемой и
+   для невошедшего пользователя, а POST без сессии отвечал 401 JSON —
+   введённый текст терялся без всякого объяснения. Теперь для не вошедших
+   форма не рендерится вовсе: данные нарушения видны, вход — по ссылке. #}
+<div class="form-box" style="max-width:900px;margin-top:1.5rem">
+  <h3 style="margin-top:0">Нарушение №{{ v.sys_no }}</h3>
+  <p class="subtitle"><b>Содержание:</b> {{ v.content }}</p>
+  <p class="subtitle"><b>Мероприятие:</b> {{ v.remedy or '—' }} · <b>Срок:</b> {{ v.due_date|fmt_dmy if v.due_date else '—' }}</p>
+  <div class="flash flash-err">Для сохранения изменений войдите в систему — сейчас форма доступна только для чтения.
+    <a href="/login?next={{ ('/rsk/processing?sys_no=' ~ v.sys_no)|urlencode }}">Войти</a></div>
+</div>
 {% endif %}
 
 <h3 style="margin-top:2rem">Активные нарушения (последние 200)</h3>
