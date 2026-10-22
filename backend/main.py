@@ -5718,11 +5718,13 @@ def id_folders_page(request: Request, status: str = "all", sort: str = "desc"):
     manual_volumes = query("select id, description, amount_rub, created_at from id_manual_volume order by id desc")
     ks3_entries = query("select id, description, amount_rub, created_at, updated_at from id_ks3_entry order by id desc")
     transitions = compute_id_folder_transitions()
-    # "Активных ИЗМ (ДПР)" — тот же признак "активная" (не завершена/не
-    # архивна), что и на /changes и в change_stats_row (home_v2) — не
-    # отдельное правило.
+    # "Активных ИЗМ (ДПР)" — тот же признак, что и тайл на /dashboard и
+    # таблице /changes после правки 22.10.2026: ПРОБЛЕМНЫЕ = техрешение
+    # не получено (статус вне CHANGE_RESOLVED_STATUSES), не отдельное
+    # правило.
+    _resolved_in = ",".join(f"'{s}'" for s in CHANGE_RESOLVED_STATUSES)
     active_changes = query_one(
-        "select count(*) as n from change where status not in ('INCLUDED_IN_RD', 'ARCHIVED')"
+        "select count(*) as n from change where status not in (" + _resolved_in + ")"
     )["n"]
 
     return render(request, "id_folders.html", "id-folders",
@@ -6170,18 +6172,33 @@ def api_ks3_entry_delete(request: Request, entry_id: int):
 
 # ====== GET /changes — список ИЗМ ======
 @app.get("/changes")
-def changes_page(request: Request):
+def changes_page(request: Request, show: str = ""):
+    # Координатор, 22.10.2026: по умолчанию таблица показывает только
+    # ПРОБЛЕМНЫЕ ИЗМ — техрешение ещё не получено (статус не входит в
+    # CHANGE_RESOLVED_STATUSES). «Техрешение получено» и терминальные —
+    # не проблемы, их место в БД (ничего не удаляется), но не в рабочей
+    # таблице. Переключатель ?show=all возвращает полный список —
+    # единственный способ исправить ошибочно сменённый статус прямо
+    # в строке, не лазая в БД.
+    show_all = show == "all"
+    resolved_in = ",".join(f"'{s}'" for s in CHANGE_RESOLVED_STATUSES)
+    status_filter = "" if show_all else f" where status not in ({resolved_in})"
     rows = query(
         f"select id, code, section_code, topic, status, designer_name, request_date, sla_days, "
         f"planned_response_date, actual_response_date, {_change_overdue_expr()} as overdue_days, "
         f"escalation_level, blocked_amount_rub "
-        "from change order by blocked_amount_rub desc nulls last, request_date nulls last"
+        f"from change{status_filter} order by blocked_amount_rub desc nulls last, request_date nulls last"
     )
     total = len(rows) if rows else 0
     overdue = sum(1 for r in rows if r['overdue_days']) if rows else 0
+    # Счётчик проблемных — для подписи переключателя в режиме «все».
+    problematic_total = query_one(
+        f"select count(*) as n from change where status not in ({resolved_in})"
+    )["n"]
     can_edit = has_permission(request.state.user, "changes:submit")
     return render(request, "changes.html", "changes",
-                  changes=rows or [], total=total, overdue=overdue, errors=[], values={}, can_edit=can_edit)
+                  changes=rows or [], total=total, overdue=overdue, errors=[], values={},
+                  can_edit=can_edit, show_all=show_all, problematic_total=problematic_total)
 
 
 @app.post("/api/change/{change_id}/status")
@@ -6492,15 +6509,19 @@ def home_v2(request: Request):
 
     # ТЗ Якименко А.И., 15.09.2026: тайл «Активных ИЗМ (ДПР)» вернулся в
     # навигационную строку блока «Обзор ИД» — то же выражение, что уже
-    # используют /changes (просрочка, _change_overdue_expr()) и
-    # /id-folders (активная = не в терминальном статусе), второе правило
-    # не заводится.
+    # используют /changes (просрочка, _change_overdue_expr()), второе
+    # правило не заводится. Координатор, 22.10.2026: счётчик показывает
+    # только ПРОБЛЕМНЫЕ ИЗМ (техрешение не получено, статус вне
+    # CHANGE_RESOLVED_STATUSES) — тот же фильтр, что и таблица /changes
+    # по умолчанию; «показывать 30 при 22 закрытых — демонстрировать
+    # застой», смысл дашборда — актуальное состояние.
+    _resolved_in = ",".join(f"'{s}'" for s in CHANGE_RESOLVED_STATUSES)
     change_stats_row = query_one(f"""
         select
             count(*) as total,
             count(*) filter (where {_change_overdue_expr()} is not null) as overdue
         from change
-        where status not in ('INCLUDED_IN_RD', 'ARCHIVED')
+        where status not in ({_resolved_in})
     """) or {"total": 0, "overdue": 0}
 
     return render(

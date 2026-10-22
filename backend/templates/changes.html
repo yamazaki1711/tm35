@@ -64,7 +64,16 @@
   <button type="submit">Добавить ИЗМ</button>
 </form>
 
-<h3>Активные ИЗМ (всего: {{ total }}, просрочено: {{ overdue }})</h3>
+<h3>Активные ИЗМ (всего: {{ total }}, просрочено: {{ overdue }})
+  {# Координатор, 22.10.2026: по умолчанию — только проблемные ИЗМ
+     (техрешение не получено); «показать все» возвращает полный реестр
+     в той же таблице, со сменой статуса в строках. #}
+  <span style="font-size:.8rem;font-weight:500">
+    {%- if show_all %}<a href="/changes">только проблемные ({{ problematic_total }})</a>
+    {%- else %}<a href="/changes?show=all">показать все</a>
+    {%- endif %}
+  </span>
+</h3>
 <div class="table-wrap">
 <table class="data-table">
   <thead>
